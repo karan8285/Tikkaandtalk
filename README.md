@@ -281,4 +281,3 @@ Built with ❤️ using modern web technologies
 ---
 
 **Ready to deploy?** Check out [VERCEL_QUICK_START.md](./VERCEL_QUICK_START.md) 🚀
-"# Tikkaandtalk" 
