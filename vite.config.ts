@@ -9,6 +9,23 @@ export default defineConfig({
     // Tailwind is not being actively used – do not remove them
     react(),
     tailwindcss(),
+    // Fallback for figma:asset imports in non-Figma environments (e.g., Vercel)
+    // In Figma Make, the built-in resolver handles these first.
+    {
+      name: 'figma-asset-fallback',
+      apply: 'build',
+      resolveId(id) {
+        if (id.startsWith('figma:asset/')) {
+          return id;
+        }
+      },
+      load(id) {
+        if (id.startsWith('figma:asset/')) {
+          // Return a fallback — user should place logo.png in /public for Vercel
+          return `export default "/logo.png";`;
+        }
+      },
+    },
   ],
   resolve: {
     alias: {
