@@ -1,0 +1,367 @@
+[
+  {
+    "category": "Soup",
+    "name": "Chicken Manchow Soup",
+    "price": 49000
+  },
+  {
+    "category": "Soup",
+    "name": "Sweet Corn Soup Chicken",
+    "price": 49000
+  },
+  {
+    "category": "Soup",
+    "name": "Chicken Hot And Sour Soup",
+    "price": 49000
+  },
+  {
+    "category": "Soup",
+    "name": "Hot And Sour Soup Veg",
+    "price": 45000
+  },
+  {
+    "category": "Soup",
+    "name": "Veg Manchow Soup",
+    "price": 39000
+  },
+  {
+    "category": "Soup",
+    "name": "Tomato Soup",
+    "price": 39000
+  },
+  {
+    "category": "Soup",
+    "name": "Sweet Corn Soup Veg",
+    "price": 39000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Onion/Mix Veg Pakora",
+    "price": 63000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "French Fries",
+    "price": 45000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Veg Samosa (4pcs Medium)",
+    "price": 52000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Corn Salt & Paper",
+    "price": 60000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Mushroom Duplex",
+    "price": 85000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Veg Momos",
+    "price": 55000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Veg Seekh Kabab",
+    "price": 69000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Veg Manchurian Dry",
+    "price": 72000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Harabhara Kabab",
+    "price": 59000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Panipori",
+    "price": 59000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Tandoori Gobhi",
+    "price": 65000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Chilli Mushroom Dry/Gravy",
+    "price": 79000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Paneer Ajwain Tikka",
+    "price": 85000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Paneer Kurkure",
+    "price": 85000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Paneer Pudina Tikka",
+    "price": 85000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Papri Chat",
+    "price": 57000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Aloo Tikki Chat",
+    "price": 65000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Paneer 65",
+    "price": 65000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Tandoori Mushroom",
+    "price": 84000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Paneer Pakora",
+    "price": 83000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Paneer Malai Tikka",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Chana Chat",
+    "price": 68000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Paneer Tikka",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Tandoori Veg Momos",
+    "price": 72000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Chilli Paneer",
+    "price": 86000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Paneer Achari Tikka",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Peanut Masala",
+    "price": 49000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Tandoori Veg Platter",
+    "price": 175000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Paneer Chatpati",
+    "price": 86000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Plain Papad",
+    "price": 36000
+  },
+  {
+    "category": "Appetizer Veg",
+    "name": "Masala Papad",
+    "price": 45000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Garlic Tikka",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Malai Tikka",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Kalimirch Tikka",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Tangdi Kabab",
+    "price": 105000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Methi Kabab",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Seekh Kabab",
+    "price": 95000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Kalmi Kabab",
+    "price": 105000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Gilafi Kabab",
+    "price": 105000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Pudina Tikka",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken 65",
+    "price": 85000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Lollipop",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Pakora",
+    "price": 79000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Manchurian Dry",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Bhuna",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chilli Chicken",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Fish Amritsari",
+    "price": 89000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Tandoori Pomfret Fish",
+    "price": 175000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Tandoori Prawn",
+    "price": 149000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Chicken Momos",
+    "price": 69000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Afghani Chicken Half",
+    "price": 105000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Afghani Chicken Full",
+    "price": 179000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Tandoori Chicken Half",
+    "price": 105000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Tandoori Chicken Full",
+    "price": 179000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Tandoori Non-Veg Platter",
+    "price": 215000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Mutton Varuval",
+    "price": 139000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Mutton Seekh Kabab",
+    "price": 149000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Dragon Chicken",
+    "price": 105000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Garlic Prawn",
+    "price": 145000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Egg Bhurji",
+    "price": 69000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Egg Boils (4 Pcs)",
+    "price": 69000
+  },
+  {
+    "category": "Appetizer Non-Veg",
+    "name": "Egg Pakoda",
+    "price": 65000
+  },
+  {
+    "category": "Set Thali",
+    "name": "Veg Set Thali",
+    "price": 98000
+  },
+  {
+    "category": "Set Thali",
+    "name": "Veg Set Thali Special",
+    "price": 119000
+  },
+  {
+    "category": "Set Thali",
+    "name": "Chicken Set Thali",
+    "price": 115000
+  },
+  {
+    "category": "Set Thali",
+    "name": "Mutton Set Thali",
+    "price": 149000
+  }
+]

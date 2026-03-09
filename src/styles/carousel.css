@@ -1,0 +1,21 @@
+/* Custom carousel dots styling */
+.slick-dots {
+  bottom: 16px;
+}
+
+.slick-dots li button:before {
+  font-size: 10px;
+  color: white;
+  opacity: 0.5;
+}
+
+.slick-dots li.slick-active button:before {
+  opacity: 1;
+  color: #D91A60;
+}
+
+/* Ensure images don't have weird spacing */
+.slick-slide img {
+  display: block;
+  width: 100%;
+}

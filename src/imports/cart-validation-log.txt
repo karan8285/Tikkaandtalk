@@ -1,0 +1,46 @@
+passedCartItems: 0
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🔵 contextCartItems: 1
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 📥 Loading cart from context: 1
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🔵 [CART LOAD EFFECT] Setting cartItems to: 1
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🟢 [VALIDATION EFFECT] Running...
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🟢 Dependencies: {user: null, fromCart: undefined, offerId: undefined, cartItemsLength: 1, authLoading: false, …}
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🟢 [VALIDATION EFFECT] Current values from location.state:
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28   - currentGuestInfo: undefined
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28   - currentPhone: undefined
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28   - user: null
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 ❌ [VALIDATION EFFECT] No user, no guestInfo, and no phone - REDIRECTING to /checkout
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🔧 OrderConfirmation.tsx - Version: 2024-DEBUG-v6 - Loaded at: 2026-03-05T20:24:54.876Z
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 === ORDER CONFIRMATION COMPONENT RENDER ===
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 📍 Render Count: 1772742294879
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 👤 user: null
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 📞 phone (extracted): undefined
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 👥 guestInfo (extracted): undefined
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 📦 location.state: null
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 ⏳ authLoading: false
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🛒 fromCart: undefined
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🎁 offerId: undefined
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 ✅ hasValidatedRef.current: true
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 📋 hasPlacedOrderRef.current: false
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🔄 validating state: true
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 ⚡ placing state: false
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🟡 [RENDER CHECK] hasUserOrGuest: undefined
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🟡 [RENDER CHECK] validating: true
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🟡 [RENDER CHECK] placing: false
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🟡 [RENDER CHECK] Showing loading screen: Validating
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🔧 Checkout.tsx - VERSION: 2024-CHECKOUT-v1 - Loaded at: 2026-03-05T20:24:54.891Z
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🎯 CHECKOUT RENDER: checkoutMode = select
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🎯 CHECKOUT: user = not logged in
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🎯 CHECKOUT: cartItems.length = 1
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🟣 [LIFECYCLE] OrderConfirmation unmounting
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🔄 CHECKOUT useEffect [cartItems.length]: Running...
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🔄 CHECKOUT useEffect [user]: Running...
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🔧 Checkout.tsx - VERSION: 2024-CHECKOUT-v1 - Loaded at: 2026-03-05T20:24:55.058Z
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🎯 CHECKOUT RENDER: checkoutMode = select
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🎯 CHECKOUT: user = not logged in
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 🎯 CHECKOUT: cartItems.length = 1
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 Cart validation response status: 200
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 Cart validation response ok: true
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 Cart validation raw response: {"validatedItems":[{"id":2,"description":"Rich and creamy butter chicken served with fragrant basmati rice","price":255000,"originalPrice":255000,"image":"https://images.unsplash.com/photo-1707448829764-9474458021ed?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxidXR0ZXIlMjBjaGlja2VuJTIwY3VycnklMjByaWNlfGVufDF8fHx8MTc3MjEwNDg4MHww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral","category":"Today's Special","quantity":1,"cartItemKey":"2-Today's Special","priceChanged":false}],"errors":[],"hasErrors":false}
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 Cart validation parsed response: {validatedItems: Array(1), errors: Array(0), hasErrors: false}
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 Validated items: [{…}]
+code_components_preview_iframe-a2dfb1811c456f43.min.js.br:28 Validation errors: []

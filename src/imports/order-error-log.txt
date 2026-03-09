@@ -1,0 +1,67 @@
+=== PLACING ORDER ===
+c7def283cca97accae803903423b43d2a3ba9774.js:10809 User: {
+  "id": "b3a41033-8bb1-4f2d-8384-be3733099243",
+  "name": "Karan1",
+  "phone": "859-140-5864",
+  "points": 0,
+  "isAdmin": false,
+  "createdAt": "2026-02-27T09:47:39.246Z"
+}
+c7def283cca97accae803903423b43d2a3ba9774.js:10809 Access Token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImMxYzFjMTE5LWI1NWQtNGMxNi04NjM4LWE0MzY0OTdmNTE1NSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2Fqc2dtbHRnc2FvZ3J3Y2l2c3N0LnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJiM2E0MTAzMy04YmIxLTRmMmQtODM4NC1iZTM3MzMwOTkyNDMiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzcyMTg5MjYwLCJpYXQiOjE3NzIxODU2NjAsImVtYWlsIjoiODU5MTQwNTg2NEB0aWtrYS5hcHAiLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJuYW1lIjoiS2FyYW4xIiwicGhvbmUiOiI4NTktMTQwLTU4NjQifSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc3MjE4NTY2MH1dLCJzZXNzaW9uX2lkIjoiODZiMmYyOTktNzA4YS00MjE3LTk4MGYtMWU1NmM1MjZhODczIiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.o5xWJySwrNDanJV3XiLKvIbrbUKP4eE_sLCd0bbHxu721pgd5YOP32u7gKDPAGYrX-wJuiubV1lS_kdhTGg9Xw
+c7def283cca97accae803903423b43d2a3ba9774.js:10809 Is Admin? false
+c7def283cca97accae803903423b43d2a3ba9774.js:10809 Token length: 851
+c7def283cca97accae803903423b43d2a3ba9774.js:10831 Order Payload: {
+  "itemTitle": "Chicken Tikka Masala",
+  "itemPrice": 13.99,
+  "deliveryMethod": "pickup",
+  "phone": "859-140-5864",
+  "specialInstructions": "",
+  "subtotal": 13.99,
+  "tax": 1.12,
+  "deliveryFee": 0,
+  "total": 15.11,
+  "items": [
+    {
+      "id": 1,
+      "title": "Chicken Tikka Masala",
+      "price": 13.99,
+      "quantity": 1,
+      "image": "https://images.unsplash.com/photo-1652545296821-09a023a9fd08?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0aWtrYSUyMG1hc2FsYSUyMGluZGlhbiUyMGZvb2R8ZW58MXx8fHwxNzcyMTA0ODgwfDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral"
+    }
+  ]
+}
+c7def283cca97accae803903423b43d2a3ba9774.js:10831 API URL: https://ajsgmltgsaogrwcivsst.supabase.co/functions/v1/make-server-e5e192fb/orders
+c7def283cca97accae803903423b43d2a3ba9774.js:10832  POST https://ajsgmltgsaogrwcivsst.supabase.co/functions/v1/make-server-e5e192fb/orders 401 (Unauthorized)
+S @ c7def283cca97accae803903423b43d2a3ba9774.js:10832
+yD @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+SD @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+xD @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+sE @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+NC @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+(anonymous) @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+gS @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:8
+nC @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+Py @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+Wv @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+MD @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5Understand this error
+c7def283cca97accae803903423b43d2a3ba9774.js:10840 Backend response status: 401
+c7def283cca97accae803903423b43d2a3ba9774.js:10840 Backend response ok: false
+c7def283cca97accae803903423b43d2a3ba9774.js:10842 Backend raw response: {"code":401,"message":"Invalid JWT"}
+c7def283cca97accae803903423b43d2a3ba9774.js:10850 ❌ Order creation failed
+S @ c7def283cca97accae803903423b43d2a3ba9774.js:10850
+await in S
+yD @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+SD @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+xD @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+sE @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+NC @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+(anonymous) @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+gS @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:8
+nC @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+Py @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+Wv @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5
+MD @ sites-runtime.10fac82dddb7a144f1d31fa497b4f8db3871806ec3e8c63c5439a4f41f18b654.js:5Understand this error
+c7def283cca97accae803903423b43d2a3ba9774.js:10850 Error data: {
+  "code": 401,
+  "message": "Invalid JWT"
+}
