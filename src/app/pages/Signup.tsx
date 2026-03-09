@@ -7,7 +7,7 @@ import { Label } from "../components/ui/label";
 import { PinInput } from "../components/PinInput";
 import { Smartphone, AlertCircle, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
-import logoImage from "figma:asset/eaec9b840a2852be3b4c61f12d73c18841efc0f2.png";
+import logoImage from "../lib/logo";
 
 export default function Signup() {
   const navigate = useNavigate();

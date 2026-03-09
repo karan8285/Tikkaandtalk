@@ -14,6 +14,8 @@ export default defineConfig({
     alias: {
       // Alias @ to the src directory
       '@': path.resolve(__dirname, './src'),
+      // Alias /utils for Vercel builds (Figma Make resolves this automatically)
+      '/utils': path.resolve(__dirname, './utils'),
     },
     dedupe: ['react', 'react-dom'],
   },

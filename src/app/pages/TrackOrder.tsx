@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router";
 import { Clock, MapPin, Phone, RefreshCw, Package, CheckCircle2, ArrowLeft } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
-import logoImage from "figma:asset/eaec9b840a2852be3b4c61f12d73c18841efc0f2.png";
+import logoImage from "../lib/logo";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;

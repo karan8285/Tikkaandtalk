@@ -1,7 +1,7 @@
 import { ArrowLeft, ShoppingCart } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useCart } from "../lib/cart";
-import logoImage from "figma:asset/eaec9b840a2852be3b4c61f12d73c18841efc0f2.png";
+import logoImage from "../lib/logo";
 
 interface HeaderProps {
   showBack?: boolean;

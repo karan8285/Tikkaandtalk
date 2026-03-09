@@ -5,7 +5,7 @@ import { Button } from "../components/ui/button";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { Gift, ChevronLeft, Award, Ticket, Car, UtensilsCrossed, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import logoImage from "figma:asset/eaec9b840a2852be3b4c61f12d73c18841efc0f2.png";
+import logoImage from "../lib/logo";
 import { MessageCircle } from "lucide-react";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;

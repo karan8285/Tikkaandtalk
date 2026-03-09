@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
-import logoImage from "figma:asset/eaec9b840a2852be3b4c61f12d73c18841efc0f2.png";
+import logoImage from "../lib/logo";
 import { Badge } from "../components/ui/badge";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
