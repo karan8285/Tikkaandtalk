@@ -5,6 +5,7 @@ import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
 import { GuestAccountCreationDialog } from "../components/GuestAccountCreationDialog";
 import { formatIDR } from "../lib/currency";
+import { WHATSAPP_NUMBER, WHATSAPP_DISPLAY, getWhatsAppLink } from "../lib/whatsapp";
 import { toast } from "sonner";
 import {
   CheckCircle2,
@@ -22,8 +23,10 @@ import {
   ChevronUp,
   Sparkles,
   XCircle,
+  Ticket,
 } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { getShortOrderId } from "../lib/orderUtils";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -290,7 +293,7 @@ export default function GuestOrderTracking() {
               <Button onClick={() => navigate("/login")} className="w-full bg-primary hover:bg-primary/90">
                 Log In to Track Orders
               </Button>
-              <Button variant="outline" onClick={() => window.open("https://wa.me/628192515550", "_blank")} className="w-full">
+              <Button variant="outline" onClick={() => window.open(`https://wa.me/${WHATSAPP_NUMBER}`, "_blank")} className="w-full">
                 Contact via WhatsApp
               </Button>
               <Button variant="ghost" onClick={() => navigate("/")} className="w-full">
@@ -396,7 +399,7 @@ export default function GuestOrderTracking() {
       `[Your question here]`;
     return encodeURIComponent(message);
   };
-  const whatsappLink = `https://wa.me/628192515550?text=${generateWhatsAppMessage()}`;
+  const whatsappLink = `https://wa.me/${WHATSAPP_NUMBER}?text=${generateWhatsAppMessage()}`;
 
   const contextualAction = getContextualAction();
 
@@ -482,8 +485,8 @@ export default function GuestOrderTracking() {
         {/* ===== SECTION 1: Order ID + Type Badge ===== */}
         <div className="w-full bg-white rounded-2xl shadow-sm px-4 py-3 mb-3 flex items-center justify-between">
           <div>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Order</p>
-            <p className="text-lg font-bold text-primary leading-tight">{orderNumber}</p>
+            <p className="text-xl font-extrabold text-gray-900 leading-tight">{getShortOrderId(orderNumber)}</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">ID: {orderNumber}</p>
           </div>
           <div className={`px-2.5 py-1 rounded-full font-semibold text-[10px] sm:text-xs ${
             isDelivery ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
@@ -727,6 +730,15 @@ export default function GuestOrderTracking() {
                   <span className="text-muted-foreground">Subtotal</span>
                   <span>{formatIDR(order.subtotal)}</span>
                 </div>
+                {(order.promoDiscount != null && order.promoDiscount > 0) && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-green-600 flex items-center gap-1">
+                      <Ticket className="w-3 h-3" />
+                      Promo {order.promoCode ? `(${order.promoCode})` : ''}
+                    </span>
+                    <span className="text-green-600 font-medium">-{formatIDR(order.promoDiscount)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-xs">
                   <span className="text-muted-foreground">Tax (PPN 10%)</span>
                   <span>{formatIDR(order.tax)}</span>
@@ -734,7 +746,9 @@ export default function GuestOrderTracking() {
                 {isDelivery && (
                   <div className="flex justify-between text-xs">
                     <span className="text-muted-foreground">Delivery Fee</span>
-                    <span className="text-amber-600">To be Calculated</span>
+                    <span className={(order.deliveryFee || 0) > 0 ? "" : "text-amber-600"}>
+                      {(order.deliveryFee || 0) > 0 ? `Rp ${order.deliveryFee.toLocaleString()}` : "To be Calculated"}
+                    </span>
                   </div>
                 )}
                 <div className="flex justify-between text-sm font-bold pt-1.5 mt-1 border-t">
@@ -786,7 +800,7 @@ export default function GuestOrderTracking() {
           </div>
         )}
 
-        {/* ===== SECTION 9: Guest Signup Banner (compact gradient) ===== */}
+        {/* ===== SECTION 9: Guest Registration Banner (compact gradient) ===== */}
         {isGuestOrder && !user && (
           <div
             className="w-full relative overflow-hidden rounded-xl mb-3 cursor-pointer hover:shadow-lg transition-all duration-300 group"
@@ -833,12 +847,12 @@ export default function GuestOrderTracking() {
         <p className="text-center text-xs text-muted-foreground max-w-md mx-auto">
           Need help? WhatsApp us at{" "}
           <a
-            href="https://wa.me/628192515550"
+            href={`https://wa.me/${WHATSAPP_NUMBER}`}
             className="text-primary font-semibold hover:underline"
             target="_blank"
             rel="noopener noreferrer"
           >
-            0819-2515-550
+            {WHATSAPP_DISPLAY}
           </a>
         </p>
       </div>

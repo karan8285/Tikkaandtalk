@@ -3,10 +3,12 @@ import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 import { Button } from "../components/ui/button";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Gift, ChevronLeft, Award, Ticket, Car, UtensilsCrossed, RefreshCw } from "lucide-react";
+import { Gift, ChevronLeft, Award, Ticket, Car, UtensilsCrossed, RefreshCw, Percent, Truck, Tag, Clock, CheckCircle, Crown, Copy } from "lucide-react";
 import { toast } from "sonner";
 import logoImage from "../lib/logo";
+import { WHATSAPP_NUMBER, WHATSAPP_DISPLAY } from "../lib/whatsapp";
 import { MessageCircle } from "lucide-react";
+import { formatIDR } from "../lib/currency";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -19,6 +21,10 @@ interface Voucher {
   type: string;
   icon: string;
   conditions: string;
+  discountType?: "percentage" | "fixed" | "free_delivery" | "freebie" | null;
+  discountValue?: number | null;
+  minOrderAmount?: number;
+  applicableCategories?: string[];
 }
 
 interface TierBenefit {
@@ -38,7 +44,10 @@ interface UserVoucher {
   userId: string;
   claimed: boolean;
   claimedAt: string | null;
+  used: boolean;
   voucher: Voucher;
+  promoCode?: string;
+  usedCount?: number;
 }
 
 export default function Rewards() {
@@ -161,7 +170,12 @@ export default function Rewards() {
       const data = await response.json();
 
       if (response.ok) {
-        toast.success("Voucher claimed successfully!");
+        const promoCode = data.assignment?.promoCode;
+        toast.success(
+          promoCode
+            ? `Voucher claimed! Your promo code: ${promoCode}`
+            : "Voucher claimed successfully!"
+        );
         fetchData(); // Refresh data
       } else {
         toast.error(data.error || "Failed to claim voucher");
@@ -341,60 +355,189 @@ export default function Rewards() {
             <div className="bg-white rounded-2xl shadow-md p-8 text-center">
               <Gift className="w-12 h-12 mx-auto mb-3 text-gray-300" />
               <p className="text-muted-foreground">No vouchers available yet</p>
+              <p className="text-xs text-gray-400 mt-1">Vouchers from the restaurant will appear here</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {userVouchers.map((userVoucher) => (
-                <div key={userVoucher.id} className="bg-white rounded-2xl shadow-md p-4">
-                  <div className="flex items-center gap-4">
-                    {/* Icon */}
+              {/* Active vouchers first, then claimed, then used */}
+              {[...userVouchers]
+                .sort((a, b) => {
+                  // Fully used vouchers go to end
+                  const aFullyUsed = a.used && (a.usedCount || 0) >= (a.voucher?.quantity || 1);
+                  const bFullyUsed = b.used && (b.usedCount || 0) >= (b.voucher?.quantity || 1);
+                  if (aFullyUsed && !bFullyUsed) return 1;
+                  if (!aFullyUsed && bFullyUsed) return -1;
+                  if (a.claimed && !b.claimed) return 1;
+                  if (!a.claimed && b.claimed) return -1;
+                  return 0;
+                })
+                .map((userVoucher) => {
+                  const v = userVoucher.voucher;
+                  const maxUses = v?.quantity || 1;
+                  const usedCount = userVoucher.usedCount || 0;
+                  const isFullyUsed = userVoucher.used && usedCount >= maxUses;
+                  const hasRemainingUses = usedCount > 0 && usedCount < maxUses;
+                  const isClaimed = userVoucher.claimed;
+                  
+                  const getDiscountBadge = () => {
+                    if (v.discountType === "percentage" && v.discountValue) return `${v.discountValue}% OFF`;
+                    if (v.discountType === "fixed" && v.discountValue) return `${formatIDR(v.discountValue)} OFF`;
+                    if (v.discountType === "free_delivery") return "FREE DELIVERY";
+                    if (v.discountType === "freebie") return "FREE ITEM";
+                    return null;
+                  };
+                  
+                  const discountBadge = getDiscountBadge();
+                  
+                  return (
                     <div
-                      className="w-16 h-16 rounded-full flex items-center justify-center flex-shrink-0"
-                      style={{ backgroundColor: "#D91A60" }}
+                      key={userVoucher.id}
+                      className={`bg-white rounded-2xl shadow-md overflow-hidden transition-all ${
+                        isFullyUsed ? "opacity-60" : ""
+                      }`}
                     >
-                      <div className="text-white">
-                        {getIconComponent(userVoucher.voucher.icon)}
-                      </div>
-                    </div>
-                    
-                    {/* Details */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2 mb-1">
-                        <h4 className="font-bold" style={{ color: "#333333" }}>
-                          {userVoucher.voucher.title}
-                        </h4>
-                        {userVoucher.voucher.quantity > 1 && (
-                          <span 
-                            className="px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-200"
-                            style={{ color: "#666666" }}
-                          >
-                            x{userVoucher.voucher.quantity}
+                      {/* Discount banner */}
+                      {discountBadge && (
+                        <div
+                          className="px-4 py-1.5 text-center"
+                          style={{
+                            backgroundColor: isFullyUsed ? "#9CA3AF" : "#D91A60",
+                          }}
+                        >
+                          <span className="text-white text-xs font-bold tracking-wider">
+                            {discountBadge}
                           </span>
+                        </div>
+                      )}
+                      
+                      <div className="p-4">
+                        <div className="flex items-center gap-4">
+                          {/* Icon */}
+                          <div
+                            className="w-14 h-14 rounded-full flex items-center justify-center flex-shrink-0"
+                            style={{ backgroundColor: isFullyUsed ? "#E5E7EB" : "#D91A60" }}
+                          >
+                            <div className="text-white scale-75">
+                              {getIconComponent(v.icon)}
+                            </div>
+                          </div>
+                          
+                          {/* Details */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2 mb-1">
+                              <h4 className="font-bold text-sm" style={{ color: isFullyUsed ? "#9CA3AF" : "#333333" }}>
+                                {v.title}
+                              </h4>
+                              {/* Status badge */}
+                              {isFullyUsed ? (
+                                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-200 text-gray-500 shrink-0">
+                                  <CheckCircle className="w-3 h-3" /> Used
+                                </span>
+                              ) : isClaimed ? (
+                                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-600 shrink-0">
+                                  <CheckCircle className="w-3 h-3" /> Claimed
+                                </span>
+                              ) : null}
+                            </div>
+                            
+                            {v.description && (
+                              <p className="text-xs mb-1" style={{ color: "#666666" }}>
+                                {v.description}
+                              </p>
+                            )}
+                            
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="flex items-center gap-1 text-xs" style={{ color: "#D91A60" }}>
+                                <Clock className="w-3 h-3" />
+                                Expires {v.expiryDate}
+                              </span>
+                              {maxUses > 1 && (
+                                <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${
+                                  isFullyUsed
+                                    ? "bg-gray-100 text-gray-400"
+                                    : hasRemainingUses
+                                    ? "bg-amber-50 text-amber-600"
+                                    : "bg-gray-100 text-gray-600"
+                                }`}>
+                                  {isFullyUsed
+                                    ? `0/${maxUses} left`
+                                    : `${maxUses - usedCount}/${maxUses} left`}
+                                </span>
+                              )}
+                            </div>
+                            
+                            {v.minOrderAmount > 0 && (
+                              <p className="text-xs mt-1 text-gray-400">
+                                Min. order {formatIDR(v.minOrderAmount)}
+                              </p>
+                            )}
+                            
+                            {v.conditions && (
+                              <p className="text-xs mt-0.5" style={{ color: "#999999" }}>
+                                {v.conditions}
+                              </p>
+                            )}
+                            
+                            {v.applicableCategories && v.applicableCategories.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1.5">
+                                <span className="text-[10px] text-purple-600 font-medium">Valid for:</span>
+                                {v.applicableCategories.map((cat) => (
+                                  <span key={cat} className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">
+                                    {cat}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        
+                        {/* Claim button - only show if not yet claimed */}
+                        {!isClaimed && !isFullyUsed && (
+                          <div className="mt-3 pt-3 border-t border-gray-100">
+                            <Button
+                              onClick={() => handleClaimVoucher(userVoucher.id)}
+                              disabled={claiming === userVoucher.id}
+                              className="w-full rounded-full font-bold text-sm"
+                              style={{ backgroundColor: "#D91A60", color: "#FFFFFF" }}
+                            >
+                              {claiming === userVoucher.id ? "Claiming..." : "CLAIM VOUCHER"}
+                            </Button>
+                          </div>
+                        )}
+
+                        {/* Promo code display - show after claiming */}
+                        {isClaimed && !isFullyUsed && userVoucher.promoCode && (
+                          <div className="mt-3 pt-3 border-t border-gray-100">
+                            <p className="text-xs text-gray-500 mb-1.5 text-center">Your Promo Code</p>
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="flex-1 bg-gray-50 border-2 border-dashed rounded-lg py-2 px-3 text-center"
+                                style={{ borderColor: "#D91A60" }}
+                              >
+                                <span className="text-base font-bold tracking-widest" style={{ color: "#D91A60" }}>
+                                  {userVoucher.promoCode}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(userVoucher.promoCode);
+                                  toast.success("Promo code copied!");
+                                }}
+                                className="flex items-center justify-center w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
+                                title="Copy code"
+                              >
+                                <Copy className="w-4 h-4 text-gray-600" />
+                              </button>
+                            </div>
+                            <p className="text-[10px] text-gray-400 text-center mt-1.5">
+                              Apply this code at checkout to get your discount
+                            </p>
+                          </div>
                         )}
                       </div>
-                      <p className="text-sm mb-1" style={{ color: "#D91A60" }}>
-                        Expires by {userVoucher.voucher.expiryDate}
-                      </p>
-                      <p className="text-xs" style={{ color: "#999999" }}>
-                        {userVoucher.voucher.conditions}
-                      </p>
                     </div>
-                    
-                    {/* Claim Button */}
-                    <Button
-                      onClick={() => handleClaimVoucher(userVoucher.id)}
-                      disabled={userVoucher.claimed || claiming === userVoucher.id}
-                      className="px-6 py-2 rounded-full font-bold text-sm"
-                      style={{
-                        backgroundColor: userVoucher.claimed ? "#CCCCCC" : "#D91A60",
-                        color: "#FFFFFF",
-                      }}
-                    >
-                      {userVoucher.claimed ? "CLAIMED" : claiming === userVoucher.id ? "..." : "CLAIM"}
-                    </Button>
-                  </div>
-                </div>
-              ))}
+                  );
+                })}
             </div>
           )}
         </div>
@@ -412,7 +555,7 @@ export default function Rewards() {
           {/* Tier Progress Visual */}
           <div className="relative mb-8">
             {/* Connection Line */}
-            <div className="absolute top-8 left-0 right-0 flex items-center px-12">
+            <div className="absolute top-8 left-0 right-0 flex items-center px-6 sm:px-12">
               <div className="flex-1 h-0.5 bg-gray-300 relative">
                 {["Silver", "Gold", "Diamond", "Platinum"].map((tier, index) => {
                   const isActive = 
@@ -780,15 +923,15 @@ export default function Rewards() {
       </main>
 
       {/* WhatsApp Button */}
-      <div className="fixed bottom-0 left-0 right-0 z-50">
+      <div className="sticky bottom-0 left-0 right-0 z-50">
         <div className="max-w-md mx-auto">
           <button
-            onClick={() => window.open("https://wa.me/628192515550", "_blank")}
+            onClick={() => window.open(`https://wa.me/${WHATSAPP_NUMBER}`, "_blank")}
             className="w-full py-4 flex items-center justify-center gap-3 font-bold text-lg text-white"
             style={{ backgroundColor: "#D91A60" }}
           >
             <MessageCircle className="w-6 h-6" />
-            0819-2515-550
+            {WHATSAPP_DISPLAY}
           </button>
         </div>
       </div>

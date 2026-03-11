@@ -8,6 +8,8 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card } from "../components/ui/card";
 import { UserPlus, ShoppingCart, Check, X } from "lucide-react";
+import { CountryCodeSelect } from "../components/CountryCodeSelect";
+import { DEFAULT_COUNTRY_CODE, buildFullPhone } from "../lib/countryCodes";
 
 export default function Checkout() {
   const navigate = useNavigate();
@@ -19,6 +21,7 @@ export default function Checkout() {
   // Guest form state
   const [guestName, setGuestName] = useState("");
   const [guestPhone, setGuestPhone] = useState("");
+  const [guestCountryCode, setGuestCountryCode] = useState(DEFAULT_COUNTRY_CODE.code);
   const [errors, setErrors] = useState({ name: "", phone: "" });
 
   // Redirect to home if no cart items
@@ -54,8 +57,8 @@ export default function Checkout() {
       newErrors.phone = "Phone number is required";
     } else {
       const phoneDigits = guestPhone.replace(/\D/g, "");
-      if (phoneDigits.length < 10 || phoneDigits.length > 12) {
-        newErrors.phone = "Phone number must be 10-12 digits";
+      if (phoneDigits.length < 6 || phoneDigits.length > 13) {
+        newErrors.phone = "Please enter a valid phone number";
       }
     }
 
@@ -64,12 +67,15 @@ export default function Checkout() {
       return;
     }
 
+    // Build full international phone
+    const fullPhone = buildFullPhone(guestCountryCode, guestPhone);
+
     navigate("/order", {
       state: {
         cartItems: cartItems,
         guestInfo: {
           name: guestName,
-          phone: guestPhone,
+          phone: fullPhone,
         },
       },
     });
@@ -177,7 +183,7 @@ export default function Checkout() {
                     background: "linear-gradient(135deg, #E91E63, #D91A60)",
                   }}
                 >
-                  Create One-Time PIN to Get Rewards
+                  Register to Get Rewards
                 </Button>
 
                 {/* Login link */}
@@ -199,10 +205,10 @@ export default function Checkout() {
             </Card>
 
             {/* ===== Divider with "or Checkout as Guest" ===== */}
-            <div className="flex items-center gap-3 py-1">
+            <div className="flex items-center gap-3 py-2">
               <div className="flex-1 h-px bg-gray-300" />
-              <span className="text-sm text-gray-500">
-                or <span className="font-semibold text-gray-700">Checkout as Guest</span>
+              <span className="text-base text-gray-500 font-semibold">
+                OR
               </span>
               <div className="flex-1 h-px bg-gray-300" />
             </div>
@@ -277,22 +283,29 @@ export default function Checkout() {
 
               <div>
                 <Label htmlFor="guest-phone">Phone Number (WhatsApp) *</Label>
-                <Input
-                  id="guest-phone"
-                  type="tel"
-                  value={guestPhone}
-                  onChange={(e) => {
-                    setGuestPhone(e.target.value);
-                    setErrors({ ...errors, phone: "" });
-                  }}
-                  placeholder="08123456789"
-                  className={errors.phone ? "border-red-500" : ""}
-                />
+                <div className="flex">
+                  <CountryCodeSelect
+                    value={guestCountryCode}
+                    onChange={setGuestCountryCode}
+                  />
+                  <Input
+                    id="guest-phone"
+                    type="tel"
+                    value={guestPhone}
+                    onChange={(e) => {
+                      setGuestPhone(e.target.value.replace(/\D/g, ""));
+                      setErrors({ ...errors, phone: "" });
+                    }}
+                    placeholder="8123456789"
+                    maxLength={13}
+                    className={`rounded-l-none border-l-0 ${errors.phone ? "border-red-500" : ""}`}
+                  />
+                </div>
                 {errors.phone && (
                   <p className="text-xs text-red-500 mt-1">{errors.phone}</p>
                 )}
                 <p className="text-xs text-gray-500 mt-1">
-                  10-12 digits for order confirmation
+                  Enter number without leading zero for order confirmation
                 </p>
               </div>
 

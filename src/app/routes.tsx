@@ -1,33 +1,54 @@
-import React from "react";
+import React, { Suspense } from "react";
 import { createBrowserRouter, Navigate } from "react-router";
 import type { RouteObject } from "react-router";
 import RootLayout from "./layouts/RootLayout";
+
+// Only eagerly load Home (first page users see)
 import Home from "./pages/Home";
-import Menu from "./pages/Menu";
-import RegularMenu from "./pages/RegularMenu";
-import TodaysSpecial from "./pages/TodaysSpecial";
-import KidsMenu from "./pages/KidsMenu";
-import FlashSale from "./pages/FlashSale";
-import Cart from "./pages/Cart";
-import Checkout from "./pages/Checkout";
-import Order from "./pages/Order";
-import OrderConfirmation from "./pages/OrderConfirmation";
-import OrderSuccess from "./pages/OrderSuccess";
-import Login from "./pages/Login";
-import Signup from "./pages/Signup";
-import Profile from "./pages/Profile";
-import OrderHistory from "./pages/OrderHistory";
-import OrderTracking from "./pages/OrderTracking";
-import Rewards from "./pages/Rewards";
-import Admin from "./pages/Admin";
-import CreateCustomOrder from "./pages/CreateCustomOrder";
-import KitchenDisplay from "./pages/KitchenDisplay";
-import ForgotPassword from "./pages/ForgotPassword";
-import Debug from "./pages/Debug";
-import AdminDebug from "./pages/AdminDebug";
-import TestAuth from "./pages/TestAuth";
-import TrackOrder from "./pages/TrackOrder";
-import GuestOrderTracking from "./pages/GuestOrderTracking";
+
+// Lazy load everything else - splits the bundle so users only download what they visit
+const Menu = React.lazy(() => import("./pages/Menu"));
+const RegularMenu = React.lazy(() => import("./pages/RegularMenu"));
+const TodaysSpecial = React.lazy(() => import("./pages/TodaysSpecial"));
+const KidsMenu = React.lazy(() => import("./pages/KidsMenu"));
+const FlashSale = React.lazy(() => import("./pages/FlashSale"));
+const Cart = React.lazy(() => import("./pages/Cart"));
+const Checkout = React.lazy(() => import("./pages/Checkout"));
+const Order = React.lazy(() => import("./pages/Order"));
+const OrderConfirmation = React.lazy(() => import("./pages/OrderConfirmation"));
+const OrderSuccess = React.lazy(() => import("./pages/OrderSuccess"));
+const Login = React.lazy(() => import("./pages/Login"));
+const Signup = React.lazy(() => import("./pages/Signup"));
+const Profile = React.lazy(() => import("./pages/Profile"));
+const OrderHistory = React.lazy(() => import("./pages/OrderHistory"));
+const OrderTracking = React.lazy(() => import("./pages/OrderTracking"));
+const Rewards = React.lazy(() => import("./pages/Rewards"));
+const Admin = React.lazy(() => import("./pages/Admin"));
+const CreateCustomOrder = React.lazy(() => import("./pages/CreateCustomOrder"));
+const KitchenDisplay = React.lazy(() => import("./pages/KitchenDisplay"));
+const ForgotPassword = React.lazy(() => import("./pages/ForgotPassword"));
+const Debug = React.lazy(() => import("./pages/Debug"));
+const AdminDebug = React.lazy(() => import("./pages/AdminDebug"));
+const TestAuth = React.lazy(() => import("./pages/TestAuth"));
+const TrackOrder = React.lazy(() => import("./pages/TrackOrder"));
+const GuestOrderTracking = React.lazy(() => import("./pages/GuestOrderTracking"));
+
+// Minimal loading spinner matching brand color
+function LazyFallback() {
+  return (
+    <div className="min-h-[60vh] flex items-center justify-center">
+      <div
+        className="w-8 h-8 border-3 border-t-transparent rounded-full animate-spin"
+        style={{ borderColor: "#D91A60", borderTopColor: "transparent" }}
+      />
+    </div>
+  );
+}
+
+// Wrapper that adds Suspense boundary around lazy components
+function Lazy({ children }: { children: React.ReactNode }) {
+  return <Suspense fallback={<LazyFallback />}>{children}</Suspense>;
+}
 
 // Error Fallback Component
 function ErrorFallback() {
@@ -60,79 +81,83 @@ export const router = createBrowserRouter(
         },
         {
           path: "menu/:category",
-          element: <Menu />,
+          element: <Lazy><Menu /></Lazy>,
         },
         {
           path: "regular-menu",
-          element: <RegularMenu />,
+          element: <Lazy><RegularMenu /></Lazy>,
         },
         {
           path: "todays-special",
-          element: <TodaysSpecial />,
+          element: <Lazy><TodaysSpecial /></Lazy>,
         },
         {
           path: "todays-special/:itemId",
-          element: <TodaysSpecial />,
+          element: <Lazy><TodaysSpecial /></Lazy>,
         },
         {
           path: "kids-menu",
-          element: <KidsMenu />,
+          element: <Lazy><KidsMenu /></Lazy>,
         },
         {
           path: "kids-menu/:itemId",
-          element: <KidsMenu />,
+          element: <Lazy><KidsMenu /></Lazy>,
         },
         {
           path: "flash-sale",
-          element: <FlashSale />,
+          element: <Lazy><FlashSale /></Lazy>,
         },
         {
           path: "flash-sale/:itemId",
-          element: <FlashSale />,
+          element: <Lazy><FlashSale /></Lazy>,
         },
         {
           path: "login",
-          element: <Login />,
+          element: <Lazy><Login /></Lazy>,
         },
         {
           path: "signup",
-          element: <Signup />,
+          element: <Lazy><Signup /></Lazy>,
         },
         {
           path: "forgot-password",
-          element: <ForgotPassword />,
+          element: <Lazy><ForgotPassword /></Lazy>,
+        },
+        {
+          path: "forgot-pin",
+          element: <Lazy><ForgotPassword /></Lazy>,
         },
         {
           path: "profile",
-          element: <Profile />,
+          element: <Lazy><Profile /></Lazy>,
         },
         {
           path: "cart",
-          element: <Cart />,
+          element: <Lazy><Cart /></Lazy>,
         },
         {
           path: "checkout",
-          element: <Checkout />,
+          element: <Lazy><Checkout /></Lazy>,
         },
         {
           path: "order",
-          element: <Order />,
+          element: <Lazy><Order /></Lazy>,
         },
         {
           path: "order-confirmation",
-          element: <OrderConfirmation />,
+          element: <Lazy><OrderConfirmation /></Lazy>,
         },
         {
           path: "order-success/:orderId",
-          element: <OrderSuccess />,
+          element: <Lazy><OrderSuccess /></Lazy>,
         },
         {
           path: "order-history",
-          element: <OrderHistory />,
+          element: <Lazy><OrderHistory /></Lazy>,
         },
         {
           path: "order-tracking/:orderId",
-          element: <OrderTracking />,
+          element: <Lazy><OrderTracking /></Lazy>,
         },
         // Alias /orders to /order-history
         {
@@ -142,47 +167,47 @@ export const router = createBrowserRouter(
         // Support /orders/:orderId for order tracking
         {
           path: "orders/:orderId",
-          element: <OrderTracking />,
+          element: <Lazy><OrderTracking /></Lazy>,
         },
         {
           path: "rewards",
-          element: <Rewards />,
+          element: <Lazy><Rewards /></Lazy>,
         },
         {
           path: "admin",
-          element: <Admin />,
+          element: <Lazy><Admin /></Lazy>,
         },
         {
           path: "admin/create-custom-order",
-          element: <CreateCustomOrder />,
+          element: <Lazy><CreateCustomOrder /></Lazy>,
         },
         {
           path: "admin/kitchen",
-          element: <KitchenDisplay />,
+          element: <Lazy><KitchenDisplay /></Lazy>,
         },
         {
           path: "admin-debug",
-          element: <AdminDebug />,
+          element: <Lazy><AdminDebug /></Lazy>,
         },
         {
           path: "debug",
-          element: <Debug />,
+          element: <Lazy><Debug /></Lazy>,
         },
         {
           path: "test-auth",
-          element: <TestAuth />,
+          element: <Lazy><TestAuth /></Lazy>,
         },
         {
           path: "track/:orderNumber",
-          element: <TrackOrder />,
+          element: <Lazy><TrackOrder /></Lazy>,
         },
         {
           path: "track-order",
-          element: <TrackOrder />,
+          element: <Lazy><TrackOrder /></Lazy>,
         },
         {
           path: "guest-order-tracking",
-          element: <GuestOrderTracking />,
+          element: <Lazy><GuestOrderTracking /></Lazy>,
         },
         // Catch-all route for 404s - redirect to home
         {

@@ -47,7 +47,7 @@ export default function TestAuth() {
         },
         body: JSON.stringify({
           phone: testPhone,
-          password: "test123",
+          pin: "123456",
           name: "Test User"
         }),
       });
@@ -68,7 +68,7 @@ export default function TestAuth() {
           },
           body: JSON.stringify({
             phone: testPhone,
-            password: "test123",
+            pin: "123456",
           }),
         });
         
@@ -92,7 +92,7 @@ export default function TestAuth() {
     // Test 5: Test admin login
     try {
       const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
-      addResult(`👑 Testing admin login with 9999999999...`);
+      addResult(`👑 Testing admin login with +629999999999...`);
       
       const adminSigninResponse = await fetch(`${API_BASE}/signin`, {
         method: "POST",
@@ -101,8 +101,8 @@ export default function TestAuth() {
           Authorization: `Bearer ${publicAnonKey}`,
         },
         body: JSON.stringify({
-          phone: "9999999999",
-          password: "admin123",
+          phone: "+629999999999",
+          pin: "999999",
         }),
       });
       
@@ -123,7 +123,7 @@ export default function TestAuth() {
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-4xl mx-auto">
-        <div className="bg-white rounded-xl shadow-md p-8">
+        <div className="bg-white rounded-xl shadow-md p-5 sm:p-8">
           <h1 className="text-2xl font-bold mb-4">Authentication Test Page</h1>
           <p className="text-muted-foreground mb-6">
             This page tests the authentication system to diagnose any issues.

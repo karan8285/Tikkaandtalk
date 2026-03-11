@@ -247,8 +247,8 @@ export default function AdminDebug() {
           Authorization: `Bearer ${publicAnonKey}` 
         },
         body: JSON.stringify({
-          phone: "9999999999",
-          password: "admin123"
+          phone: "+629999999999",
+          pin: "999999"
         })
       });
 
@@ -271,8 +271,8 @@ export default function AdminDebug() {
           Authorization: `Bearer ${publicAnonKey}`
         },
         body: JSON.stringify({
-          phone: "9999999999",
-          password: "admin123"
+          phone: "+629999999999",
+          pin: "999999"
         })
       });
 
@@ -403,10 +403,67 @@ export default function AdminDebug() {
     }
   };
 
+  const runFreshStart = async () => {
+    if (!window.confirm(
+      "⚠️ FRESH START WARNING ⚠️\n\n" +
+      "This will permanently delete:\n" +
+      "• ALL customer accounts (except admin)\n" +
+      "• ALL orders\n" +
+      "• ALL customer carts\n\n" +
+      "The admin account will be preserved.\n\n" +
+      "Are you sure you want to proceed?"
+    )) {
+      return;
+    }
+
+    // Double confirmation
+    if (!window.confirm("This action CANNOT be undone. Type OK to confirm you really want to delete all data.")) {
+      return;
+    }
+
+    setLoading(true);
+    setResult("🔄 FRESH START: Deleting all customers and orders...\n\n");
+
+    try {
+      const accessToken = localStorage.getItem("accessToken");
+      if (!accessToken) {
+        setResult(prev => prev + "❌ No access token found. Please login as admin first.\n");
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}/admin/fresh-start`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": accessToken,
+        },
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setResult(prev => prev + `✅ ${data.message}\n\n`);
+        setResult(prev => prev + `📊 Summary:\n`);
+        setResult(prev => prev + `   Customers deleted: ${data.deletedUsers}\n`);
+        setResult(prev => prev + `   Orders deleted: ${data.deletedOrders}\n`);
+        setResult(prev => prev + `   Admin accounts kept: ${data.skippedAdmin}\n\n`);
+        setResult(prev => prev + `🎉 Fresh start complete! You can now start fresh.\n`);
+      } else {
+        setResult(prev => prev + `❌ Fresh start failed: ${data.error || JSON.stringify(data)}\n`);
+      }
+    } catch (error: any) {
+      setResult(prev => prev + `❌ ERROR: ${error.message}\n`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
       <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6">Admin Debug</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold mb-6">Admin Debug</h1>
         
         <div className="bg-white rounded-lg shadow p-6 mb-6 space-y-3">
           <button
@@ -440,6 +497,19 @@ export default function AdminDebug() {
           >
             {loading ? "Testing..." : "3. Test Admin Endpoints"}
           </button>
+
+          <div className="border-t border-gray-200 pt-3 mt-3">
+            <button
+              onClick={runFreshStart}
+              disabled={loading}
+              className="bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 disabled:opacity-50 w-full font-bold"
+            >
+              {loading ? "Processing..." : "🗑️ FRESH START — Delete All Customers & Orders"}
+            </button>
+            <p className="text-xs text-red-500 mt-1 text-center">
+              Permanently deletes all customers (except admin) and all orders. Cannot be undone.
+            </p>
+          </div>
         </div>
 
         {result && (

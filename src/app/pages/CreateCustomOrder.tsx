@@ -468,7 +468,7 @@ export default function CreateCustomOrder() {
     <div className="min-h-screen bg-gray-50 pb-24">
       <Header />
       
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="max-w-7xl mx-auto px-4 py-4 sm:py-6">
         {/* Back Button */}
         <Button
           variant="ghost"
@@ -533,7 +533,7 @@ export default function CreateCustomOrder() {
                         <>
                           <p className="text-sm font-medium text-gray-900 mb-1">No customers yet</p>
                           <p className="text-xs text-gray-500 mb-3">
-                            Customers need to sign up first before you can create orders for them
+                            Customers need to register first before you can create orders for them
                           </p>
                           <Button
                             size="sm"
@@ -541,7 +541,7 @@ export default function CreateCustomOrder() {
                             onClick={() => window.open('/signup', '_blank')}
                             className="text-xs"
                           >
-                            Open Signup Page
+                            Open Registration Page
                           </Button>
                         </>
                       )}

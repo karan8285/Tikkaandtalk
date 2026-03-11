@@ -5,6 +5,7 @@ import { Label } from "./ui/label";
 import { Switch } from "./ui/switch";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { toast } from "sonner";
+import { DeliveryZonesAdmin } from "./DeliveryZonesAdmin";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -128,6 +129,9 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
           </div>
         </div>
       </Card>
+
+      {/* Delivery Zones */}
+      <DeliveryZonesAdmin customToken={customToken} />
     </div>
   );
 }

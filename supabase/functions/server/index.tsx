@@ -149,13 +149,44 @@ app.use('*', cors({
 // Logger
 app.use('*', logger(console.log));
 
-// Default admin credentials
-const ADMIN_PHONE = "9999999999";
-const ADMIN_PASSWORD = "admin123";
+// Default admin credentials (full international format)
+const ADMIN_PHONE = "+629999999999";
+const ADMIN_PHONE_LEGACY = "9999999999"; // Old format for backward compat
+const ADMIN_PIN = "999999";
 
-// Helper: Check if string is a 6-digit PIN
-function isPinFormat(input: string): boolean {
+// Helper: Validate 6-digit PIN format
+function isValidPin(input: string): boolean {
   return /^\d{6}$/.test(input);
+}
+
+// Helper: Extract digits from phone (strips +, spaces, dashes)
+function phoneToDigits(phone: string): string {
+  return phone.replace(/\D/g, '');
+}
+
+// Helper: Normalize a phone for email format — returns email string
+function phoneToEmail(phone: string): string {
+  return `${phoneToDigits(phone)}@tikka.app`;
+}
+
+// Helper: Check if a phone matches the admin phone (handles both old and new format)
+function isAdminPhone(phone: string): boolean {
+  const digits = phoneToDigits(phone);
+  return digits === phoneToDigits(ADMIN_PHONE) || digits === ADMIN_PHONE_LEGACY;
+}
+
+// Helper: Normalize phone for storage — ensure it has a + prefix with country code
+// Legacy phones without + prefix get +62 (Indonesia) prepended
+function normalizePhoneForStorage(phone: string): string {
+  if (phone.startsWith('+')) return phone;
+  let digits = phone.replace(/\D/g, '');
+  if (digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+  if (digits.startsWith('62')) {
+    return `+${digits}`;
+  }
+  return `+62${digits}`;
 }
 
 // Default special offers (initialize if not exist) - IDR prices
@@ -186,28 +217,122 @@ const DEFAULT_SPECIAL_OFFERS = [
   },
 ];
 
-// Initialize default data on server start
-async function initializeDefaultData() {
-  try {
-    console.log("🚀 Starting default data initialization...");
-    
-    // Check if special offers exist
-    let existingOffers;
+// Helper: Truncate error messages to avoid dumping huge HTML responses in logs
+function truncateError(err: any): string {
+  const msg = err?.message || String(err);
+  if (msg.includes('<!DOCTYPE') || msg.includes('<html')) return '[502 Bad Gateway - Supabase temporarily unavailable]';
+  if (msg.length > 200) return msg.substring(0, 200) + '... [truncated]';
+  return msg;
+}
+
+// Helper: KV set with retry logic for cold-start resilience
+async function kvSetWithRetry(key: string, value: any, maxRetries = 4): Promise<void> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      existingOffers = await kv.getByPrefix("todays_special:");
-    } catch (error) {
-      console.error("⚠️ Failed to check existing offers (database might be warming up):", error.message);
-      existingOffers = null;
+      await kv.set(key, value);
+      return;
+    } catch (err) {
+      const msg = truncateError(err);
+      console.warn(`⚠️ kvSetWithRetry attempt ${attempt}/${maxRetries} for key "${key}" failed: ${msg}`);
+      if (attempt < maxRetries) {
+        const delay = 2000 * attempt;
+        console.log(`⏳ Retrying KV set in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        throw err;
+      }
     }
+  }
+}
+
+// Helper: KV get with retry logic for cold-start resilience
+async function kvGetWithRetry(key: string, maxRetries = 4): Promise<any> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await kv.get(key);
+    } catch (err) {
+      const msg = truncateError(err);
+      console.warn(`⚠️ kvGetWithRetry attempt ${attempt}/${maxRetries} for key "${key}" failed: ${msg}`);
+      if (attempt < maxRetries) {
+        const delay = 2000 * attempt;
+        console.log(`⏳ Retrying KV get in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
+// Helper: KV getByPrefix with retry logic for cold-start resilience
+async function kvGetByPrefixWithRetry(prefix: string, maxRetries = 4): Promise<any[]> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await kv.getByPrefix(prefix);
+    } catch (err) {
+      const msg = truncateError(err);
+      console.warn(`⚠️ kvGetByPrefixWithRetry attempt ${attempt}/${maxRetries} for prefix "${prefix}" failed: ${msg}`);
+      if (attempt < maxRetries) {
+        const delay = 2000 * attempt;
+        console.log(`⏳ Retrying KV getByPrefix in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        throw err;
+      }
+    }
+  }
+  return [];
+}
+
+// Helper: Ensure admin KV data exists without resetting points
+async function ensureAdminKVData(userId: string, createdAt: string, phone: string) {
+  try {
+    const existing = await kvGetWithRetry(`user:${userId}`);
+    if (existing && existing.isAdmin) {
+      console.log("✅ Admin user KV data already exists, preserving current data");
+      return;
+    }
+    // Only write if no existing data or not marked as admin
+    await kvSetWithRetry(`user:${userId}`, {
+      id: userId,
+      phone,
+      name: existing?.name || "Admin",
+      points: existing?.points || 0,
+      createdAt: existing?.createdAt || createdAt,
+      isAdmin: true,
+    });
+    console.log("✅ Admin user KV data updated");
+  } catch (kvError) {
+    console.error("⚠️ Failed to update admin user KV data:", truncateError(kvError));
+    console.log("⚠️ Not critical - KV will be updated on next login.");
+  }
+}
+
+// Initialize default data on server start (with retry)
+async function initializeDefaultData(attempt = 1) {
+  const MAX_RETRIES = 5;
+  const RETRY_DELAY_MS = 3000 * attempt; // Exponential backoff: 3s, 6s, 9s, 12s, 15s
+
+  // On first attempt, wait for Supabase to warm up before hitting the database
+  if (attempt === 1) {
+    console.log("⏳ Waiting 3s for Supabase cold-start warm-up...");
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+
+  try {
+    console.log(`🚀 Starting default data initialization (attempt ${attempt}/${MAX_RETRIES})...`);
+    
+    // Check if special offers exist (uses retry wrapper for cold-start resilience)
+    const existingOffers = await kvGetByPrefixWithRetry("todays_special:");
     
     // If no offers exist, create the default ones
     if (!existingOffers || existingOffers.length === 0) {
       console.log("Initializing default today's special items...");
       for (const offer of DEFAULT_SPECIAL_OFFERS) {
         try {
-          await kv.set(`todays_special:${offer.id}`, offer);
+          await kvSetWithRetry(`todays_special:${offer.id}`, offer);
         } catch (error) {
-          console.error(`⚠️ Failed to initialize offer ${offer.id}:`, error.message);
+          console.error(`⚠️ Failed to initialize offer ${offer.id}:`, truncateError(error));
         }
       }
       console.log("Default today's special items initialization attempted");
@@ -222,7 +347,9 @@ async function initializeDefaultData() {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
     
-    const adminEmail = `${ADMIN_PHONE}@tikka.app`;
+    // Admin email: try new format first, fallback to legacy
+    const adminEmailNew = phoneToEmail(ADMIN_PHONE); // 629999999999@tikka.app
+    const adminEmailLegacy = `${ADMIN_PHONE_LEGACY}@tikka.app`; // 9999999999@tikka.app
     
     // Try to find existing admin user
     let existingUsers;
@@ -230,101 +357,70 @@ async function initializeDefaultData() {
       const response = await supabase.auth.admin.listUsers();
       existingUsers = response.data;
     } catch (error) {
-      console.error("⚠️ Failed to list users (auth service might be warming up):", error.message);
-      console.log("⚠️ Skipping admin user initialization, will retry on next deployment");
+      console.error("⚠️ Failed to list users:", truncateError(error));
+      if (attempt < MAX_RETRIES) {
+        console.log(`⏳ Retrying initialization in ${RETRY_DELAY_MS}ms...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+        return initializeDefaultData(attempt + 1);
+      }
+      console.log("⚠️ Skipping admin user initialization after all retries");
       return;
     }
     
-    const adminExists = existingUsers?.users?.some(u => u.email === adminEmail);
+    // Check for admin user under both new and legacy email formats
+    const adminExistsNew = existingUsers?.users?.find(u => u.email === adminEmailNew);
+    const adminExistsLegacy = existingUsers?.users?.find(u => u.email === adminEmailLegacy);
+    const existingAdmin = adminExistsNew || adminExistsLegacy;
     
-    if (!adminExists) {
-      console.log("🔧 Creating admin user...");
+    if (!existingAdmin) {
+      console.log("🔧 Creating admin user with new international format...");
       const { data, error } = await supabase.auth.admin.createUser({
-        email: adminEmail,
-        password: ADMIN_PASSWORD,
+        email: adminEmailNew,
+        password: ADMIN_PIN,
         user_metadata: { name: "Admin", phone: ADMIN_PHONE },
         email_confirm: true,
       });
       
       if (error) {
-        // If user already exists (race condition or previous creation), just log it
         if (error.message?.includes("already been registered") || error.message?.includes("already exists")) {
           console.log("ℹ️ Admin user already exists (found via error), skipping creation");
-          // Try to find and update KV store anyway
           const { data: allUsers } = await supabase.auth.admin.listUsers();
-          const existingAdmin = allUsers?.users?.find(u => u.email === adminEmail);
-          if (existingAdmin) {
-            try {
-              await new Promise(resolve => setTimeout(resolve, 500));
-              
-              await kv.set(`user:${existingAdmin.id}`, {
-                id: existingAdmin.id,
-                phone: ADMIN_PHONE,
-                name: "Admin",
-                points: 0,
-                createdAt: existingAdmin.created_at,
-                isAdmin: true,
-              });
-              console.log("✅ Admin user KV data updated");
-            } catch (kvError) {
-              console.error("⚠️ Failed to update admin KV data:", kvError?.message || kvError);
-              console.log("⚠️ This is not critical - admin login will still work. KV will be updated on next login.");
-            }
+          const foundAdmin = allUsers?.users?.find(u => u.email === adminEmailNew || u.email === adminEmailLegacy);
+          if (foundAdmin) {
+            await ensureAdminKVData(foundAdmin.id, foundAdmin.created_at, ADMIN_PHONE);
           }
         } else {
           console.error("❌ Failed to create admin user:", error.message);
         }
       } else {
         console.log("✅ Admin user created successfully:", data.user.id);
-        
-        // Store admin user data in KV
-        try {
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          await kv.set(`user:${data.user.id}`, {
-            id: data.user.id,
-            phone: ADMIN_PHONE,
-            name: "Admin",
-            points: 0,
-            createdAt: new Date().toISOString(),
-            isAdmin: true,
-          });
-        } catch (kvError) {
-          console.error("⚠️ Failed to store admin user in KV:", kvError?.message || kvError);
-          console.log("⚠️ This is not critical - admin login will still work. KV will be updated on next login.");
-        }
+        await ensureAdminKVData(data.user.id, new Date().toISOString(), ADMIN_PHONE);
       }
     } else {
-      console.log("✅ Admin user already exists");
-      
-      // Get the admin user and ensure KV has the correct data
-      const adminUser = existingUsers?.users?.find(u => u.email === adminEmail);
-      if (adminUser) {
-        console.log("🔧 Ensuring admin user data in KV...");
-        try {
-          // Add a small delay to let connections stabilize
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          await kv.set(`user:${adminUser.id}`, {
-            id: adminUser.id,
-            phone: ADMIN_PHONE,
-            name: "Admin",
-            points: 0,
-            createdAt: adminUser.created_at,
-            isAdmin: true,
-          });
-          console.log("✅ Admin user KV data updated");
-        } catch (kvError) {
-          console.error("⚠️ Failed to update admin user KV data:", kvError?.message || kvError);
-          console.log("⚠️ This is not critical - admin login will still work. KV will be updated on next login.");
-        }
+      console.log("✅ Admin user already exists:", existingAdmin.id);
+      // Update admin password to current ADMIN_PIN (handles migration from old passwords like "admin123")
+      console.log("🔧 Updating admin password to current ADMIN_PIN...");
+      const { error: updatePwError } = await supabase.auth.admin.updateUserById(existingAdmin.id, {
+        password: ADMIN_PIN,
+      });
+      if (updatePwError) {
+        console.error("⚠️ Failed to update admin password:", updatePwError.message);
+      } else {
+        console.log("✅ Admin password updated to current ADMIN_PIN");
       }
+      console.log("🔧 Ensuring admin user data in KV...");
+      await ensureAdminKVData(existingAdmin.id, existingAdmin.created_at, ADMIN_PHONE);
     }
     
     console.log("✅ Default data initialization completed");
   } catch (error) {
-    console.error("❌ Failed to initialize default data:", error);
-    console.error("⚠️ This is not critical - the app will still function. Data will be initialized on first use.");
+    console.error("❌ Failed to initialize default data:", truncateError(error));
+    if (attempt < MAX_RETRIES) {
+      console.log(`⏳ Retrying initialization in ${RETRY_DELAY_MS}ms...`);
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+      return initializeDefaultData(attempt + 1);
+    }
+    console.error("⚠️ All retries exhausted. App will still function - data will be initialized on first use.");
   }
 }
 
@@ -459,10 +555,11 @@ app.get("/make-server-e5e192fb/debug/user-data", async (c) => {
 // Force re-initialize admin user in KV store
 app.post("/make-server-e5e192fb/debug/force-init-admin", async (c) => {
   try {
-    const { phone, password } = await c.req.json();
+    const { phone, pin, password } = await c.req.json();
+    const credential = pin || password; // Accept both field names
     
-    // Validate admin credentials
-    if (phone !== "9999999999" || password !== "admin123") {
+    // Validate admin credentials (accept both old and new phone formats)
+    if (!isAdminPhone(phone) || credential !== ADMIN_PIN) {
       return c.json({ error: "Invalid admin credentials" }, 401);
     }
 
@@ -471,8 +568,9 @@ app.post("/make-server-e5e192fb/debug/force-init-admin", async (c) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    // Convert phone to email format
-    const email = `${phone}@tikka.app`;
+    // Try both new and legacy email formats
+    const emailNew = phoneToEmail(ADMIN_PHONE);
+    const emailLegacy = `${ADMIN_PHONE_LEGACY}@tikka.app`;
     
     // Get the admin user by email
     const { data: { users }, error: listError } = await supabase.auth.admin.listUsers();
@@ -482,16 +580,26 @@ app.post("/make-server-e5e192fb/debug/force-init-admin", async (c) => {
       return c.json({ error: "Failed to list users", details: listError.message }, 500);
     }
     
-    const adminUser = users.find(u => u.email === email);
+    const adminUser = users.find(u => u.email === emailNew || u.email === emailLegacy);
     
     if (!adminUser) {
       return c.json({ error: "Admin user not found in Supabase Auth" }, 404);
     }
 
-    // Force update KV store with admin flag
+    // Force update admin password to ADMIN_PIN (handles migration from old passwords)
+    const { error: updatePwError } = await supabase.auth.admin.updateUserById(adminUser.id, {
+      password: ADMIN_PIN,
+    });
+    if (updatePwError) {
+      console.error("⚠️ Failed to update admin password:", updatePwError.message);
+    } else {
+      console.log("✅ Admin password updated to ADMIN_PIN");
+    }
+
+    // Force update KV store with admin flag (use international phone format)
     const userData = {
       id: adminUser.id,
-      phone: phone,
+      phone: ADMIN_PHONE,
       name: adminUser.user_metadata?.name || "Admin",
       points: 0,
       createdAt: adminUser.created_at,
@@ -516,27 +624,37 @@ app.post("/make-server-e5e192fb/debug/force-init-admin", async (c) => {
 // User Signup
 app.post("/make-server-e5e192fb/signup", async (c) => {
   try {
-    const { phone, password, name } = await c.req.json();
+    const { phone, pin, password, name } = await c.req.json();
+    const credential = pin || password; // Accept both field names, prefer pin
     
     console.log(`📝 SIGNUP: Starting signup for phone: ${phone}`);
     
-    if (!phone || !password || !name) {
-      return c.json({ error: "Phone number, password/PIN, and name are required" }, 400);
+    if (!phone || !credential || !name) {
+      return c.json({ error: "Phone number, 6-digit PIN, and name are required" }, 400);
     }
 
-    // Validate phone number format (10-12 digits)
-    const phoneDigits = phone.replace(/\D/g, '');
-    if (phoneDigits.length < 10 || phoneDigits.length > 12) {
-      return c.json({ error: "Phone number must be 10-12 digits" }, 400);
+    // Validate PIN format (must be exactly 6 digits)
+    if (!isValidPin(credential)) {
+      return c.json({ error: "PIN must be exactly 6 digits" }, 400);
     }
 
-    // Check if this is a PIN (6 digits) and validate it
-    const isPin = isPinFormat(password);
-    console.log(`📝 SIGNUP: Password format - ${isPin ? 'PIN (6 digits)' : 'Password (legacy)'}`);
+    // Normalize phone to international format for storage
+    const normalizedPhone = normalizePhoneForStorage(phone);
+    const phoneDigits = phoneToDigits(normalizedPhone);
+    console.log(`📝 SIGNUP: Normalized phone: ${normalizedPhone}, digits: ${phoneDigits}`);
     
-    // Check if phone already exists
+    if (phoneDigits.length < 10 || phoneDigits.length > 15) {
+      return c.json({ error: "Phone number must be 10-15 digits (with country code)" }, 400);
+    }
+
+    console.log(`📝 SIGNUP: PIN format validated (6 digits)`);
+    
+    // Check if phone already exists (check both normalized and legacy formats)
     const existingUsers = await kv.getByPrefix("user:");
-    const phoneExists = existingUsers.some((user: any) => user.phone === phone);
+    const phoneExists = existingUsers.some((user: any) => {
+      const existingDigits = phoneToDigits(user.phone || '');
+      return existingDigits === phoneDigits || user.phone === phone;
+    });
     if (phoneExists) {
       return c.json({ error: "Phone number already registered" }, 400);
     }
@@ -546,13 +664,14 @@ app.post("/make-server-e5e192fb/signup", async (c) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    // Use phone as email format for Supabase auth
-    const email = `${phoneDigits}@tikka.app`;
+    // Use phone digits as email format for Supabase auth
+    const email = phoneToEmail(normalizedPhone);
+    console.log(`📝 SIGNUP: Using email: ${email}`);
 
     const { data, error } = await supabase.auth.admin.createUser({
       email,
-      password,
-      user_metadata: { name, phone, usesPin: isPin },
+      password: credential,
+      user_metadata: { name, phone: normalizedPhone },
       email_confirm: true, // Automatically confirm since email server not configured
     });
 
@@ -563,22 +682,29 @@ app.post("/make-server-e5e192fb/signup", async (c) => {
 
     // Store user data in KV store
     const userId = data.user.id;
-    const isAdmin = phone.startsWith('9999'); // Admin if phone starts with 9999
+    const adminFlag = isAdminPhone(normalizedPhone);
     await kv.set(`user:${userId}`, {
       id: userId,
-      phone,
+      phone: normalizedPhone,
       name,
       points: 0,
       createdAt: new Date().toISOString(),
-      isAdmin,
-      usesPin: isPin, // Track if user uses PIN
+      isAdmin: adminFlag,
     });
 
-    console.log(`✅ SIGNUP: User created successfully - ID: ${userId}, Uses PIN: ${isPin}`);
+    console.log(`✅ SIGNUP: User created successfully - ID: ${userId}, Phone: ${normalizedPhone}`);
+
+    // Auto-assign eligible vouchers to the new user (all-customer vouchers + matching tier)
+    if (!adminFlag) {
+      const vouchersAssigned = await autoAssignVouchersToUser(userId, "Silver", normalizedPhone);
+      if (vouchersAssigned > 0) {
+        console.log(`🎟️ SIGNUP: Auto-assigned ${vouchersAssigned} voucher(s) to new user ${userId}`);
+      }
+    }
 
     return c.json({ 
       success: true, 
-      user: { id: userId, phone, name, points: 0, isAdmin, usesPin: isPin }
+      user: { id: userId, phone: normalizedPhone, name, points: 0, isAdmin: adminFlag }
     });
   } catch (error) {
     console.log(`❌ SIGNUP exception: ${error}`);
@@ -589,43 +715,110 @@ app.post("/make-server-e5e192fb/signup", async (c) => {
 // User Signin
 app.post("/make-server-e5e192fb/signin", async (c) => {
   try {
-    const { phone, password } = await c.req.json();
+    const { phone, pin, password } = await c.req.json();
+    const credential = pin || password; // Accept both field names, prefer pin
     
     console.log(`🔐 SIGNIN: Starting signin for phone: ${phone}`);
     
-    if (!phone || !password) {
-      return c.json({ error: "Phone number and PIN/password are required" }, 400);
+    if (!phone || !credential) {
+      return c.json({ error: "Phone number and 6-digit PIN are required" }, 400);
     }
 
-    // Detect if input is PIN (6 digits) or password
-    const isPin = isPinFormat(password);
-    console.log(`🔐 SIGNIN: Auth type - ${isPin ? 'PIN (6 digits)' : 'Password (legacy)'}`);
+    console.log(`🔐 SIGNIN: PIN-based authentication`);
 
-    // Convert phone to email format
-    const phoneDigits = phone.replace(/\D/g, '');
-    const email = `${phoneDigits}@tikka.app`;
-    console.log(`🔐 SIGNIN: Phone digits extracted: ${phoneDigits}`);
-    console.log(`🔐 SIGNIN: Using email format: ${email}`);
+    // Normalize phone to international format
+    const normalizedPhone = normalizePhoneForStorage(phone);
+    const newEmail = phoneToEmail(normalizedPhone);
+    console.log(`🔐 SIGNIN: Normalized phone: ${normalizedPhone}, new email: ${newEmail}`);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    console.log(`🔐 SIGNIN: Calling signInWithPassword with email=${email}`);
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
+    // Try new international format first
+    console.log(`🔐 SIGNIN: Trying new format email=${newEmail}`);
+    let { data, error } = await supabase.auth.signInWithPassword({
+      email: newEmail,
+      password: credential,
     });
 
-    console.log(`🔐 SIGNIN: Supabase response - error:`, error);
-    console.log(`🔐 SIGNIN: Supabase response - data:`, data);
+    // If new format fails, try legacy format (phone digits without country code)
+    // This handles existing users who registered before country code was added
+    if (error) {
+      // Extract just the local digits (strip country code prefix)
+      const rawDigits = phone.replace(/\D/g, '');
+      // Build possible legacy emails: the raw digits as-is, or without leading 0
+      const legacyEmails = new Set<string>();
+      legacyEmails.add(`${rawDigits}@tikka.app`);
+      // If phone was like +628123456789, rawDigits = 628123456789
+      // Legacy user might have registered as 8123456789 or 08123456789
+      // Try stripping the country code prefix to get local number
+      if (normalizedPhone.startsWith('+62') && rawDigits.startsWith('62')) {
+        legacyEmails.add(`${rawDigits.slice(2)}@tikka.app`); // 8123456789
+        legacyEmails.add(`0${rawDigits.slice(2)}@tikka.app`); // 08123456789
+      }
+      // Remove the already-tried email
+      legacyEmails.delete(newEmail);
+
+      console.log(`🔐 SIGNIN: New format failed, trying legacy emails:`, [...legacyEmails]);
+
+      for (const legacyEmail of legacyEmails) {
+        const legacyResult = await supabase.auth.signInWithPassword({
+          email: legacyEmail,
+          password: credential,
+        });
+        if (!legacyResult.error && legacyResult.data?.session) {
+          console.log(`✅ SIGNIN: Legacy format matched with email=${legacyEmail}`);
+          data = legacyResult.data;
+          error = null;
+          
+          // Migrate: update the user's KV phone to international format
+          try {
+            const kvData = await kv.get(`user:${data.user.id}`);
+            if (kvData && !kvData.phone?.startsWith('+')) {
+              console.log(`🔄 SIGNIN: Migrating KV phone from "${kvData.phone}" to "${normalizedPhone}"`);
+              await kv.set(`user:${data.user.id}`, { ...kvData, phone: normalizedPhone });
+            }
+          } catch (migrateErr) {
+            console.warn(`⚠️ SIGNIN: Failed to migrate phone in KV:`, truncateError(migrateErr));
+          }
+          break;
+        }
+      }
+    }
+
+    // If all formats failed and this is the admin user, force-update their password and retry
+    if (error && isAdminPhone(phone) && credential === ADMIN_PIN) {
+      console.log(`🔧 SIGNIN: Admin login failed, force-updating admin password to ADMIN_PIN...`);
+      try {
+        const { data: { users } } = await supabase.auth.admin.listUsers();
+        const adminEmailNew = phoneToEmail(normalizedPhone);
+        const adminEmailLegacy = `${ADMIN_PHONE_LEGACY}@tikka.app`;
+        const adminUser = users?.find((u: any) => u.email === adminEmailNew || u.email === adminEmailLegacy);
+        if (adminUser) {
+          await supabase.auth.admin.updateUserById(adminUser.id, { password: ADMIN_PIN });
+          console.log(`✅ SIGNIN: Admin password force-updated, retrying signin...`);
+          const retryResult = await supabase.auth.signInWithPassword({
+            email: adminUser.email!,
+            password: ADMIN_PIN,
+          });
+          if (!retryResult.error && retryResult.data?.session) {
+            data = retryResult.data;
+            error = null;
+            console.log(`✅ SIGNIN: Admin signin succeeded after password reset`);
+          } else {
+            console.log(`❌ SIGNIN: Admin signin still failed after password reset: ${retryResult.error?.message}`);
+          }
+        }
+      } catch (adminFixErr) {
+        console.error(`❌ SIGNIN: Failed to fix admin password:`, adminFixErr);
+      }
+    }
 
     if (error) {
-      console.log(`❌ SIGNIN: Supabase error - ${error.message}`);
-      console.log(`❌ SIGNIN: Error name: ${error.name}`);
-      console.log(`❌ SIGNIN: Error status: ${error.status}`);
-      return c.json({ error: "Invalid phone number or password" }, 400);
+      console.log(`❌ SIGNIN: All email formats failed - ${error.message}`);
+      return c.json({ error: "Invalid phone number or PIN" }, 400);
     }
 
     if (!data || !data.session || !data.user) {
@@ -645,7 +838,10 @@ app.post("/make-server-e5e192fb/signin", async (c) => {
       return c.json({ error: "Your account has been blocked. Please contact the restaurant for assistance." }, 403);
     }
 
-    const responseUser = userData || { id: data.user.id, phone, points: 0 };
+    // Ensure phone is in international format in response
+    const responseUser = userData 
+      ? { ...userData, phone: normalizePhoneForStorage(userData.phone || phone) }
+      : { id: data.user.id, phone: normalizedPhone, points: 0 };
     
     // Create our own custom JWT token (bypasses Supabase Auth credential mismatch)
     const customToken = await signToken({
@@ -696,6 +892,14 @@ app.get("/make-server-e5e192fb/profile", async (c) => {
       return c.json({ error: "User not found" }, 404);
     }
 
+    // Normalize phone to international format if legacy
+    if (userData.phone && !userData.phone.startsWith('+')) {
+      userData.phone = normalizePhoneForStorage(userData.phone);
+      // Persist the migration
+      await kv.set(`user:${payload.userId}`, userData);
+      console.log(`🔄 Profile GET - Migrated phone to international format: ${userData.phone}`);
+    }
+
     console.log(`✅ Profile GET - User data:`, { id: userData.id, name: userData.name, points: userData.points });
     return c.json({ user: userData });
   } catch (error) {
@@ -704,87 +908,7 @@ app.get("/make-server-e5e192fb/profile", async (c) => {
   }
 });
 
-// Switch from Password to PIN (requires auth)
-app.post("/make-server-e5e192fb/switch-to-pin", async (c) => {
-  try {
-    const { currentPassword, newPin } = await c.req.json();
-    
-    // Get custom JWT token
-    const customToken = getCustomToken(c);
-    if (!customToken) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
-    // Verify custom JWT
-    const payload = await verifyToken(customToken);
-    if (!payload || !payload.userId) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
-    console.log(`🔄 SWITCH-TO-PIN: User ${payload.userId} switching to PIN`);
-
-    // Validate new PIN
-    if (!isPinFormat(newPin)) {
-      return c.json({ error: "PIN must be exactly 6 digits" }, 400);
-    }
-
-    // Get user data
-    const userData = await kv.get(`user:${payload.userId}`);
-    if (!userData) {
-      return c.json({ error: "User not found" }, 404);
-    }
-
-    // Verify current password with Supabase
-    const phoneDigits = userData.phone.replace(/\D/g, '');
-    const email = `${phoneDigits}@tikka.app`;
-
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-    );
-
-    // Verify current password
-    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password: currentPassword,
-    });
-
-    if (signInError || !signInData.user) {
-      console.log(`❌ SWITCH-TO-PIN: Current password verification failed`);
-      return c.json({ error: "Current password is incorrect" }, 400);
-    }
-
-    // Update password to PIN in Supabase Auth
-    const { error: updateError } = await supabase.auth.admin.updateUserById(
-      payload.userId,
-      {
-        password: newPin,
-        user_metadata: { ...signInData.user.user_metadata, usesPin: true }
-      }
-    );
-
-    if (updateError) {
-      console.log(`❌ SWITCH-TO-PIN: Failed to update password: ${updateError.message}`);
-      return c.json({ error: "Failed to update to PIN" }, 500);
-    }
-
-    // Update user data in KV store
-    await kv.set(`user:${payload.userId}`, {
-      ...userData,
-      usesPin: true,
-    });
-
-    console.log(`✅ SWITCH-TO-PIN: Successfully switched user ${payload.userId} to PIN`);
-
-    return c.json({ 
-      success: true,
-      message: "Successfully switched to PIN login"
-    });
-  } catch (error) {
-    console.log(`❌ SWITCH-TO-PIN exception: ${error}`);
-    return c.json({ error: "Failed to switch to PIN" }, 500);
-  }
-});
+// (switch-to-pin endpoint removed — PIN is now the only auth method)
 
 // ========================================
 // CART ENDPOINTS (User-Specific Carts)
@@ -1061,7 +1185,7 @@ app.post("/make-server-e5e192fb/orders", async (c) => {
     console.log("Order Data:", JSON.stringify(orderData, null, 2));
     
     // ✅ CHECK RESTAURANT STATUS BEFORE ACCEPTING ORDER
-    const settings = await kv.get("restaurant_settings");
+    const settings = await kvGetWithRetry("restaurant_settings");
     if (settings) {
       // Check maintenance mode
       if (settings.maintenanceMode) {
@@ -1097,15 +1221,32 @@ app.post("/make-server-e5e192fb/orders", async (c) => {
     // Format as TNT00000001, TNT00000002, etc.
     const orderNumber = `TNT${String(newCounter).padStart(8, '0')}`;
     
+    const isMidtransPayment = orderData.paymentMethod === "midtrans";
+    const isAlreadyPaid = orderData.paymentReceived === true;
+    
     const order = {
       id: orderId,
       orderNumber: orderNumber,
       userId: userId,
       ...orderData,
-      status: "pending",
-      paymentReceived: false,
+      status: isAlreadyPaid ? "confirmed" : "pending",
+      paymentReceived: isAlreadyPaid,
+      paymentStatus: isAlreadyPaid ? "paid" : (isMidtransPayment ? "awaiting_payment" : "unpaid"),
+      paymentMethod: orderData.paymentMethod || "cash",
+      paidAmount: isAlreadyPaid ? (orderData.total || 0) : 0,
+      paymentHistory: isAlreadyPaid ? [{
+        method: "midtrans",
+        amount: orderData.total || 0,
+        timestamp: now,
+        status: "settlement",
+        note: "Online payment via Midtrans (confirmed at order creation)",
+      }] : [],
       pointsAwarded: false,
-      statusHistory: [
+      statusHistory: isAlreadyPaid ? [
+        { status: "pending", timestamp: now, label: "Order Created" },
+        { status: "payment_received", timestamp: now, label: "Payment received via Midtrans" },
+        { status: "confirmed", timestamp: now, label: "Order auto-confirmed (payment received)" },
+      ] : [
         { status: "pending", timestamp: now, label: "Order Created" }
       ],
       createdAt: now,
@@ -1120,8 +1261,11 @@ app.post("/make-server-e5e192fb/orders", async (c) => {
     // Add to user's orders list (skip for guest orders)
     if (!isGuestOrder) {
       const userOrdersKey = `user_orders:${userId}`;
-      const existingOrders = await kv.get(userOrdersKey) || [];
-      await kv.set(userOrdersKey, [...existingOrders, orderId]);
+      const existingOrders: string[] = (await kv.get(userOrdersKey)) || [];
+      // Deduplicate before appending to guard against race conditions
+      if (!existingOrders.includes(orderId)) {
+        await kv.set(userOrdersKey, [...existingOrders, orderId]);
+      }
     } else {
       // For guest orders, also store by phone for lookup
       const guestPhoneKey = `guest_orders:${orderData.guestPhone.replace(/\D/g, '')}`;
@@ -1163,8 +1307,9 @@ app.get("/make-server-e5e192fb/orders", async (c) => {
       orderIds.map((id: string) => kv.get(`order:${id}`))
     );
 
-    const filteredOrders = orders.filter(o => o !== null);
-    console.log(`Returning ${filteredOrders.length} orders`);
+    // Filter out null orders and draft orders awaiting online payment
+    const filteredOrders = orders.filter(o => o !== null && o.paymentStatus !== "awaiting_payment");
+    console.log(`Returning ${filteredOrders.length} orders (excluded awaiting_payment drafts)`);
     
     return c.json({ orders: filteredOrders });
   } catch (error) {
@@ -1367,6 +1512,7 @@ app.post("/make-server-e5e192fb/link-guest-order", async (c) => {
       if (pointsToAward > 0) {
         const oldPoints = userData.points || 0;
         const oldTotal = userData.totalPointsEarned || 0;
+        const oldTier = userData.tier || getUserTier(oldTotal);
         userData.points = oldPoints + pointsToAward;
         userData.totalPointsEarned = oldTotal + pointsToAward;
         
@@ -1389,6 +1535,15 @@ app.post("/make-server-e5e192fb/link-guest-order", async (c) => {
         
         pointsAwarded = pointsToAward;
         console.log(`✅ Retroactively awarded ${pointsToAward} points (${oldPoints} -> ${userData.points}), tier: ${userData.tier}`);
+
+        // Auto-assign vouchers if tier changed after retroactive points
+        if (userData.tier !== oldTier) {
+          console.log(`🎉 Tier promotion (retroactive): ${oldTier} -> ${userData.tier} for user ${userAuth.userId}`);
+          const vouchersAssigned = await autoAssignVouchersToUser(userAuth.userId, userData.tier, userData.phone);
+          if (vouchersAssigned > 0) {
+            console.log(`🎟️ Auto-assigned ${vouchersAssigned} voucher(s) after retroactive tier promotion`);
+          }
+        }
       }
     } else if (!isTerminal) {
       console.log(`ℹ️ Order status is "${updatedOrder.status}" — points will be awarded when delivered/closed`);
@@ -1488,16 +1643,19 @@ app.post("/make-server-e5e192fb/debug/force-init-admin", async (c) => {
   console.log("🔧🔧🔧 FORCE INIT ADMIN ENDPOINT CALLED");
   try {
     const body = await c.req.json();
-    const { phone, password } = body;
+    const { phone, pin, password } = body;
+    const credential = pin || password; // Accept both field names
     
     console.log(`Attempting to force-init admin for phone: ${phone}`);
     
-    if (phone !== ADMIN_PHONE || password !== ADMIN_PASSWORD) {
+    // Accept both old and new admin phone formats
+    if (!isAdminPhone(phone) || credential !== ADMIN_PIN) {
       return c.json({ error: "Invalid admin credentials" }, 403);
     }
     
-    // Convert phone to email for Supabase
-    const email = `${phone}@tikka.app`;
+    // Try both new and legacy email formats
+    const emailNew = phoneToEmail(ADMIN_PHONE);
+    const emailLegacy = `${ADMIN_PHONE_LEGACY}@tikka.app`;
     
     // Create Supabase service client
     const supabase = createClient(
@@ -1510,19 +1668,19 @@ app.post("/make-server-e5e192fb/debug/force-init-admin", async (c) => {
     console.log(`Found ${users?.length || 0} total users in Supabase Auth`);
     
     let userId;
-    const existingUser = users?.find(u => u.email === email);
+    const existingUser = users?.find(u => u.email === emailNew || u.email === emailLegacy);
     
     if (existingUser) {
       console.log(`Admin user already exists in Supabase: ${existingUser.id}`);
       userId = existingUser.id;
     } else {
-      // Create admin user in Supabase
+      // Create admin user in Supabase with new format
       console.log(`Creating new admin user in Supabase...`);
       const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
-        email,
-        password,
+        email: emailNew,
+        password: credential,
         email_confirm: true,
-        user_metadata: { name: "Admin User", phone }
+        user_metadata: { name: "Admin User", phone: ADMIN_PHONE }
       });
       
       if (createError) {
@@ -1537,9 +1695,9 @@ app.post("/make-server-e5e192fb/debug/force-init-admin", async (c) => {
     // Force set isAdmin flag in KV store
     const adminUserData = {
       id: userId,
-      phone,
+      phone: ADMIN_PHONE,
       name: "Admin User",
-      email,
+      email: emailNew,
       points: 0,
       tier: "Silver",
       isAdmin: true,
@@ -1783,10 +1941,14 @@ app.get("/make-server-e5e192fb/admin/orders", async (c) => {
       return c.json({ error: "Admin access required" }, 403);
     }
 
-    // Get all orders
+    // Get all orders (exclude draft orders awaiting online payment)
     console.log(`✅ Admin user ${adminAuth.userId} authorized, fetching all orders`);
     const allOrders = await kv.getByPrefix("order:");
-    return c.json({ orders: allOrders });
+    const visibleOrders = allOrders.filter((entry: any) => {
+      const order = entry.value || entry;
+      return order.paymentStatus !== "awaiting_payment";
+    });
+    return c.json({ orders: visibleOrders });
   } catch (error) {
     console.log(`Admin get orders error: ${error}`);
     return c.json({ error: "Failed to get orders" }, 500);
@@ -2946,7 +3108,7 @@ app.post("/make-server-e5e192fb/admin/regular-menu", async (c) => {
     }
 
     const body = await c.req.json();
-    const { category, name, price, image } = body;
+    const { category, name, price, image, isBestSeller, isChefSpecial } = body;
 
     if (!category || !name || !price) {
       return c.json({ error: "Category, name, and price are required" }, 400);
@@ -2960,6 +3122,8 @@ app.post("/make-server-e5e192fb/admin/regular-menu", async (c) => {
       price: parseFloat(price),
       image: image || undefined,
       isAvailable: true,
+      isBestSeller: isBestSeller || false,
+      isChefSpecial: isChefSpecial || false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -2988,7 +3152,7 @@ app.put("/make-server-e5e192fb/admin/regular-menu/:id", async (c) => {
 
     const itemId = c.req.param('id');
     const body = await c.req.json();
-    const { category, name, price, image, isAvailable } = body;
+    const { category, name, price, image, isAvailable, isBestSeller, isChefSpecial } = body;
 
     const existingItem = await kv.get(`regular_menu:${itemId}`);
     if (!existingItem) {
@@ -3002,6 +3166,8 @@ app.put("/make-server-e5e192fb/admin/regular-menu/:id", async (c) => {
       price: price !== undefined ? parseFloat(price) : existingItem.price,
       image: image !== undefined ? image : existingItem.image,
       isAvailable: isAvailable !== undefined ? isAvailable : existingItem.isAvailable,
+      isBestSeller: isBestSeller !== undefined ? isBestSeller : existingItem.isBestSeller || false,
+      isChefSpecial: isChefSpecial !== undefined ? isChefSpecial : existingItem.isChefSpecial || false,
       updatedAt: new Date().toISOString(),
     };
 
@@ -3044,6 +3210,83 @@ app.delete("/make-server-e5e192fb/admin/regular-menu/:id", async (c) => {
 });
 
 // ==================== END REGULAR MENU ROUTES ====================
+
+// ==================== USER FAVORITES ROUTES ====================
+
+// Get user favorites + frequently ordered items
+app.get("/make-server-e5e192fb/user-favorites", async (c) => {
+  try {
+    const userId = c.req.query("userId");
+    if (!userId) return c.json({ error: "User ID required" }, 400);
+
+    // Get manually favorited item IDs
+    const favKey = `user_favorites:${userId}`;
+    const favoriteIds: string[] = (await kv.get(favKey)) || [];
+
+    // Get user's order history to compute frequency
+    const userOrdersKey = `user_orders:${userId}`;
+    const orderIds: string[] = (await kv.get(userOrdersKey)) || [];
+
+    const itemFrequency: Record<string, number> = {};
+    if (orderIds.length > 0) {
+      // Deduplicate order IDs in case of race conditions during concurrent appends
+      const uniqueOrderIds = [...new Set(orderIds)];
+      const orders = await Promise.all(
+        uniqueOrderIds.map((id: string) => kv.get(`order:${id}`))
+      );
+      for (const order of orders) {
+        if (!order || !order.items) continue;
+        // Count all non-cancelled orders (pending, confirmed, cooking, ready, delivered, closed, completed)
+        // Skip only cancelled orders and unpaid draft orders still awaiting payment
+        if (order.status === "cancelled") continue;
+        if (order.paymentStatus === "awaiting_payment" && order.status === "pending") continue;
+        for (const item of order.items) {
+          // Match by id first, then fallback to title (cart items use 'title'), then name
+          const itemId = item.id || item.title || item.name;
+          if (itemId) {
+            itemFrequency[itemId] = (itemFrequency[itemId] || 0) + (item.quantity || 1);
+          }
+        }
+      }
+    }
+
+    return c.json({ favorites: favoriteIds, itemFrequency });
+  } catch (error) {
+    console.log(`Get user favorites error: ${error}`);
+    return c.json({ error: "Failed to get favorites" }, 500);
+  }
+});
+
+// Toggle a favorite item
+app.post("/make-server-e5e192fb/user-favorites/toggle", async (c) => {
+  try {
+    const { userId, itemId } = await c.req.json();
+    if (!userId || !itemId) return c.json({ error: "userId and itemId required" }, 400);
+
+    const favKey = `user_favorites:${userId}`;
+    const favorites: string[] = (await kv.get(favKey)) || [];
+
+    let isFavorited: boolean;
+    if (favorites.includes(itemId)) {
+      // Remove
+      const updated = favorites.filter((id: string) => id !== itemId);
+      await kv.set(favKey, updated);
+      isFavorited = false;
+    } else {
+      // Add
+      favorites.push(itemId);
+      await kv.set(favKey, favorites);
+      isFavorited = true;
+    }
+
+    return c.json({ success: true, isFavorited, favorites: isFavorited ? favorites : favorites });
+  } catch (error) {
+    console.log(`Toggle favorite error: ${error}`);
+    return c.json({ error: "Failed to toggle favorite" }, 500);
+  }
+});
+
+// ==================== END USER FAVORITES ROUTES ====================
 
 // Get User Points Summary (requires auth)
 app.get("/make-server-e5e192fb/points/summary", async (c) => {
@@ -3147,7 +3390,7 @@ app.post("/make-server-e5e192fb/admin/users/:id/points", async (c) => {
 });
 
 // Admin: Reset User PIN
-app.post("/make-server-e5e192fb/admin/users/:id/password", async (c) => {
+app.post("/make-server-e5e192fb/admin/users/:id/reset-pin", async (c) => {
   try {
     console.log(`🔑 PIN reset request received`);
     
@@ -3168,13 +3411,14 @@ app.post("/make-server-e5e192fb/admin/users/:id/password", async (c) => {
     console.log(`✅ Admin access verified for user ${adminAuth.userId}`);
 
     const userId = c.req.param('id');
-    const { password } = await c.req.json();
+    const { pin, password } = await c.req.json();
+    const newPin = pin || password; // Accept both field names
 
-    console.log(`🔑 Resetting PIN for user: ${userId}, PIN length: ${password?.length}`);
+    console.log(`🔑 Resetting PIN for user: ${userId}, PIN length: ${newPin?.length}`);
 
-    if (!password || password.length < 6) {
+    if (!newPin || !isValidPin(newPin)) {
       console.log(`❌ PIN validation failed`);
-      return c.json({ error: "PIN must be at least 6 digits" }, 400);
+      return c.json({ error: "PIN must be exactly 6 digits" }, 400);
     }
 
     console.log(`🔑 Fetching user from KV store...`);
@@ -3186,7 +3430,7 @@ app.post("/make-server-e5e192fb/admin/users/:id/password", async (c) => {
 
     console.log(`✅ User found: ${user.name}, updating PIN in Supabase Auth...`);
 
-    // Update password in Supabase Auth system (this is where actual authentication happens)
+    // Update PIN in Supabase Auth system (stored as password internally)
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
@@ -3194,7 +3438,7 @@ app.post("/make-server-e5e192fb/admin/users/:id/password", async (c) => {
 
     const { data: updateData, error: updateError } = await supabase.auth.admin.updateUserById(
       userId,
-      { password: password }
+      { password: newPin }
     );
 
     if (updateError) {
@@ -3204,15 +3448,7 @@ app.post("/make-server-e5e192fb/admin/users/:id/password", async (c) => {
 
     console.log(`✅ PIN updated successfully in Supabase Auth`);
 
-    // Also update the passwordHash in KV store for consistency (though login uses Supabase)
-    const encoder = new TextEncoder();
-    const data = encoder.encode(password);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const passwordHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
-    user.passwordHash = passwordHash;
-    user.usesPin = true;
+    // Update KV store
     await kv.set(`user:${userId}`, user);
 
     console.log(`✅ Admin reset PIN for user ${userId} (${user.name})`);
@@ -3342,7 +3578,83 @@ app.delete("/make-server-e5e192fb/admin/users/:id", async (c) => {
 
 // ==================== VOUCHERS ROUTES ====================
 
-// Admin: Get All Vouchers
+// Helper: Get user tier from points
+function getUserTier(points: number): string {
+  if (points >= 20000) return "Platinum";
+  if (points >= 10000) return "Diamond";
+  if (points >= 5000) return "Gold";
+  return "Silver";
+}
+
+// Helper: Auto-assign eligible vouchers to a user
+// Called on signup (for "all" + matching tier vouchers) and on tier promotion (for newly eligible tier vouchers)
+async function autoAssignVouchersToUser(userId: string, userTier: string, userPhone?: string) {
+  try {
+    const allVouchers = await kvGetByPrefixWithRetry("voucher:");
+    if (!allVouchers || allVouchers.length === 0) return 0;
+
+    // Get user's existing voucher assignments
+    const allAssignments = await kvGetByPrefixWithRetry("user_voucher:");
+    const userAssignments = (allAssignments || []).filter((a: any) => a.userId === userId);
+    const assignedVoucherIds = new Set(userAssignments.map((a: any) => a.voucherId));
+
+    let assignedCount = 0;
+    const now = new Date();
+
+    for (const voucher of allVouchers) {
+      // Skip if already assigned
+      if (assignedVoucherIds.has(voucher.id)) continue;
+
+      // Skip inactive vouchers
+      if (voucher.isActive === false) continue;
+
+      // Skip expired vouchers
+      if (voucher.expiryDate) {
+        const expiry = new Date(voucher.expiryDate);
+        expiry.setHours(23, 59, 59, 999);
+        if (expiry < now) continue;
+      }
+
+      let eligible = false;
+
+      if (voucher.targetType === "all") {
+        eligible = true;
+      } else if (voucher.targetType === "tier" && voucher.targetTier === userTier) {
+        eligible = true;
+      } else if (voucher.targetType === "specific" && userPhone && voucher.targetPhones?.length > 0) {
+        const normalizedUserPhone = userPhone.replace(/^\+62/, "0");
+        eligible = voucher.targetPhones.some((tp: string) => {
+          const normalizedTp = tp.replace(/^\+62/, "0");
+          return tp === userPhone || normalizedTp === normalizedUserPhone || normalizedTp === userPhone || tp === normalizedUserPhone;
+        });
+      }
+
+      if (eligible) {
+        const assignmentId = crypto.randomUUID();
+        await kv.set(`user_voucher:${assignmentId}`, {
+          id: assignmentId,
+          userId,
+          voucherId: voucher.id,
+          voucher,
+          assignedAt: now.toISOString(),
+          claimed: false,
+          used: false,
+        });
+        assignedCount++;
+      }
+    }
+
+    if (assignedCount > 0) {
+      console.log(`🎟️ Auto-assigned ${assignedCount} voucher(s) to user ${userId} (tier: ${userTier})`);
+    }
+    return assignedCount;
+  } catch (error) {
+    console.log(`⚠️ Auto-assign vouchers error for user ${userId}: ${error}`);
+    return 0;
+  }
+}
+
+// Admin: Get All Vouchers (with assignment counts)
 app.get("/make-server-e5e192fb/admin/vouchers", async (c) => {
   try {
     const customToken = getCustomToken(c);
@@ -3350,16 +3662,30 @@ app.get("/make-server-e5e192fb/admin/vouchers", async (c) => {
       return c.json({ error: "Unauthorized - No token provided" }, 401);
     }
 
-    const adminCheck = await checkAdminAccess(customToken);
-    if (!adminCheck.isAdmin) {
+    const adminCheck = await verifyAdminAccess(customToken);
+    if (!adminCheck?.isAdmin) {
       return c.json({ error: "Admin access required" }, 403);
     }
 
-    const vouchers = await kv.getByPrefix("voucher:");
-    return c.json({ vouchers });
+    const vouchers = await kvGetByPrefixWithRetry("voucher:");
+    const assignments = await kvGetByPrefixWithRetry("user_voucher:");
+    
+    const enriched = (vouchers || []).map((v: any) => {
+      const vAssigns = (assignments || []).filter((a: any) => a.voucherId === v.id);
+      const totalIndividualUses = vAssigns.reduce((sum: number, a: any) => sum + (a.usedCount || 0), 0);
+      return {
+        ...v,
+        assignedCount: vAssigns.length,
+        usedCount: vAssigns.filter((a: any) => a.used).length, // fully exhausted assignments
+        claimedCount: vAssigns.filter((a: any) => a.claimed).length,
+        totalIndividualUses, // total individual uses across all users
+      };
+    });
+    
+    return c.json({ vouchers: enriched });
   } catch (error) {
-    console.log(`Get vouchers error: ${error}`);
-    return c.json({ error: "Failed to get vouchers" }, 500);
+    console.log(`Get vouchers error: ${error?.message || error}`);
+    return c.json({ error: `Failed to get vouchers: ${error?.message || error}` }, 500);
   }
 });
 
@@ -3371,8 +3697,8 @@ app.post("/make-server-e5e192fb/admin/vouchers", async (c) => {
       return c.json({ error: "Unauthorized - No token provided" }, 401);
     }
 
-    const adminCheck = await checkAdminAccess(customToken);
-    if (!adminCheck.isAdmin) {
+    const adminCheck = await verifyAdminAccess(customToken);
+    if (!adminCheck?.isAdmin) {
       return c.json({ error: "Admin access required" }, 403);
     }
 
@@ -3382,13 +3708,55 @@ app.post("/make-server-e5e192fb/admin/vouchers", async (c) => {
     const voucher = {
       id: voucherId,
       ...voucherData,
+      targetType: voucherData.targetType || "all",
+      targetTier: voucherData.targetTier || null,
+      targetPhones: voucherData.targetPhones || [],
+      discountType: voucherData.discountType || "percentage",
+      discountValue: voucherData.discountValue || 0,
+      minOrderAmount: voucherData.minOrderAmount || 0,
+      // Menu/category restrictions: empty array = applies to all menu items
+      applicableCategories: voucherData.applicableCategories || [],
+      applicableItemIds: voucherData.applicableItemIds || [],
+      isActive: true,
       createdAt: new Date().toISOString(),
     };
 
     await kv.set(`voucher:${voucherId}`, voucher);
     
-    console.log(`✅ Voucher created: ${voucher.title}`);
-    return c.json({ success: true, voucher });
+    // Auto-assign based on targeting
+    let assignedCount = 0;
+    if (voucher.targetType === "all" || voucher.targetType === "tier") {
+      const allUsers = await kvGetByPrefixWithRetry("user:");
+      for (const user of (allUsers || [])) {
+        if (user.isAdmin) continue;
+        if (voucher.targetType === "tier") {
+          const userTier = user.tier || getUserTier(user.totalPointsEarned || user.points || 0);
+          if (userTier !== voucher.targetTier) continue;
+        }
+        const assignmentId = crypto.randomUUID();
+        await kv.set(`user_voucher:${assignmentId}`, {
+          id: assignmentId, userId: user.id, voucherId,
+          voucher, assignedAt: new Date().toISOString(), claimed: false, used: false,
+        });
+        assignedCount++;
+      }
+    } else if (voucher.targetType === "specific" && voucher.targetPhones?.length > 0) {
+      const allUsers = await kvGetByPrefixWithRetry("user:");
+      for (const phone of voucher.targetPhones) {
+        const user = (allUsers || []).find((u: any) => u.phone === phone || u.phone?.replace(/^\+62/, "0") === phone || u.phone === phone.replace(/^0/, "+62"));
+        if (user) {
+          const assignmentId = crypto.randomUUID();
+          await kv.set(`user_voucher:${assignmentId}`, {
+            id: assignmentId, userId: user.id, voucherId,
+            voucher, assignedAt: new Date().toISOString(), claimed: false, used: false,
+          });
+          assignedCount++;
+        }
+      }
+    }
+    
+    console.log(`✅ Voucher created: ${voucher.title} (assigned to ${assignedCount} users)`);
+    return c.json({ success: true, voucher, assignedCount });
   } catch (error) {
     console.log(`Create voucher error: ${error}`);
     return c.json({ error: "Failed to create voucher" }, 500);
@@ -3403,8 +3771,8 @@ app.put("/make-server-e5e192fb/admin/vouchers/:id", async (c) => {
       return c.json({ error: "Unauthorized - No token provided" }, 401);
     }
 
-    const adminCheck = await checkAdminAccess(customToken);
-    if (!adminCheck.isAdmin) {
+    const adminCheck = await verifyAdminAccess(customToken);
+    if (!adminCheck?.isAdmin) {
       return c.json({ error: "Admin access required" }, 403);
     }
 
@@ -3424,6 +3792,15 @@ app.put("/make-server-e5e192fb/admin/vouchers/:id", async (c) => {
 
     await kv.set(`voucher:${voucherId}`, updatedVoucher);
     
+    // Sync embedded voucher data in all assignments
+    const assignments = await kvGetByPrefixWithRetry("user_voucher:");
+    for (const assign of (assignments || [])) {
+      if (assign.voucherId === voucherId) {
+        assign.voucher = updatedVoucher;
+        await kv.set(`user_voucher:${assign.id}`, assign);
+      }
+    }
+    
     console.log(`✅ Voucher updated: ${updatedVoucher.title}`);
     return c.json({ success: true, voucher: updatedVoucher });
   } catch (error) {
@@ -3440,15 +3817,23 @@ app.delete("/make-server-e5e192fb/admin/vouchers/:id", async (c) => {
       return c.json({ error: "Unauthorized - No token provided" }, 401);
     }
 
-    const adminCheck = await checkAdminAccess(customToken);
-    if (!adminCheck.isAdmin) {
+    const adminCheck = await verifyAdminAccess(customToken);
+    if (!adminCheck?.isAdmin) {
       return c.json({ error: "Admin access required" }, 403);
     }
 
     const voucherId = c.req.param('id');
     await kv.del(`voucher:${voucherId}`);
     
-    console.log(`✅ Voucher deleted: ${voucherId}`);
+    // Also delete all assignments for this voucher
+    const delAssignments = await kvGetByPrefixWithRetry("user_voucher:");
+    for (const assign of (delAssignments || [])) {
+      if (assign.voucherId === voucherId) {
+        await kv.del(`user_voucher:${assign.id}`);
+      }
+    }
+    
+    console.log(`✅ Voucher deleted (with assignments): ${voucherId}`);
     return c.json({ success: true });
   } catch (error) {
     console.log(`Delete voucher error: ${error}`);
@@ -3464,8 +3849,8 @@ app.post("/make-server-e5e192fb/admin/vouchers/:id/assign", async (c) => {
       return c.json({ error: "Unauthorized - No token provided" }, 401);
     }
 
-    const adminCheck = await checkAdminAccess(customToken);
-    if (!adminCheck.isAdmin) {
+    const adminCheck = await verifyAdminAccess(customToken);
+    if (!adminCheck?.isAdmin) {
       return c.json({ error: "Admin access required" }, 403);
     }
 
@@ -3476,9 +3861,9 @@ app.post("/make-server-e5e192fb/admin/vouchers/:id/assign", async (c) => {
       return c.json({ error: "Phone number is required" }, 400);
     }
 
-    // Find user by phone
-    const allUsers = await kv.getByPrefix("user:");
-    const user = allUsers.find(u => u.phone === phoneNumber);
+    // Find user by phone (flexible matching)
+    const allUsers = await kvGetByPrefixWithRetry("user:");
+    const user = (allUsers || []).find((u: any) => u.phone === phoneNumber || u.phone?.replace(/^\+62/, "0") === phoneNumber || u.phone === phoneNumber.replace(/^0/, "+62"));
 
     if (!user) {
       return c.json({ error: "User not found with this phone number" }, 404);
@@ -3489,6 +3874,13 @@ app.post("/make-server-e5e192fb/admin/vouchers/:id/assign", async (c) => {
       return c.json({ error: "Voucher not found" }, 404);
     }
 
+    // Check if already assigned
+    const existing = await kvGetByPrefixWithRetry("user_voucher:");
+    const alreadyAssigned = (existing || []).find((a: any) => a.voucherId === voucherId && a.userId === user.id);
+    if (alreadyAssigned) {
+      return c.json({ error: "Voucher already assigned to this user" }, 400);
+    }
+
     // Create user voucher assignment
     const assignmentId = crypto.randomUUID();
     const assignment = {
@@ -3497,6 +3889,7 @@ app.post("/make-server-e5e192fb/admin/vouchers/:id/assign", async (c) => {
       voucherId: voucherId,
       voucher: voucher,
       assignedAt: new Date().toISOString(),
+      claimed: false,
       used: false,
     };
 
@@ -3507,6 +3900,385 @@ app.post("/make-server-e5e192fb/admin/vouchers/:id/assign", async (c) => {
   } catch (error) {
     console.log(`Assign voucher error: ${error}`);
     return c.json({ error: "Failed to assign voucher" }, 500);
+  }
+});
+
+// Admin: Bulk assign voucher to tier
+app.post("/make-server-e5e192fb/admin/vouchers/:id/assign-tier", async (c) => {
+  try {
+    const customToken = getCustomToken(c);
+    if (!customToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminCheck = await verifyAdminAccess(customToken);
+    if (!adminCheck?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const voucherId = c.req.param('id');
+    const { tier } = await c.req.json();
+    if (!tier) return c.json({ error: "Tier is required" }, 400);
+
+    const voucher = await kv.get(`voucher:${voucherId}`);
+    if (!voucher) return c.json({ error: "Voucher not found" }, 404);
+
+    const allUsers = await kvGetByPrefixWithRetry("user:");
+    const existing = await kvGetByPrefixWithRetry("user_voucher:");
+    let assignedCount = 0;
+
+    for (const user of (allUsers || [])) {
+      if (user.isAdmin) continue;
+      const userTier = user.tier || getUserTier(user.totalPointsEarned || user.points || 0);
+      if (userTier !== tier) continue;
+      const already = (existing || []).find((a: any) => a.voucherId === voucherId && a.userId === user.id);
+      if (already) continue;
+
+      const assignmentId = crypto.randomUUID();
+      await kv.set(`user_voucher:${assignmentId}`, {
+        id: assignmentId, userId: user.id, voucherId,
+        voucher, assignedAt: new Date().toISOString(), claimed: false, used: false,
+      });
+      assignedCount++;
+    }
+
+    console.log(`✅ Voucher bulk-assigned to ${assignedCount} ${tier} users`);
+    return c.json({ success: true, assignedCount });
+  } catch (error) {
+    console.log(`Bulk assign voucher error: ${error}`);
+    return c.json({ error: "Failed to bulk assign voucher" }, 500);
+  }
+});
+
+// Admin: Get voucher assignments
+app.get("/make-server-e5e192fb/admin/vouchers/:id/assignments", async (c) => {
+  try {
+    const customToken = getCustomToken(c);
+    if (!customToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminCheck = await verifyAdminAccess(customToken);
+    if (!adminCheck?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const voucherId = c.req.param('id');
+    const assignments = await kvGetByPrefixWithRetry("user_voucher:");
+    const voucherAssignments = (assignments || []).filter((a: any) => a.voucherId === voucherId);
+    
+    const allUsers = await kvGetByPrefixWithRetry("user:");
+    const enriched = voucherAssignments.map((a: any) => {
+      const user = (allUsers || []).find((u: any) => u.id === a.userId);
+      return {
+        ...a,
+        userName: user?.name || "Unknown",
+        userPhone: user?.phone || "Unknown",
+        userTier: user?.tier || getUserTier(user?.totalPointsEarned || user?.points || 0),
+      };
+    });
+
+    return c.json({ assignments: enriched });
+  } catch (error) {
+    console.log(`Get assignments error: ${error}`);
+    return c.json({ error: "Failed to get assignments" }, 500);
+  }
+});
+
+// Customer: Get vouchers for a user
+app.get("/make-server-e5e192fb/user-vouchers", async (c) => {
+  try {
+    const userId = c.req.query("userId");
+    if (!userId) return c.json({ error: "userId is required" }, 400);
+
+    const userData = await kv.get(`user:${userId}`);
+    if (!userData) return c.json({ vouchers: [] });
+
+    // Lazy auto-assign: check if there are any eligible vouchers this user is missing
+    // This catches vouchers created after signup or after tier promotion
+    const userTier = userData.tier || getUserTier(userData.totalPointsEarned || userData.points || 0);
+    await autoAssignVouchersToUser(userId, userTier, userData.phone);
+
+    const allAssignments = await kvGetByPrefixWithRetry("user_voucher:");
+    const userAssignments = (allAssignments || []).filter((a: any) => a.userId === userId);
+
+    return c.json({ vouchers: userAssignments });
+  } catch (error) {
+    console.log(`Get user vouchers error: ${error}`);
+    return c.json({ error: "Failed to get user vouchers" }, 500);
+  }
+});
+
+// Customer: Claim a voucher
+// Helper: Generate a short promo code like "TIKKA-A3X9ZP"
+function generatePromoCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return `TIKKA-${code}`;
+}
+
+app.post("/make-server-e5e192fb/claim-voucher", async (c) => {
+  try {
+    const customToken = getCustomToken(c);
+    if (!customToken) return c.json({ error: "Unauthorized" }, 401);
+    const payload = await verifyToken(customToken);
+    if (!payload) return c.json({ error: "Invalid token" }, 401);
+
+    const { userVoucherId } = await c.req.json();
+    if (!userVoucherId) return c.json({ error: "userVoucherId is required" }, 400);
+
+    const assignment = await kv.get(`user_voucher:${userVoucherId}`);
+    if (!assignment) return c.json({ error: "Voucher assignment not found" }, 404);
+    if (assignment.userId !== payload.userId) return c.json({ error: "Not your voucher" }, 403);
+    if (assignment.claimed) return c.json({ error: "Voucher already claimed" }, 400);
+
+    // Generate a unique promo code
+    const promoCode = generatePromoCode();
+
+    assignment.claimed = true;
+    assignment.claimedAt = new Date().toISOString();
+    assignment.promoCode = promoCode;
+    await kv.set(`user_voucher:${userVoucherId}`, assignment);
+
+    // Store a reverse lookup: promoCode -> userVoucherId for fast validation
+    await kv.set(`promo:${promoCode}`, { userVoucherId, userId: payload.userId });
+
+    console.log(`✅ Voucher claimed: ${assignment.voucher?.title} by user ${payload.userId}, promoCode: ${promoCode}`);
+    return c.json({ success: true, assignment });
+  } catch (error) {
+    console.log(`Claim voucher error: ${error}`);
+    return c.json({ error: "Failed to claim voucher" }, 500);
+  }
+});
+
+// Customer: Validate a promo code at checkout
+app.post("/make-server-e5e192fb/validate-promo", async (c) => {
+  try {
+    const customToken = getCustomToken(c);
+    if (!customToken) return c.json({ error: "Unauthorized" }, 401);
+    const payload = await verifyToken(customToken);
+    if (!payload) return c.json({ error: "Invalid token" }, 401);
+
+    const { promoCode, subtotal, cartItems } = await c.req.json();
+    if (!promoCode) return c.json({ error: "Promo code is required" }, 400);
+
+    const code = promoCode.trim().toUpperCase();
+
+    // Look up the promo code
+    const promoLookup = await kv.get(`promo:${code}`);
+    if (!promoLookup) {
+      return c.json({ valid: false, error: "Invalid promo code" });
+    }
+
+    const assignment = await kv.get(`user_voucher:${promoLookup.userVoucherId}`);
+    if (!assignment) {
+      return c.json({ valid: false, error: "Voucher not found" });
+    }
+    if (assignment.userId !== payload.userId) {
+      return c.json({ valid: false, error: "This promo code doesn't belong to you" });
+    }
+    if (!assignment.claimed) {
+      return c.json({ valid: false, error: "Voucher has not been claimed yet" });
+    }
+
+    // Support multi-use vouchers: check usedCount vs quantity
+    const vMaxUses = assignment.voucher?.quantity || 1;
+    const vUsedCount = assignment.usedCount || 0;
+    if (assignment.used && vUsedCount >= vMaxUses) {
+      return c.json({ valid: false, error: "This promo code has been fully used" });
+    }
+
+    // Check expiry
+    const voucher = assignment.voucher;
+    if (voucher?.expiryDate) {
+      const expiry = new Date(voucher.expiryDate);
+      if (expiry < new Date()) {
+        return c.json({ valid: false, error: "This promo code has expired" });
+      }
+    }
+
+    // Check minimum order amount
+    if (voucher?.minOrderAmount && subtotal && subtotal < voucher.minOrderAmount) {
+      return c.json({ 
+        valid: false, 
+        error: `Minimum order of Rp ${Number(voucher.minOrderAmount).toLocaleString("id-ID")} required` 
+      });
+    }
+
+    // Check menu/category restrictions
+    const applicableCategories: string[] = voucher?.applicableCategories || [];
+    const applicableItemIds: string[] = voucher?.applicableItemIds || [];
+    const hasRestrictions = applicableCategories.length > 0 || applicableItemIds.length > 0;
+
+    let eligibleItems: any[] = [];
+    let eligibleSubtotal = 0;
+
+    if (hasRestrictions && cartItems && Array.isArray(cartItems) && cartItems.length > 0) {
+      // Resolve actual menu categories for cart items that have stale/broad category names
+      // (e.g. "Regular Menu" instead of "Biryani"). Look up the real category from menu data.
+      const broadCategories = ["Regular Menu", "Today's Special", "Kids Menu", "Flash Sale", "Uncategorized"];
+      const needsResolution = cartItems.some((i: any) => broadCategories.includes(i.category));
+      let menuLookup: Record<string, string> = {};
+      if (needsResolution) {
+        try {
+          const allMenuItems = await kv.getByPrefix("regular_menu:");
+          for (const mi of (allMenuItems || [])) {
+            if (mi.id !== undefined) menuLookup[String(mi.id)] = mi.category || "";
+            if (mi.name) menuLookup[mi.name.toLowerCase().trim()] = mi.category || "";
+          }
+          console.log(`🔍 Built menu lookup with ${Object.keys(menuLookup).length} entries for category resolution`);
+        } catch (e) {
+          console.log(`⚠️ Failed to build menu lookup: ${e}`);
+        }
+      }
+
+      // Enrich cart items with resolved categories
+      const enrichedCartItems = cartItems.map((item: any) => {
+        if (broadCategories.includes(item.category) && Object.keys(menuLookup).length > 0) {
+          const resolvedById = menuLookup[String(item.id)];
+          const resolvedByName = menuLookup[(item.title || '').toLowerCase().trim()];
+          const resolved = resolvedById || resolvedByName || item.category;
+          if (resolved !== item.category) {
+            console.log(`🔄 Resolved category for "${item.title}" (id=${item.id}): "${item.category}" → "${resolved}"`);
+          }
+          return { ...item, category: resolved };
+        }
+        return item;
+      });
+
+      console.log(`🔍 Promo validation - applicableCategories: [${applicableCategories.join(', ')}], enriched cart categories: [${enrichedCartItems.map((i: any) => i.category).join(', ')}]`);
+      for (const item of enrichedCartItems) {
+        const categoryMatch = applicableCategories.length === 0 || applicableCategories.some((ac: string) => ac.toLowerCase().trim() === (item.category || '').toLowerCase().trim());
+        const itemMatch = applicableItemIds.length === 0 || applicableItemIds.includes(item.id);
+        // If both restrictions are set, item must match either category OR specific item
+        if (applicableCategories.length > 0 && applicableItemIds.length > 0) {
+          if (categoryMatch || itemMatch) {
+            eligibleItems.push(item);
+            eligibleSubtotal += (item.price || 0) * (item.quantity || 1);
+          }
+        } else if (applicableCategories.length > 0) {
+          if (categoryMatch) {
+            eligibleItems.push(item);
+            eligibleSubtotal += (item.price || 0) * (item.quantity || 1);
+          }
+        } else if (applicableItemIds.length > 0) {
+          if (itemMatch) {
+            eligibleItems.push(item);
+            eligibleSubtotal += (item.price || 0) * (item.quantity || 1);
+          }
+        }
+      }
+
+      if (eligibleItems.length === 0) {
+        const catNames = applicableCategories.join(", ");
+        return c.json({
+          valid: false,
+          error: `This voucher only applies to: ${catNames || "specific items"}. Add eligible items to your cart.`,
+          applicableCategories,
+          applicableItemIds,
+        });
+      }
+    } else if (hasRestrictions && (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0)) {
+      // Cart items not sent — return restriction info so frontend knows
+      // Still mark as valid but include restriction data
+    }
+
+    // Use eligible subtotal for discount calculation if restrictions exist
+    const discountBase = hasRestrictions && eligibleSubtotal > 0 ? eligibleSubtotal : (subtotal || 0);
+
+    // Calculate discount
+    let discountAmount = 0;
+    const discountType = voucher?.discountType || "percentage";
+    const discountValue = voucher?.discountValue || 0;
+
+    if (discountType === "percentage") {
+      discountAmount = Math.round(discountBase * discountValue / 100);
+    } else if (discountType === "fixed") {
+      discountAmount = Math.min(discountValue, discountBase);
+    } else if (discountType === "free_delivery") {
+      discountAmount = 0; // handled in frontend by zeroing delivery fee
+    }
+
+    console.log(`✅ Promo validated: ${code} => ${discountType} ${discountValue}, discount=${discountAmount}, restrictions=${hasRestrictions}, eligibleItems=${eligibleItems.length}`);
+    return c.json({
+      valid: true,
+      userVoucherId: promoLookup.userVoucherId,
+      discountType,
+      discountValue,
+      discountAmount,
+      voucherTitle: voucher?.title || "Promo",
+      freeDelivery: discountType === "free_delivery",
+      freeItem: discountType === "freebie" ? (voucher?.description || "Free item") : null,
+      // Category/item restriction info
+      applicableCategories,
+      applicableItemIds,
+      hasRestrictions,
+      eligibleItemCount: eligibleItems.length,
+      eligibleSubtotal,
+    });
+  } catch (error) {
+    console.log(`Validate promo error: ${error}`);
+    return c.json({ error: "Failed to validate promo code" }, 500);
+  }
+});
+
+// Customer: Use/redeem a voucher (mark as used after successful order)
+app.post("/make-server-e5e192fb/use-voucher", async (c) => {
+  try {
+    const customToken = getCustomToken(c);
+    if (!customToken) return c.json({ error: "Unauthorized" }, 401);
+    const payload = await verifyToken(customToken);
+    if (!payload) return c.json({ error: "Invalid token" }, 401);
+
+    const { userVoucherId } = await c.req.json();
+    if (!userVoucherId) return c.json({ error: "userVoucherId is required" }, 400);
+
+    const assignment = await kv.get(`user_voucher:${userVoucherId}`);
+    if (!assignment) return c.json({ error: "Voucher assignment not found" }, 404);
+    if (assignment.userId !== payload.userId) return c.json({ error: "Not your voucher" }, 403);
+
+    // Support multi-use vouchers via quantity field (default 1)
+    const maxUses = assignment.voucher?.quantity || 1;
+    const currentUsedCount = assignment.usedCount || 0;
+
+    if (assignment.used && currentUsedCount >= maxUses) {
+      return c.json({ error: "Voucher already fully used" }, 400);
+    }
+
+    const newUsedCount = currentUsedCount + 1;
+    assignment.usedCount = newUsedCount;
+    assignment.lastUsedAt = new Date().toISOString();
+
+    // Only mark as fully "used" when all uses are exhausted
+    if (newUsedCount >= maxUses) {
+      assignment.used = true;
+      assignment.usedAt = new Date().toISOString();
+    }
+
+    await kv.set(`user_voucher:${userVoucherId}`, assignment);
+
+    console.log(`✅ Voucher used: ${assignment.voucher?.title} by user ${payload.userId} (${newUsedCount}/${maxUses} uses)`);
+    return c.json({ success: true, assignment, usedCount: newUsedCount, maxUses });
+  } catch (error) {
+    console.log(`Use voucher error: ${error}`);
+    return c.json({ error: "Failed to use voucher" }, 500);
+  }
+});
+
+// Admin: Get all registered users (for voucher targeting)
+app.get("/make-server-e5e192fb/admin/users-list", async (c) => {
+  try {
+    const customToken = getCustomToken(c);
+    if (!customToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminCheck = await verifyAdminAccess(customToken);
+    if (!adminCheck?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const allUsers = await kvGetByPrefixWithRetry("user:");
+    const users = (allUsers || [])
+      .filter((u: any) => !u.isAdmin)
+      .map((u: any) => ({
+        id: u.id, name: u.name, phone: u.phone,
+        points: u.points || 0,
+        tier: u.tier || getUserTier(u.totalPointsEarned || u.points || 0),
+      }));
+
+    return c.json({ users });
+  } catch (error) {
+    console.log(`Get users list error: ${error}`);
+    return c.json({ error: "Failed to get users list" }, 500);
   }
 });
 
@@ -3610,74 +4382,121 @@ app.post("/make-server-e5e192fb/validate-cart", async (c) => {
     let categories = [];
     let specialOffers = [];
     let regularMenuItems = [];
+    let kidsMenuItems = [];
+    let flashSaleItems = [];
     
     try {
-      [categories, specialOffers, regularMenuItems] = await Promise.all([
+      [categories, specialOffers, regularMenuItems, kidsMenuItems, flashSaleItems] = await Promise.all([
         kv.getByPrefix("category:"),
         kv.getByPrefix("todays_special:"),
-        kv.getByPrefix("regular_menu:")
+        kv.getByPrefix("regular_menu:"),
+        kv.getByPrefix("kids_menu:"),
+        kv.getByPrefix("flash_sale:")
       ]);
     } catch (kvError) {
       console.error("Failed to fetch from KV store:", kvError);
       return c.json({ error: "Database error" }, 500);
     }
     
-    console.log(`Found ${specialOffers.length} today's special items in database`);
-    console.log(`Found ${regularMenuItems.length} regular menu items in database`);
+    console.log(`Found ${specialOffers.length} today's special, ${regularMenuItems.length} regular, ${kidsMenuItems.length} kids, ${flashSaleItems.length} flash sale items`);
     console.log("Today's special items:", JSON.stringify(specialOffers, null, 2));
     
-    // Build a map of all available items (from both menu and special offers)
+    // Build a map of all available items using composite keys (id-category) to avoid collisions
+    // Different menu sources (Today's Special, Kids Menu, Flash Sale, Regular) can have overlapping numeric IDs
     const allAvailableItems = new Map();
+    
+    const addToMap = (id: any, category: string, data: any) => {
+      // Add with composite key (primary lookup)
+      allAvailableItems.set(`${id}-${category}`, data);
+      // Also add with plain id as fallback (for items without category in cart)
+      if (!allAvailableItems.has(id)) {
+        allAvailableItems.set(id, data);
+      }
+    };
     
     // Add today's special items to the map
     specialOffers.forEach(offer => {
       if (offer && offer.id) {
-        allAvailableItems.set(offer.id, {
+        const data = {
           id: offer.id,
-          title: offer.name || offer.title, // Today's special uses 'name' field
+          title: offer.name || offer.title,
           price: offer.finalPrice || offer.discountedPrice || offer.price,
           isAvailable: offer.enabled !== false
-        });
+        };
+        addToMap(offer.id, "Today's Special", data);
       }
     });
     
     // Add regular menu items to the map
     regularMenuItems.forEach(item => {
       if (item && item.id) {
-        allAvailableItems.set(item.id, {
+        const data = {
           id: item.id,
-          title: item.name || item.title, // Regular menu uses 'name' field
+          title: item.name || item.title,
           price: item.price,
           isAvailable: item.isAvailable !== false
-        });
+        };
+        addToMap(item.id, "Regular Menu", data);
+        addToMap(item.id, "regular", data);
       }
     });
     
-    console.log(`Total available items in map: ${allAvailableItems.size}`);
-    console.log("Available item IDs:", Array.from(allAvailableItems.keys()));
-    
-    // Add menu items to the map
+    // Add menu items from categories
     categories.forEach(category => {
       if (category && category.items && Array.isArray(category.items)) {
         category.items.forEach(item => {
-          if (item && item.id && !allAvailableItems.has(item.id)) {
-            allAvailableItems.set(item.id, {
+          if (item && item.id) {
+            const data = {
               id: item.id,
               title: item.title,
               price: item.price,
               isAvailable: item.isAvailable !== false
-            });
+            };
+            const catName = category.name || category.title || "regular";
+            addToMap(item.id, catName, data);
           }
         });
       }
     });
+
+    // Add kids menu items to the map
+    kidsMenuItems.forEach(item => {
+      if (item && item.id) {
+        const data = {
+          id: item.id,
+          title: item.name || item.title,
+          price: item.finalPrice || item.price,
+          isAvailable: item.enabled !== false
+        };
+        addToMap(item.id, "Kids Menu", data);
+      }
+    });
+
+    // Add flash sale items to the map
+    flashSaleItems.forEach(item => {
+      if (item && item.id) {
+        const data = {
+          id: item.id,
+          title: item.name || item.title,
+          price: item.finalPrice || item.price,
+          isAvailable: item.enabled !== false
+        };
+        addToMap(item.id, "Flash Sale", data);
+      }
+    });
+
+    console.log(`Total available items in map: ${allAvailableItems.size}`);
+    console.log("Available item keys:", Array.from(allAvailableItems.keys()));
     
     const validatedItems = [];
     const errors = [];
     
     for (const cartItem of items) {
-      console.log(`Validating cart item ID: ${cartItem.id}, looking for match...`);
-      const currentItem = allAvailableItems.get(cartItem.id);
+      const cartCategory = cartItem.category || "regular";
+      const compositeKey = `${cartItem.id}-${cartCategory}`;
+      console.log(`Validating cart item ID: ${cartItem.id}, category: ${cartCategory}, compositeKey: ${compositeKey}`);
+      // Try composite key first, then fall back to plain id
+      const currentItem = allAvailableItems.get(compositeKey) || allAvailableItems.get(cartItem.id);
       
       // Check if item exists and is available
       if (!currentItem || !currentItem.isAvailable) {
@@ -3790,8 +4609,8 @@ app.post("/make-server-e5e192fb/orders/:id/cancel", async (c) => {
   }
 });
 
-// Request Password Reset
-app.post("/make-server-e5e192fb/forgot-password", async (c) => {
+// Request PIN Reset
+app.post("/make-server-e5e192fb/forgot-pin", async (c) => {
   try {
     const { phone } = await c.req.json();
     
@@ -3800,8 +4619,8 @@ app.post("/make-server-e5e192fb/forgot-password", async (c) => {
     }
 
     const phoneDigits = phone.replace(/\D/g, '');
-    if (phoneDigits.length < 10 || phoneDigits.length > 12) {
-      return c.json({ error: "Phone number must be 10-12 digits" }, 400);
+    if (phoneDigits.length < 10 || phoneDigits.length > 15) {
+      return c.json({ error: "Phone number must be 10-15 digits" }, 400);
     }
 
     // Check if user exists
@@ -3812,7 +4631,7 @@ app.post("/make-server-e5e192fb/forgot-password", async (c) => {
       // Don't reveal if user exists or not for security
       return c.json({ 
         success: true, 
-        message: "If this phone number is registered, you will receive a password reset code" 
+        message: "If this phone number is registered, you will receive a PIN reset code" 
       });
     }
 
@@ -3821,7 +4640,7 @@ app.post("/make-server-e5e192fb/forgot-password", async (c) => {
     const resetToken = crypto.randomUUID();
     
     // Store reset token with expiration (15 minutes)
-    await kv.set(`password_reset:${resetToken}`, {
+    await kv.set(`pin_reset:${resetToken}`, {
       userId: user.id,
       phone: user.phone,
       code: resetCode,
@@ -3829,32 +4648,54 @@ app.post("/make-server-e5e192fb/forgot-password", async (c) => {
     });
     
     // In production, you would send SMS here
-    // For now, we'll return the code in the response (development only)
-    console.log(`Password reset code for ${phone}: ${resetCode}`);
+    console.log(`PIN reset code for ${phone}: ${resetCode}`);
     
     return c.json({ 
       success: true, 
-      message: "Password reset code sent",
+      message: "PIN reset code sent",
       // DEVELOPMENT ONLY - remove in production
       resetCode, 
       resetToken
     });
   } catch (error) {
-    console.log(`Forgot password error: ${error}`);
-    return c.json({ error: "Failed to process password reset" }, 500);
+    console.log(`Forgot PIN error: ${error}`);
+    return c.json({ error: "Failed to process PIN reset" }, 500);
   }
 });
 
-// Reset Password with Code
-app.post("/make-server-e5e192fb/reset-password", async (c) => {
+// Also keep old route for backward compatibility
+app.post("/make-server-e5e192fb/forgot-password", async (c) => {
+  // Redirect to forgot-pin handler
+  const { phone } = await c.req.json();
+  const response = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/make-server-e5e192fb/forgot-pin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone }),
+  });
+  return new Response(response.body, { status: response.status, headers: response.headers });
+});
+
+// Reset PIN with Code
+app.post("/make-server-e5e192fb/reset-pin", async (c) => {
   try {
-    const { resetToken, code, newPassword } = await c.req.json();
+    const { resetToken, code, newPin, newPassword } = await c.req.json();
+    const newCredential = newPin || newPassword; // Accept both field names
     
-    if (!resetToken || !code || !newPassword) {
-      return c.json({ error: "Reset token, code, and new password are required" }, 400);
+    if (!resetToken || !code || !newCredential) {
+      return c.json({ error: "Reset token, code, and new PIN are required" }, 400);
     }
 
-    const resetData = await kv.get(`password_reset:${resetToken}`);
+    if (!isValidPin(newCredential)) {
+      return c.json({ error: "PIN must be exactly 6 digits" }, 400);
+    }
+
+    // Check both old and new KV key formats
+    let resetData = await kv.get(`pin_reset:${resetToken}`);
+    let resetKey = `pin_reset:${resetToken}`;
+    if (!resetData) {
+      resetData = await kv.get(`password_reset:${resetToken}`);
+      resetKey = `password_reset:${resetToken}`;
+    }
     
     if (!resetData) {
       return c.json({ error: "Invalid or expired reset token" }, 400);
@@ -3862,7 +4703,7 @@ app.post("/make-server-e5e192fb/reset-password", async (c) => {
     
     // Check expiration
     if (new Date() > new Date(resetData.expiresAt)) {
-      await kv.del(`password_reset:${resetToken}`);
+      await kv.del(resetKey);
       return c.json({ error: "Reset code has expired" }, 400);
     }
     
@@ -3871,7 +4712,7 @@ app.post("/make-server-e5e192fb/reset-password", async (c) => {
       return c.json({ error: "Invalid reset code" }, 400);
     }
     
-    // Update password in Supabase
+    // Update PIN in Supabase
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
@@ -3879,24 +4720,24 @@ app.post("/make-server-e5e192fb/reset-password", async (c) => {
     
     const { error } = await supabase.auth.admin.updateUserById(
       resetData.userId,
-      { password: newPassword }
+      { password: newCredential }
     );
     
     if (error) {
-      console.log(`Reset password error: ${error.message}`);
-      return c.json({ error: "Failed to reset password" }, 500);
+      console.log(`Reset PIN error: ${error.message}`);
+      return c.json({ error: "Failed to reset PIN" }, 500);
     }
     
     // Delete used reset token
-    await kv.del(`password_reset:${resetToken}`);
+    await kv.del(resetKey);
     
     return c.json({ 
       success: true, 
-      message: "Password reset successfully" 
+      message: "PIN reset successfully" 
     });
   } catch (error) {
-    console.log(`Reset password error: ${error}`);
-    return c.json({ error: "Failed to reset password" }, 500);
+    console.log(`Reset PIN error: ${error}`);
+    return c.json({ error: "Failed to reset PIN" }, 500);
   }
 });
 
@@ -3931,10 +4772,10 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
     }
 
     const orderId = c.req.param('id');
-    const { status, paymentReceived, paymentDetails, cancellationReason } = await c.req.json();
+    const { status, paymentReceived, paymentDetails, cancellationReason, paymentStatus, addPayment, deliveryFee: newDeliveryFee } = await c.req.json();
 
-    if (!status && paymentReceived === undefined) {
-      return c.json({ error: "Status or paymentReceived is required" }, 400);
+    if (!status && paymentReceived === undefined && paymentStatus === undefined && !addPayment && newDeliveryFee === undefined) {
+      return c.json({ error: "Status, paymentStatus, addPayment, or deliveryFee is required" }, 400);
     }
 
     const order = await kv.get(`order:${orderId}`);
@@ -3952,6 +4793,14 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
     
     // Handle admin cancellation with reason
     if (status === "cancelled") {
+      // Server-side guard: cannot cancel if payment received or order is closed
+      const currentPS = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+      if (currentPS === 'paid' || currentPS === 'partial') {
+        return c.json({ error: `Cannot cancel order with ${currentPS === 'paid' ? 'full' : 'partial'} payment received. Refund the payment first.` }, 400);
+      }
+      if (order.status === 'closed') {
+        return c.json({ error: "Cannot cancel a closed order." }, 400);
+      }
       order.status = "cancelled";
       order.cancelledAt = now;
       order.cancelledBy = "admin";
@@ -3982,10 +4831,84 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
       });
     }
     
-    // Update payment status if provided
-    if (paymentReceived !== undefined) {
+    // Initialize payment fields for old orders that don't have them
+    if (order.paymentStatus === undefined) {
+      order.paymentStatus = order.paymentReceived ? "paid" : "unpaid";
+      order.paidAmount = order.paymentReceived ? (order.total || 0) : 0;
+      order.paymentHistory = order.paymentHistory || [];
+    }
+
+    // Handle addPayment: admin is adding a partial/full payment entry
+    if (addPayment && typeof addPayment.amount === 'number' && addPayment.amount > 0) {
+      // Server-side guard: cannot add payment exceeding remaining balance
+      const remaining = (order.total || 0) - (order.paidAmount || 0);
+      if (addPayment.amount > remaining) {
+        return c.json({ 
+          error: `Payment amount (Rp ${addPayment.amount.toLocaleString()}) exceeds remaining balance (Rp ${remaining.toLocaleString()}). Maximum allowed: Rp ${remaining.toLocaleString()}.` 
+        }, 400);
+      }
+      const entry = {
+        amount: addPayment.amount,
+        date: now,
+        method: addPayment.method || undefined,
+        note: addPayment.note || undefined,
+      };
+      if (!order.paymentHistory) order.paymentHistory = [];
+      order.paymentHistory.push(entry);
+      order.paidAmount = (order.paidAmount || 0) + addPayment.amount;
+
+      // Auto-determine paymentStatus
+      if (order.paidAmount >= (order.total || 0)) {
+        order.paymentStatus = "paid";
+        order.paymentReceived = true;
+        if (!order.statusHistory.find((h: any) => h.status === 'payment_received')) {
+          order.statusHistory.push({ status: 'payment_received', timestamp: now, label: 'Payment Received' });
+        }
+      } else {
+        order.paymentStatus = "partial";
+        order.paymentReceived = false;
+      }
+
+      console.log(`💰 Payment added for order ${orderId}: Rp ${addPayment.amount}. Total paid: Rp ${order.paidAmount} of Rp ${order.total}. Status: ${order.paymentStatus}`);
+    }
+
+    // Handle explicit paymentStatus change (admin selecting from dropdown)
+    if (paymentStatus !== undefined && !addPayment) {
+      // Server-side guard: cannot mark as "paid" unless paidAmount covers total
+      if (paymentStatus === "paid" && (order.paidAmount || 0) < (order.total || 0)) {
+        return c.json({ 
+          error: `Cannot mark as paid. Recorded payments (Rp ${(order.paidAmount || 0).toLocaleString()}) do not cover the order total (Rp ${(order.total || 0).toLocaleString()}). Please add payment entries first.` 
+        }, 400);
+      }
+      // Server-side guard: once fully paid, cannot revert to unpaid or partial
+      const currentPS = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+      if (currentPS === 'paid' && (paymentStatus === 'unpaid' || paymentStatus === 'partial')) {
+        return c.json({ 
+          error: `Payment status is locked. Once an order is fully paid, it cannot be reverted to "${paymentStatus}".` 
+        }, 400);
+      }
+      order.paymentStatus = paymentStatus;
+      if (paymentStatus === "paid") {
+        order.paymentReceived = true;
+        order.paidAmount = order.total || 0;
+        if (!order.statusHistory.find((h: any) => h.status === 'payment_received')) {
+          order.statusHistory.push({ status: 'payment_received', timestamp: now, label: 'Payment Received' });
+        }
+      } else if (paymentStatus === "unpaid") {
+        order.paymentReceived = false;
+        order.paidAmount = 0;
+        order.paymentHistory = [];
+      } else if (paymentStatus === "partial") {
+        order.paymentReceived = false;
+      }
+    }
+
+    // Legacy: handle old boolean paymentReceived flag (backward compat)
+    if (paymentReceived !== undefined && paymentStatus === undefined && !addPayment) {
       order.paymentReceived = paymentReceived;
-      if (paymentReceived && !order.statusHistory.find(h => h.status === 'payment_received')) {
+      order.paymentStatus = paymentReceived ? "paid" : "unpaid";
+      order.paidAmount = paymentReceived ? (order.total || 0) : 0;
+      if (paymentReceived && !order.statusHistory.find((h: any) => h.status === 'payment_received')) {
         order.statusHistory.push({ 
           status: 'payment_received', 
           timestamp: now, 
@@ -4046,6 +4969,22 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
       order.status = status;
     }
     
+    // Handle delivery fee update
+    if (newDeliveryFee !== undefined && typeof newDeliveryFee === 'number' && newDeliveryFee >= 0) {
+      if (order.deliveryMethod !== 'delivery') {
+        return c.json({ error: "Cannot set delivery fee on a non-delivery order." }, 400);
+      }
+      const oldDeliveryFee = order.deliveryFee || 0;
+      order.deliveryFee = newDeliveryFee;
+      // Recalculate total: subtotal + tax + deliveryFee
+      order.total = (order.subtotal || 0) + (order.tax || 0) + newDeliveryFee;
+      order.total = parseFloat(order.total.toFixed(2));
+      console.log(`📦 Delivery fee updated for order ${orderId}: Rp ${oldDeliveryFee} -> Rp ${newDeliveryFee}, new total: Rp ${order.total}`);
+      if (!order.statusHistory.find((h: any) => h.status === 'delivery_fee_set')) {
+        order.statusHistory.push({ status: 'delivery_fee_set', timestamp: now, label: `Delivery Fee: Rp ${newDeliveryFee.toLocaleString()}` });
+      }
+    }
+
     order.updatedAt = now;
     
     // Award points if order is closed and payment received
@@ -4056,8 +4995,9 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
       total: order.total
     });
     
-    // Award points for registered users on delivered or closed status
-    const shouldAwardPoints = (order.status === 'delivered' || (order.status === 'closed' && order.paymentReceived)) && !order.pointsAwarded && order.userId;
+    // Award points for registered users on delivered or closed status (only when fully paid)
+    const isFullyPaid = order.paymentStatus === 'paid' || order.paymentReceived;
+    const shouldAwardPoints = (order.status === 'delivered' || (order.status === 'closed' && isFullyPaid)) && !order.pointsAwarded && order.userId;
     if (shouldAwardPoints) {
       const pointsToAward = Math.floor(order.total / 1000);
       console.log(`🎁 Attempting to award ${pointsToAward} points to user ${order.userId} (status: ${order.status})`);
@@ -4067,6 +5007,7 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
         
         if (userData) {
           const oldPoints = userData.points || 0;
+          const oldTier = userData.tier || getUserTier(userData.totalPointsEarned || oldPoints);
           userData.points = oldPoints + pointsToAward;
           userData.totalPointsEarned = (userData.totalPointsEarned || 0) + pointsToAward;
           
@@ -4085,6 +5026,15 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
           order.pointsAwarded = true;
           order.pointsEarned = pointsToAward;
           console.log(`✅ Successfully awarded ${pointsToAward} points to user ${order.userId} (${oldPoints} -> ${userData.points}), tier: ${userData.tier}`);
+
+          // Auto-assign vouchers if tier changed (e.g., Silver -> Gold unlocks Gold-tier vouchers)
+          if (userData.tier !== oldTier) {
+            console.log(`🎉 Tier promotion: ${oldTier} -> ${userData.tier} for user ${order.userId}`);
+            const vouchersAssigned = await autoAssignVouchersToUser(order.userId, userData.tier, userData.phone);
+            if (vouchersAssigned > 0) {
+              console.log(`🎟️ Auto-assigned ${vouchersAssigned} voucher(s) after tier promotion`);
+            }
+          }
         } else {
           console.error(`❌ Failed to find user ${order.userId} for points award`);
         }
@@ -4109,8 +5059,8 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
 // Get all tier benefits (public)
 app.get("/make-server-e5e192fb/tier-benefits", async (c) => {
   try {
-    const benefits = await kv.getByPrefix("tier_benefit:");
-    return c.json({ benefits });
+    const benefits = await kvGetByPrefixWithRetry("tier_benefit:");
+    return c.json({ benefits: benefits || [] });
   } catch (error) {
     console.error("Get tier benefits error:", error);
     return c.json({ error: "Failed to get tier benefits" }, 500);
@@ -4332,7 +5282,7 @@ app.get("/make-server-e5e192fb/admin/settings", async (c) => {
     }
     console.log("✅ Settings - Admin verified");
 
-    const settings = await kv.get("restaurant_settings") || {
+    const settings = await kvGetWithRetry("restaurant_settings") || {
       acceptingOrders: true,
       maintenanceMode: false,
     };
@@ -4382,7 +5332,7 @@ app.put("/make-server-e5e192fb/admin/settings", async (c) => {
 // Check if restaurant is accepting orders (public endpoint)
 app.get("/make-server-e5e192fb/restaurant-status", async (c) => {
   try {
-    const settings = await kv.get("restaurant_settings");
+    const settings = await kvGetWithRetry("restaurant_settings");
     if (!settings) {
       return c.json({ isOpen: true, acceptingOrders: true });
     }
@@ -4440,8 +5390,9 @@ app.get("/make-server-e5e192fb/admin/reports/sales", async (c) => {
 
     const period = c.req.query("period") || "today"; // today, week, month, all
     
-    // Get all orders
-    const allOrders = (await kv.getByPrefix("order:")) || [];
+    // Get all orders (exclude draft orders awaiting online payment)
+    const rawOrders = (await kv.getByPrefix("order:")) || [];
+    const allOrders = rawOrders.filter((o: any) => (o.value || o).paymentStatus !== "awaiting_payment");
     
     const now = new Date();
     let startDate: Date;
@@ -4475,9 +5426,10 @@ app.get("/make-server-e5e192fb/admin/reports/sales", async (c) => {
       o.status === "pending" || o.status === "confirmed" || o.status === "cooking"
     );
     
-    // Payment tracking - only count completed orders
-    const paidOrders = completedOrders.filter((o: any) => o.paymentReceived === true);
-    const unpaidOrders = completedOrders.filter((o: any) => !o.paymentReceived);
+    // Payment tracking - only count completed orders (support new paymentStatus + legacy paymentReceived)
+    const paidOrders = completedOrders.filter((o: any) => o.paymentStatus === 'paid' || (o.paymentStatus === undefined && o.paymentReceived === true));
+    const partialPaidOrders = completedOrders.filter((o: any) => o.paymentStatus === 'partial');
+    const unpaidOrders = completedOrders.filter((o: any) => o.paymentStatus === 'unpaid' || (o.paymentStatus === undefined && !o.paymentReceived));
     
     // Total revenue from all completed orders (potential revenue)
     const totalRevenue = completedOrders.reduce((sum: number, order: any) => 
@@ -4570,8 +5522,9 @@ app.get("/make-server-e5e192fb/admin/analytics", async (c) => {
     }
     console.log("✅ Analytics - Admin verified");
 
-    // Get all data
-    const allOrders = (await kv.getByPrefix("order:")) || [];
+    // Get all data (exclude draft orders awaiting online payment)
+    const rawOrders = (await kv.getByPrefix("order:")) || [];
+    const allOrders = rawOrders.filter((o: any) => (o.value || o).paymentStatus !== "awaiting_payment");
     const allUsers = (await kv.getByPrefix("user:")) || [];
     
     // Customer analytics - exclude admin users
@@ -4636,18 +5589,24 @@ app.get("/make-server-e5e192fb/admin/analytics", async (c) => {
       totalPointsRedeemed += (user.totalPointsEarned || 0) - (user.points || 0);
     });
     
-    // Payment analytics for completed orders
+    // Payment analytics for completed orders (support new paymentStatus + legacy)
     const completedOrders = allOrders.filter((o: any) => 
       o.status === "delivered" || o.status === "completed" || o.status === "closed"
     );
-    const paidOrders = completedOrders.filter((o: any) => o.paymentReceived === true);
-    const unpaidOrders = completedOrders.filter((o: any) => !o.paymentReceived);
+    const paidOrders = completedOrders.filter((o: any) => o.paymentStatus === 'paid' || (o.paymentStatus === undefined && o.paymentReceived === true));
+    const partialPaidOrders = completedOrders.filter((o: any) => o.paymentStatus === 'partial');
+    const unpaidOrders = completedOrders.filter((o: any) => o.paymentStatus === 'unpaid' || (o.paymentStatus === undefined && !o.paymentReceived));
     
     const totalRevenueRealized = paidOrders.reduce((sum: number, order: any) => 
       sum + (order.total || 0), 0
     );
+    const totalPartialCollected = partialPaidOrders.reduce((sum: number, order: any) => 
+      sum + (order.paidAmount || 0), 0
+    );
     const totalRevenuePending = unpaidOrders.reduce((sum: number, order: any) => 
       sum + (order.total || 0), 0
+    ) + partialPaidOrders.reduce((sum: number, order: any) => 
+      sum + ((order.total || 0) - (order.paidAmount || 0)), 0
     );
     
     // Revenue by day of week
@@ -4659,7 +5618,8 @@ app.get("/make-server-e5e192fb/admin/analytics", async (c) => {
     };
     
     allOrders.forEach((order: any) => {
-      if ((order.status === "delivered" || order.status === "completed" || order.status === "closed") && order.paymentReceived) {
+      const isPaid = order.paymentStatus === 'paid' || (order.paymentStatus === undefined && order.paymentReceived);
+      if ((order.status === "delivered" || order.status === "completed" || order.status === "closed") && isPaid) {
         const day = new Date(order.createdAt).getDay();
         dayOfWeekRevenue[day] += order.total || 0;
         dayOfWeekCounts[day]++;
@@ -4892,6 +5852,396 @@ app.get("/make-server-e5e192fb/admin/health", async (c) => {
   }
 });
 
+// ==================== PRESENCE / HEARTBEAT ====================
+// Heartbeat endpoint - called by all clients every 30s (no user auth required)
+app.post("/make-server-e5e192fb/heartbeat", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { sessionId, page, userId, userName, userPhone, isGuest } = body;
+    
+    if (!sessionId) {
+      return c.json({ error: "sessionId required" }, 400);
+    }
+
+    const now = new Date().toISOString();
+    
+    await kvSetWithRetry(`presence:${sessionId}`, {
+      sessionId,
+      page: page || "/",
+      userId: userId || null,
+      userName: userName || null,
+      userPhone: userPhone || null,
+      isGuest: isGuest ?? true,
+      lastSeen: now,
+      ua: c.req.header("User-Agent")?.substring(0, 100) || "",
+    });
+
+    return c.json({ ok: true });
+  } catch (error) {
+    // Heartbeat should never break the app - fail silently
+    console.error("Heartbeat error:", error);
+    return c.json({ ok: false }, 200); // Still return 200 to not trigger retries
+  }
+});
+
+// Admin: Get active users (presence within last 90 seconds)
+app.get("/make-server-e5e192fb/admin/active-users", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT" }, 401);
+    }
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Admin access required" }, 401);
+    }
+
+    const allPresence = (await kv.getByPrefix("presence:")) || [];
+    const now = Date.now();
+    const ACTIVE_THRESHOLD_MS = 90 * 1000; // 90 seconds
+    const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes - clean up old entries
+
+    const activeUsers: any[] = [];
+    const staleKeys: string[] = [];
+
+    for (const p of allPresence) {
+      if (!p || !p.lastSeen) continue;
+      const lastSeenMs = new Date(p.lastSeen).getTime();
+      const ageMs = now - lastSeenMs;
+
+      if (ageMs <= ACTIVE_THRESHOLD_MS) {
+        activeUsers.push({
+          ...p,
+          secondsAgo: Math.round(ageMs / 1000),
+        });
+      } else if (ageMs > STALE_THRESHOLD_MS) {
+        staleKeys.push(`presence:${p.sessionId}`);
+      }
+    }
+
+    // Clean up stale entries (fire and forget)
+    if (staleKeys.length > 0) {
+      try {
+        await kv.mdel(staleKeys);
+        console.log(`Cleaned up ${staleKeys.length} stale presence entries`);
+      } catch (e) {
+        console.error("Failed to clean up stale presence:", e);
+      }
+    }
+
+    // Aggregate stats
+    const loggedInUsers = activeUsers.filter((u: any) => u.userId && !u.isGuest);
+    const guestUsers = activeUsers.filter((u: any) => !u.userId || u.isGuest);
+    
+    // Page distribution
+    const pageDistribution: Record<string, number> = {};
+    activeUsers.forEach((u: any) => {
+      const page = u.page || "/";
+      pageDistribution[page] = (pageDistribution[page] || 0) + 1;
+    });
+
+    return c.json({
+      totalActive: activeUsers.length,
+      loggedIn: loggedInUsers.length,
+      guests: guestUsers.length,
+      users: activeUsers.sort((a: any, b: any) => a.secondsAgo - b.secondsAgo),
+      pageDistribution,
+      staleCleanedUp: staleKeys.length,
+    });
+  } catch (error) {
+    console.error("Active users error:", error);
+    return c.json({ error: "Failed to get active users" }, 500);
+  }
+});
+
+// ==================== ADMIN: BUSINESS INSIGHTS ====================
+app.get("/make-server-e5e192fb/admin/business-insights", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT" }, 401);
+    }
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Admin access required" }, 401);
+    }
+
+    const allOrders = (await kv.getByPrefix("order:")) || [];
+    const allUsers = (await kv.getByPrefix("user:")) || [];
+
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const customers = allUsers.filter((u: any) => !u.isAdmin);
+
+    // ========== ACTIVE & ABANDONED CARTS ==========
+    const activeCarts: any[] = [];
+    const abandonedCarts: any[] = [];
+
+    for (const user of customers) {
+      try {
+        const cart = await kv.get(`cart:${user.id}`);
+        if (!Array.isArray(cart) || cart.length === 0) continue;
+        
+        const cartValue = cart.reduce((sum: number, item: any) => sum + ((item.price || 0) * (item.quantity || 1)), 0);
+        const itemCount = cart.reduce((sum: number, item: any) => sum + (item.quantity || 1), 0);
+        
+        const userOrders = allOrders.filter((o: any) => o.userId === user.id);
+        const lastOrder = userOrders.sort((a: any, b: any) => 
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        )[0];
+        const lastOrderTime = lastOrder ? new Date(lastOrder.createdAt).getTime() : 0;
+        const hoursSinceLastOrder = lastOrder ? (now.getTime() - lastOrderTime) / (1000 * 60 * 60) : 999;
+        
+        const cartInfo = {
+          userId: user.id,
+          userName: user.name || "Unknown",
+          phone: user.phone || "",
+          itemCount,
+          cartValue,
+          items: cart.map((item: any) => ({ title: item.title, quantity: item.quantity, price: item.price })),
+          hoursSinceLastOrder: Math.round(hoursSinceLastOrder),
+        };
+        
+        if (hoursSinceLastOrder > 24) {
+          abandonedCarts.push(cartInfo);
+        } else {
+          activeCarts.push(cartInfo);
+        }
+      } catch (e) {
+        // Skip if cart fetch fails
+      }
+    }
+
+    const totalActiveCartValue = activeCarts.reduce((s: number, ci: any) => s + ci.cartValue, 0);
+    const totalAbandonedCartValue = abandonedCarts.reduce((s: number, ci: any) => s + ci.cartValue, 0);
+
+    // ========== ORDER FUNNEL & CONVERSION ==========
+    const guestOrders = allOrders.filter((o: any) => o.isGuestOrder || o.guestPhone);
+    const registeredOrders = allOrders.filter((o: any) => !o.isGuestOrder && !o.guestPhone && o.userId);
+    
+    const uniqueOrderingCustomers = new Set(
+      registeredOrders.map((o: any) => o.userId).filter(Boolean)
+    );
+    const repeatCustomers = [...uniqueOrderingCustomers].filter(userId => {
+      const count = registeredOrders.filter((o: any) => o.userId === userId).length;
+      return count >= 2;
+    });
+
+    const cancelledOrders = allOrders.filter((o: any) => o.status === "cancelled");
+    const cancellationRate = allOrders.length > 0 ? (cancelledOrders.length / allOrders.length) * 100 : 0;
+
+    const statusPipeline: Record<string, number> = {};
+    allOrders.forEach((o: any) => {
+      statusPipeline[o.status] = (statusPipeline[o.status] || 0) + 1;
+    });
+
+    // ========== CUSTOMER INSIGHTS ==========
+    const customerSpend: Record<string, { name: string; phone: string; totalSpent: number; orderCount: number; lastOrderDate: string }> = {};
+    
+    allOrders.forEach((o: any) => {
+      if (!o.userId || o.status === "cancelled") return;
+      if (!customerSpend[o.userId]) {
+        const user = customers.find((u: any) => u.id === o.userId);
+        customerSpend[o.userId] = {
+          name: user?.name || "Unknown",
+          phone: user?.phone || o.phone || "",
+          totalSpent: 0,
+          orderCount: 0,
+          lastOrderDate: "",
+        };
+      }
+      customerSpend[o.userId].totalSpent += o.total || 0;
+      customerSpend[o.userId].orderCount += 1;
+      if (!customerSpend[o.userId].lastOrderDate || o.createdAt > customerSpend[o.userId].lastOrderDate) {
+        customerSpend[o.userId].lastOrderDate = o.createdAt;
+      }
+    });
+
+    const topCustomersBySpend = Object.entries(customerSpend)
+      .sort(([, a], [, b]) => b.totalSpent - a.totalSpent)
+      .slice(0, 10)
+      .map(([userId, data]) => ({ userId, ...data }));
+
+    const topCustomersByFrequency = Object.entries(customerSpend)
+      .sort(([, a], [, b]) => b.orderCount - a.orderCount)
+      .slice(0, 10)
+      .map(([userId, data]) => ({ userId, ...data }));
+
+    const atRiskCustomers = Object.entries(customerSpend)
+      .filter(([, data]) => {
+        if (!data.lastOrderDate) return false;
+        const daysSince = (now.getTime() - new Date(data.lastOrderDate).getTime()) / (1000 * 60 * 60 * 24);
+        return daysSince >= 14;
+      })
+      .sort(([, a], [, b]) => new Date(a.lastOrderDate).getTime() - new Date(b.lastOrderDate).getTime())
+      .slice(0, 15)
+      .map(([userId, data]) => ({
+        userId,
+        ...data,
+        daysSinceLastOrder: Math.round((now.getTime() - new Date(data.lastOrderDate).getTime()) / (1000 * 60 * 60 * 24)),
+      }));
+
+    const blockedUsers = customers.filter((u: any) => u.blocked);
+
+    // ========== OPERATIONAL METRICS ==========
+    let totalPrepTime = 0;
+    let prepTimeCount = 0;
+    let totalDeliveryTime = 0;
+    let deliveryTimeCount = 0;
+    let totalOrderTime = 0;
+    let orderTimeCount = 0;
+
+    allOrders.forEach((o: any) => {
+      if (!o.statusHistory || !Array.isArray(o.statusHistory)) return;
+      
+      const findTime = (status: string) => {
+        const entry = o.statusHistory.find((h: any) => h.status === status);
+        return entry ? new Date(entry.timestamp).getTime() : null;
+      };
+      
+      const confirmedTime = findTime("confirmed");
+      const readyTime = findTime("ready");
+      const closedTime = findTime("closed") || findTime("delivered");
+      const pendingTime = findTime("pending");
+      
+      if (confirmedTime && readyTime) {
+        const prepMin = (readyTime - confirmedTime) / (1000 * 60);
+        if (prepMin > 0 && prepMin < 300) {
+          totalPrepTime += prepMin;
+          prepTimeCount++;
+        }
+      }
+      
+      if (o.deliveryMethod === "delivery" && readyTime && closedTime) {
+        const delMin = (closedTime - readyTime) / (1000 * 60);
+        if (delMin > 0 && delMin < 300) {
+          totalDeliveryTime += delMin;
+          deliveryTimeCount++;
+        }
+      }
+      
+      if (pendingTime && closedTime) {
+        const totalMin = (closedTime - pendingTime) / (1000 * 60);
+        if (totalMin > 0 && totalMin < 1440) {
+          totalOrderTime += totalMin;
+          orderTimeCount++;
+        }
+      }
+    });
+
+    // ========== REVENUE TRENDS ==========
+    const todayOrders = allOrders.filter((o: any) => new Date(o.createdAt) >= todayStart);
+    const yesterdayOrders = allOrders.filter((o: any) => {
+      const d = new Date(o.createdAt);
+      return d >= yesterdayStart && d < todayStart;
+    });
+
+    const todayRevenue = todayOrders
+      .filter((o: any) => o.status !== "cancelled")
+      .reduce((s: number, o: any) => s + (o.total || 0), 0);
+    const yesterdayRevenue = yesterdayOrders
+      .filter((o: any) => o.status !== "cancelled")
+      .reduce((s: number, o: any) => s + (o.total || 0), 0);
+
+    const thisWeekOrders = allOrders.filter((o: any) => new Date(o.createdAt) >= weekAgo && o.status !== "cancelled");
+    const lastWeekOrders = allOrders.filter((o: any) => {
+      const d = new Date(o.createdAt);
+      return d >= new Date(weekAgo.getTime() - 7 * 24 * 60 * 60 * 1000) && d < weekAgo && o.status !== "cancelled";
+    });
+
+    const thisWeekRevenue = thisWeekOrders.reduce((s: number, o: any) => s + (o.total || 0), 0);
+    const lastWeekRevenue = lastWeekOrders.reduce((s: number, o: any) => s + (o.total || 0), 0);
+
+    const completedOrders = allOrders.filter((o: any) => 
+      ["delivered", "completed", "closed"].includes(o.status)
+    );
+    const paidCompletedOrders = completedOrders.filter((o: any) => o.paymentStatus === 'paid' || (o.paymentStatus === undefined && o.paymentReceived));
+    const collectionRate = completedOrders.length > 0 
+      ? (paidCompletedOrders.length / completedOrders.length) * 100 : 0;
+    const outstandingDebt = completedOrders
+      .filter((o: any) => o.paymentStatus !== 'paid' && !(o.paymentStatus === undefined && o.paymentReceived))
+      .reduce((s: number, o: any) => s + ((o.total || 0) - (o.paidAmount || 0)), 0);
+
+    const nonCancelledOrders = allOrders.filter((o: any) => o.status !== "cancelled");
+    const avgOrderValue = nonCancelledOrders.length > 0 
+      ? nonCancelledOrders.reduce((s: number, o: any) => s + (o.total || 0), 0) / nonCancelledOrders.length : 0;
+
+    const ordersPerHourToday: Record<number, number> = {};
+    for (let h = 0; h < 24; h++) ordersPerHourToday[h] = 0;
+    todayOrders.forEach((o: any) => {
+      const hour = new Date(o.createdAt).getHours();
+      ordersPerHourToday[hour]++;
+    });
+
+    const newCustomersThisWeek = customers.filter((u: any) => 
+      u.createdAt && new Date(u.createdAt) >= weekAgo
+    ).length;
+
+    return c.json({
+      carts: {
+        active: activeCarts,
+        abandoned: abandonedCarts,
+        activeCount: activeCarts.length,
+        abandonedCount: abandonedCarts.length,
+        totalActiveValue: totalActiveCartValue,
+        totalAbandonedValue: totalAbandonedCartValue,
+      },
+      funnel: {
+        totalOrders: allOrders.length,
+        guestOrders: guestOrders.length,
+        registeredOrders: registeredOrders.length,
+        uniqueCustomers: uniqueOrderingCustomers.size,
+        repeatCustomers: repeatCustomers.length,
+        repeatRate: uniqueOrderingCustomers.size > 0 
+          ? (repeatCustomers.length / uniqueOrderingCustomers.size) * 100 : 0,
+        cancelledOrders: cancelledOrders.length,
+        cancellationRate,
+        statusPipeline,
+        avgOrdersPerCustomer: uniqueOrderingCustomers.size > 0 
+          ? registeredOrders.length / uniqueOrderingCustomers.size : 0,
+      },
+      customers: {
+        total: customers.length,
+        withOrders: uniqueOrderingCustomers.size,
+        withoutOrders: customers.length - uniqueOrderingCustomers.size,
+        blocked: blockedUsers.length,
+        newThisWeek: newCustomersThisWeek,
+        topBySpend: topCustomersBySpend,
+        topByFrequency: topCustomersByFrequency,
+        atRisk: atRiskCustomers,
+      },
+      operations: {
+        avgPrepTimeMin: prepTimeCount > 0 ? Math.round(totalPrepTime / prepTimeCount) : null,
+        avgDeliveryTimeMin: deliveryTimeCount > 0 ? Math.round(totalDeliveryTime / deliveryTimeCount) : null,
+        avgTotalOrderTimeMin: orderTimeCount > 0 ? Math.round(totalOrderTime / orderTimeCount) : null,
+        prepTimeSamples: prepTimeCount,
+        deliveryTimeSamples: deliveryTimeCount,
+        totalTimeSamples: orderTimeCount,
+        ordersPerHourToday: Object.entries(ordersPerHourToday).map(([h, count]) => ({ hour: parseInt(h), count })),
+      },
+      revenue: {
+        todayRevenue,
+        yesterdayRevenue,
+        todayVsYesterday: yesterdayRevenue > 0 ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100 : 0,
+        thisWeekRevenue,
+        lastWeekRevenue,
+        weekOverWeek: lastWeekRevenue > 0 ? ((thisWeekRevenue - lastWeekRevenue) / lastWeekRevenue) * 100 : 0,
+        todayOrders: todayOrders.length,
+        yesterdayOrders: yesterdayOrders.length,
+        collectionRate,
+        outstandingDebt,
+        avgOrderValue: Math.round(avgOrderValue),
+      },
+    });
+  } catch (error) {
+    console.error("Business insights error:", error);
+    return c.json({ error: "Failed to get business insights" }, 500);
+  }
+});
+
 // ==================== ADMIN: CREATE CUSTOM ORDER ====================
 app.post("/make-server-e5e192fb/admin/create-custom-order", async (c) => {
   try {
@@ -5059,6 +6409,9 @@ app.post("/make-server-e5e192fb/admin/create-custom-order", async (c) => {
       
       // Payment
       paymentReceived: orderData.paymentReceived || false,
+      paymentStatus: orderData.paymentReceived ? "paid" : "unpaid",
+      paidAmount: orderData.paymentReceived ? (orderData.total || 0) : 0,
+      paymentHistory: orderData.paymentReceived ? [{ amount: orderData.total || 0, date: now, method: "admin", note: "Paid via admin at order creation" }] : [],
       paymentDetails: orderData.paymentReceived ? "Paid via admin" : undefined,
       
       // Points
@@ -5190,6 +6543,1094 @@ app.get("/make-server-e5e192fb/track/:orderNumber", async (c) => {
   } catch (error) {
     console.error(`❌ Track order error:`, error);
     return c.json({ error: "Failed to retrieve order" }, 500);
+  }
+});
+
+// Admin: Fresh Start - Delete all customers (except admin) and all orders
+app.post("/make-server-e5e192fb/admin/fresh-start", async (c) => {
+  try {
+    console.log(`🔄 FRESH START: Request received`);
+
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ error: "Unauthorized - No token provided" }, 401);
+    }
+
+    const adminAuth = await verifyAdminAccess(token);
+    if (!adminAuth) {
+      return c.json({ error: "Admin access required" }, 403);
+    }
+
+    console.log(`✅ FRESH START: Admin ${adminAuth.userId} authorized`);
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    // 1. Delete all non-admin users
+    const allUsers = await kv.getByPrefix("user:");
+    let deletedUsers = 0;
+    let skippedAdmin = 0;
+
+    for (const user of allUsers) {
+      if (user.isAdmin) {
+        console.log(`⏭️ FRESH START: Skipping admin user ${user.id} (${user.name})`);
+        skippedAdmin++;
+        continue;
+      }
+
+      // Delete from Supabase Auth
+      try {
+        const { error: authError } = await supabase.auth.admin.deleteUser(user.id);
+        if (authError) {
+          console.log(`⚠️ FRESH START: Failed to delete user ${user.id} from Auth: ${authError.message}`);
+        }
+      } catch (authErr) {
+        console.log(`⚠️ FRESH START: Auth delete exception for ${user.id}: ${truncateError(authErr)}`);
+      }
+
+      // Delete user KV entry
+      await kv.del(`user:${user.id}`);
+
+      // Delete user's cart
+      try { await kv.del(`cart:${user.id}`); } catch (_e) { /* ignore */ }
+
+      // Delete phone lookup key if exists
+      if (user.phone) {
+        try {
+          const phoneEmail = `${(user.phone || '').replace(/[^0-9]/g, '')}@phone.tikka.app`;
+          await kv.del(`phone:${phoneEmail}`);
+        } catch (_e) { /* ignore */ }
+      }
+
+      deletedUsers++;
+      console.log(`🗑️ FRESH START: Deleted user ${user.id} (${user.name || user.phone})`);
+    }
+
+    // 2. Delete all orders
+    const allOrders = await kv.getByPrefix("order:");
+    let deletedOrders = 0;
+
+    for (const order of allOrders) {
+      const orderId = order.id || order.orderId;
+      if (orderId) {
+        await kv.del(`order:${orderId}`);
+        deletedOrders++;
+      }
+    }
+
+    console.log(`✅ FRESH START COMPLETE: Deleted ${deletedUsers} customers, ${deletedOrders} orders. Kept ${skippedAdmin} admin(s).`);
+
+    return c.json({
+      success: true,
+      message: `Fresh start complete! Deleted ${deletedUsers} customers and ${deletedOrders} orders. Admin account preserved.`,
+      deletedUsers,
+      deletedOrders,
+      skippedAdmin,
+    });
+  } catch (error) {
+    console.log(`❌ FRESH START error: ${error}`);
+    return c.json({ error: `Fresh start failed: ${error.message}` }, 500);
+  }
+});
+
+// ===================================================================
+// MIDTRANS PAYMENT INTEGRATION
+// ===================================================================
+
+// Midtrans config helper
+function getMidtransConfig() {
+  const isProduction = Deno.env.get('MIDTRANS_IS_PRODUCTION') === 'true';
+  const serverKey = Deno.env.get('MIDTRANS_SERVER_KEY') || '';
+  const clientKey = Deno.env.get('MIDTRANS_CLIENT_KEY') || '';
+  const snapApiUrl = isProduction
+    ? 'https://app.midtrans.com/snap/v1/transactions'
+    : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
+  return { isProduction, serverKey, clientKey, snapApiUrl };
+}
+
+// GET /midtrans-config — Frontend fetches client key + mode
+app.get("/make-server-e5e192fb/midtrans-config", async (c) => {
+  try {
+    const { isProduction, clientKey } = getMidtransConfig();
+    return c.json({ clientKey, isProduction });
+  } catch (error) {
+    console.log(`❌ midtrans-config error: ${error}`);
+    return c.json({ error: `Failed to get Midtrans config: ${error.message}` }, 500);
+  }
+});
+
+// POST /create-payment-intent — Create a Midtrans Snap token WITHOUT creating an order in KV.
+// The real order is only created AFTER payment succeeds. This prevents phantom "placed" orders.
+app.post("/make-server-e5e192fb/create-payment-intent", async (c) => {
+  try {
+    const body = await c.req.json();
+    console.log(`💳 [PAYMENT-INTENT] Creating payment intent (no order yet)`);
+
+    const { total, items, guestName, guestPhone, phone, customerName } = body;
+
+    if (!total || total <= 0) {
+      return c.json({ error: "total is required and must be > 0" }, 400);
+    }
+
+    const { serverKey, snapApiUrl } = getMidtransConfig();
+    if (!serverKey) {
+      return c.json({ error: "Payment gateway not configured" }, 500);
+    }
+
+    // Generate a temporary order number for Midtrans (unique per attempt)
+    const counterKey = "order_counter";
+    let currentCounter = await kv.get(counterKey);
+    if (!currentCounter) { currentCounter = 0; }
+    const tempOrderNumber = `TNT${String(currentCounter + 1).padStart(8, '0')}`;
+    const midtransOrderId = `${tempOrderNumber}-${Date.now()}`;
+
+    const grossAmount = Math.round(total);
+
+    const snapPayload: any = {
+      transaction_details: {
+        order_id: midtransOrderId,
+        gross_amount: grossAmount,
+      },
+      customer_details: {
+        first_name: guestName || customerName || "Customer",
+        phone: guestPhone || phone || "",
+      },
+      item_details: (items || []).map((item: any) => ({
+        id: String(item.id || "item"),
+        price: Math.round(item.price),
+        quantity: item.quantity || 1,
+        name: (item.title || item.name || "Item").substring(0, 50),
+      })),
+    };
+
+    const itemsSubtotal = snapPayload.item_details.reduce(
+      (sum: number, item: any) => sum + item.price * item.quantity, 0
+    );
+    const taxAmount = grossAmount - itemsSubtotal;
+    if (taxAmount > 0) {
+      snapPayload.item_details.push({
+        id: "tax",
+        price: taxAmount,
+        quantity: 1,
+        name: "Tax (PPN)",
+      });
+    }
+
+    console.log(`💳 [PAYMENT-INTENT] Snap payload:`, JSON.stringify(snapPayload, null, 2));
+
+    const authString = btoa(serverKey + ":");
+    const snapResponse = await fetch(snapApiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Basic ${authString}`,
+        "Accept": "application/json",
+      },
+      body: JSON.stringify(snapPayload),
+    });
+
+    const snapData = await snapResponse.json();
+    console.log(`💳 [PAYMENT-INTENT] Snap response status: ${snapResponse.status}`);
+
+    if (!snapResponse.ok) {
+      console.log(`❌ [PAYMENT-INTENT] Midtrans Snap API error:`, snapData);
+      return c.json({ error: "Failed to create payment", details: snapData.error_messages || snapData }, 500);
+    }
+
+    console.log(`✅ [PAYMENT-INTENT] Snap token created: ${snapData.token?.substring(0, 20)}...`);
+
+    return c.json({
+      success: true,
+      snapToken: snapData.token,
+      midtransOrderId,
+    });
+  } catch (error) {
+    console.log(`❌ [PAYMENT-INTENT] Error: ${error}`);
+    return c.json({ error: `Payment intent creation failed: ${error?.message}` }, 500);
+  }
+});
+
+// POST /create-payment — Create Midtrans Snap token for an order
+app.post("/make-server-e5e192fb/create-payment", async (c) => {
+  try {
+    const { orderId } = await c.req.json();
+    console.log(`💳 [CREATE-PAYMENT] Creating payment for order: ${orderId}`);
+
+    if (!orderId) {
+      return c.json({ error: "orderId is required" }, 400);
+    }
+
+    // Fetch order from KV
+    const order = await kvGetWithRetry(`order:${orderId}`);
+    if (!order) {
+      console.log(`❌ [CREATE-PAYMENT] Order not found: ${orderId}`);
+      return c.json({ error: "Order not found" }, 404);
+    }
+
+    // Don't create payment if already paid
+    if (order.paymentStatus === 'paid') {
+      console.log(`❌ [CREATE-PAYMENT] Order already paid: ${orderId}`);
+      return c.json({ error: "Order is already paid" }, 400);
+    }
+
+    const { serverKey, snapApiUrl } = getMidtransConfig();
+    if (!serverKey) {
+      console.log(`❌ [CREATE-PAYMENT] MIDTRANS_SERVER_KEY not configured`);
+      return c.json({ error: "Payment gateway not configured" }, 500);
+    }
+
+    console.log(`💳 [CREATE-PAYMENT] Server key prefix: ${serverKey.substring(0, 15)}...`);
+    console.log(`💳 [CREATE-PAYMENT] Server key length: ${serverKey.length}`);
+
+    // Build Midtrans order ID (unique per attempt to avoid duplicate transaction errors)
+    const midtransOrderId = `${order.orderNumber}-${Date.now()}`;
+    
+    // gross_amount must be an integer for Midtrans
+    const grossAmount = Math.round(order.total);
+
+    // Build Snap API payload
+    const snapPayload: any = {
+      transaction_details: {
+        order_id: midtransOrderId,
+        gross_amount: grossAmount,
+      },
+      customer_details: {
+        first_name: order.guestName || order.customerName || "Customer",
+        phone: order.guestPhone || order.phone || "",
+      },
+      item_details: (order.items || []).map((item: any) => ({
+        id: String(item.id || "item"),
+        price: Math.round(item.price),
+        quantity: item.quantity || 1,
+        name: (item.title || item.name || "Item").substring(0, 50),
+      })),
+    };
+
+    // Add tax as a line item so item_details sum matches gross_amount
+    const itemsSubtotal = snapPayload.item_details.reduce(
+      (sum: number, item: any) => sum + item.price * item.quantity, 0
+    );
+    const taxAmount = grossAmount - itemsSubtotal;
+    if (taxAmount > 0) {
+      snapPayload.item_details.push({
+        id: "tax",
+        price: taxAmount,
+        quantity: 1,
+        name: "Tax (PPN)",
+      });
+    }
+
+    console.log(`💳 [CREATE-PAYMENT] Snap payload:`, JSON.stringify(snapPayload, null, 2));
+    console.log(`💳 [CREATE-PAYMENT] Snap API URL: ${snapApiUrl}`);
+
+    // Call Midtrans Snap API
+    const authString = btoa(serverKey + ":");
+    const snapResponse = await fetch(snapApiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Basic ${authString}`,
+        "Accept": "application/json",
+      },
+      body: JSON.stringify(snapPayload),
+    });
+
+    const snapData = await snapResponse.json();
+    console.log(`💳 [CREATE-PAYMENT] Snap response status: ${snapResponse.status}`);
+    console.log(`💳 [CREATE-PAYMENT] Snap response:`, JSON.stringify(snapData, null, 2));
+
+    if (!snapResponse.ok) {
+      console.log(`❌ [CREATE-PAYMENT] Midtrans Snap API error:`, snapData);
+      return c.json({ 
+        error: "Failed to create payment", 
+        details: snapData.error_messages || snapData 
+      }, 500);
+    }
+
+    // Store Midtrans details on the order
+    order.paymentMethod = "midtrans";
+    order.midtransOrderId = midtransOrderId;
+    order.snapToken = snapData.token;
+    order.updatedAt = new Date().toISOString();
+    await kvSetWithRetry(`order:${orderId}`, order);
+
+    console.log(`✅ [CREATE-PAYMENT] Snap token created for order ${orderId}: ${snapData.token?.substring(0, 20)}...`);
+
+    return c.json({
+      success: true,
+      snapToken: snapData.token,
+      redirectUrl: snapData.redirect_url,
+      midtransOrderId,
+    });
+  } catch (error) {
+    console.log(`❌ [CREATE-PAYMENT] Error: ${error}`);
+    console.log(`❌ [CREATE-PAYMENT] Stack: ${error?.stack}`);
+    return c.json({ error: `Payment creation failed: ${error?.message}` }, 500);
+  }
+});
+
+// POST /midtrans-notification — Webhook called by Midtrans when payment status changes
+app.post("/make-server-e5e192fb/midtrans-notification", async (c) => {
+  try {
+    const notification = await c.req.json();
+    console.log(`🔔 [MIDTRANS-WEBHOOK] Received notification:`, JSON.stringify(notification, null, 2));
+
+    const {
+      order_id: midtransOrderId,
+      transaction_status: transactionStatus,
+      fraud_status: fraudStatus,
+      status_code: statusCode,
+      gross_amount: grossAmount,
+      signature_key: signatureKey,
+      transaction_id: transactionId,
+      payment_type: paymentType,
+    } = notification;
+
+    // Verify signature: SHA512(order_id + status_code + gross_amount + server_key)
+    const { serverKey } = getMidtransConfig();
+    const signatureInput = midtransOrderId + statusCode + grossAmount + serverKey;
+    const encoder = new TextEncoder();
+    const sigData = encoder.encode(signatureInput);
+    const hashBuffer = await crypto.subtle.digest("SHA-512", sigData);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const expectedSignature = hashArray.map((b: number) => b.toString(16).padStart(2, '0')).join('');
+
+    if (expectedSignature !== signatureKey) {
+      console.log(`❌ [MIDTRANS-WEBHOOK] Signature mismatch!`);
+      console.log(`  Expected: ${expectedSignature}`);
+      console.log(`  Received: ${signatureKey}`);
+      return c.json({ error: "Invalid signature" }, 403);
+    }
+
+    console.log(`✅ [MIDTRANS-WEBHOOK] Signature verified for: ${midtransOrderId}`);
+
+    // Find the order by midtransOrderId
+    // midtransOrderId format: TNT00000XXX-timestamp
+    const orderNumberMatch = midtransOrderId.match(/^(TNT\d+)-\d+$/);
+    if (!orderNumberMatch) {
+      console.log(`❌ [MIDTRANS-WEBHOOK] Cannot parse order number from: ${midtransOrderId}`);
+      return c.json({ error: "Invalid order ID format" }, 400);
+    }
+
+    const orderNumber = orderNumberMatch[1];
+    console.log(`🔍 [MIDTRANS-WEBHOOK] Looking for order with number: ${orderNumber}`);
+
+    // Search for the order in KV using getByPrefix
+    const allOrders = await kv.getByPrefix("order:");
+    let order: any = null;
+    
+    for (const entry of allOrders) {
+      if (entry.value && entry.value.orderNumber === orderNumber && entry.value.midtransOrderId === midtransOrderId) {
+        order = entry.value;
+        break;
+      }
+    }
+
+    if (!order) {
+      console.log(`❌ [MIDTRANS-WEBHOOK] Order not found for midtransOrderId: ${midtransOrderId}`);
+      return c.json({ error: "Order not found" }, 404);
+    }
+
+    console.log(`✅ [MIDTRANS-WEBHOOK] Found order: ${order.id} (${order.orderNumber})`);
+
+    const now = new Date().toISOString();
+    const paidAmount = parseFloat(grossAmount) || 0;
+
+    // Handle transaction status
+    if (transactionStatus === 'capture' || transactionStatus === 'settlement') {
+      // Payment successful
+      if (transactionStatus === 'capture' && fraudStatus !== 'accept') {
+        console.log(`⚠️ [MIDTRANS-WEBHOOK] Capture with fraud_status: ${fraudStatus} - skipping`);
+        return c.json({ received: true });
+      }
+
+      console.log(`✅ [MIDTRANS-WEBHOOK] Payment SUCCESS for order ${order.id}`);
+      
+      order.paymentStatus = "paid";
+      order.paymentReceived = true;
+      order.paidAmount = paidAmount;
+      order.status = "confirmed"; // Auto-confirm on successful payment
+      
+      // Add to payment history
+      order.paymentHistory = order.paymentHistory || [];
+      order.paymentHistory.push({
+        method: paymentType || "midtrans",
+        amount: paidAmount,
+        transactionId: transactionId,
+        midtransOrderId: midtransOrderId,
+        timestamp: now,
+        status: "settlement",
+        note: `Online payment via ${paymentType || 'Midtrans'}`,
+      });
+
+      // Add status history entries
+      order.statusHistory = order.statusHistory || [];
+      order.statusHistory.push({ 
+        status: 'payment_received', 
+        timestamp: now, 
+        label: `Payment received via ${paymentType || 'Midtrans'}` 
+      });
+      order.statusHistory.push({ 
+        status: 'confirmed', 
+        timestamp: now, 
+        label: 'Order auto-confirmed (payment received)' 
+      });
+
+    } else if (transactionStatus === 'pending') {
+      console.log(`⏳ [MIDTRANS-WEBHOOK] Payment PENDING for order ${order.id}`);
+      order.paymentStatus = "pending";
+      
+    } else if (['deny', 'cancel', 'expire'].includes(transactionStatus)) {
+      console.log(`❌ [MIDTRANS-WEBHOOK] Payment ${transactionStatus.toUpperCase()} for order ${order.id}`);
+      order.paymentStatus = "unpaid";
+      
+      // Add to payment history for tracking
+      order.paymentHistory = order.paymentHistory || [];
+      order.paymentHistory.push({
+        method: paymentType || "midtrans",
+        amount: 0,
+        transactionId: transactionId,
+        midtransOrderId: midtransOrderId,
+        timestamp: now,
+        status: transactionStatus,
+        note: `Payment ${transactionStatus}`,
+      });
+    }
+
+    order.updatedAt = now;
+    await kvSetWithRetry(`order:${order.id}`, order);
+
+    console.log(`✅ [MIDTRANS-WEBHOOK] Order ${order.id} updated: status=${order.status}, paymentStatus=${order.paymentStatus}`);
+
+    // Return 200 to acknowledge receipt (Midtrans requires this)
+    return c.json({ received: true });
+  } catch (error) {
+    console.log(`❌ [MIDTRANS-WEBHOOK] Error: ${error}`);
+    console.log(`❌ [MIDTRANS-WEBHOOK] Stack: ${error?.stack}`);
+    // Still return 200 to prevent Midtrans from retrying endlessly
+    return c.json({ received: true, error: error?.message });
+  }
+});
+
+// GET /payment-status/:orderId — Frontend polls for payment status
+app.get("/make-server-e5e192fb/payment-status/:orderId", async (c) => {
+  try {
+    const orderId = c.req.param('orderId');
+    console.log(`🔍 [PAYMENT-STATUS] Checking payment status for: ${orderId}`);
+
+    const order = await kvGetWithRetry(`order:${orderId}`);
+    if (!order) {
+      return c.json({ error: "Order not found" }, 404);
+    }
+
+    return c.json({
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      paymentStatus: order.paymentStatus || "unpaid",
+      paymentMethod: order.paymentMethod || "cash",
+      paymentReceived: order.paymentReceived || false,
+      paidAmount: order.paidAmount || 0,
+      total: order.total,
+      snapToken: order.snapToken, // For retry payment
+    });
+  } catch (error) {
+    console.log(`❌ [PAYMENT-STATUS] Error: ${error}`);
+    return c.json({ error: `Failed to get payment status: ${error?.message}` }, 500);
+  }
+});
+
+// POST /confirm-payment-frontend — Frontend calls after Snap popup returns success
+// This ensures order is marked paid+confirmed immediately (webhook may have latency)
+app.post("/make-server-e5e192fb/confirm-payment-frontend", async (c) => {
+  try {
+    const { orderId, transactionData } = await c.req.json();
+    console.log(`💳 [CONFIRM-PAYMENT-FE] Confirming payment for order: ${orderId}`);
+    console.log(`💳 [CONFIRM-PAYMENT-FE] Transaction data:`, JSON.stringify(transactionData, null, 2));
+
+    if (!orderId) {
+      return c.json({ error: "orderId is required" }, 400);
+    }
+
+    const order = await kvGetWithRetry(`order:${orderId}`);
+    if (!order) {
+      console.log(`❌ [CONFIRM-PAYMENT-FE] Order not found: ${orderId}`);
+      return c.json({ error: "Order not found" }, 404);
+    }
+
+    // Already paid? Skip
+    if (order.paymentStatus === "paid") {
+      console.log(`ℹ️ [CONFIRM-PAYMENT-FE] Order already paid: ${orderId}`);
+      return c.json({ success: true, message: "Already paid", order });
+    }
+
+    const now = new Date().toISOString();
+
+    // Mark as paid + confirmed
+    order.paymentStatus = "paid";
+    order.paymentReceived = true;
+    order.paidAmount = order.total || 0;
+    order.status = "confirmed";
+    order.paymentMethod = "midtrans";
+
+    // Add to payment history
+    order.paymentHistory = order.paymentHistory || [];
+    order.paymentHistory.push({
+      method: transactionData?.payment_type || "midtrans",
+      amount: order.total || 0,
+      transactionId: transactionData?.transaction_id || "snap-success",
+      timestamp: now,
+      status: "settlement",
+      note: `Online payment confirmed via Snap popup`,
+    });
+
+    // Add status history
+    order.statusHistory = order.statusHistory || [];
+    if (!order.statusHistory.find((h: any) => h.status === 'payment_received')) {
+      order.statusHistory.push({ 
+        status: 'payment_received', 
+        timestamp: now, 
+        label: 'Payment received via Midtrans' 
+      });
+    }
+    if (!order.statusHistory.find((h: any) => h.status === 'confirmed')) {
+      order.statusHistory.push({ 
+        status: 'confirmed', 
+        timestamp: now, 
+        label: 'Order auto-confirmed (payment received)' 
+      });
+    }
+
+    order.updatedAt = now;
+    await kvSetWithRetry(`order:${orderId}`, order);
+
+    console.log(`✅ [CONFIRM-PAYMENT-FE] Order ${orderId} marked as paid+confirmed`);
+    return c.json({ success: true, order });
+  } catch (error) {
+    console.log(`❌ [CONFIRM-PAYMENT-FE] Error: ${error}`);
+    return c.json({ error: `Failed to confirm payment: ${error?.message}` }, 500);
+  }
+});
+
+// POST /switch-to-cash — Switch an unpaid midtrans order to cash/pay-on-delivery
+app.post("/make-server-e5e192fb/switch-to-cash", async (c) => {
+  try {
+    const { orderId } = await c.req.json();
+    console.log(`💰 [SWITCH-TO-CASH] Switching order ${orderId} to cash payment`);
+
+    if (!orderId) {
+      return c.json({ error: "orderId is required" }, 400);
+    }
+
+    const order = await kvGetWithRetry(`order:${orderId}`);
+    if (!order) {
+      return c.json({ error: "Order not found" }, 404);
+    }
+
+    if (order.paymentStatus === "paid") {
+      return c.json({ error: "Cannot switch - order is already paid" }, 400);
+    }
+
+    const now = new Date().toISOString();
+
+    // Switch to cash payment
+    order.paymentMethod = "cash";
+    order.paymentStatus = "unpaid";
+    order.midtransOrderId = null;
+    order.snapToken = null;
+
+    // Switch to cash payment — this makes it a real "placed" order
+    order.paymentMethod = "cash";
+    order.paymentStatus = "unpaid";
+    order.status = "pending";
+    order.midtransOrderId = null;
+    order.snapToken = null;
+
+    order.statusHistory = order.statusHistory || [];
+    order.statusHistory.push({
+      status: "payment_method_changed",
+      timestamp: now,
+      label: "Switched from online payment to Pay on Delivery",
+    });
+
+    order.updatedAt = now;
+    await kvSetWithRetry(`order:${order.id}`, order);
+
+    console.log(`✅ [SWITCH-TO-CASH] Order ${orderId} switched to cash`);
+    return c.json({ success: true, order });
+  } catch (error) {
+    console.log(`❌ [SWITCH-TO-CASH] Error: ${error}`);
+    return c.json({ error: `Failed to switch payment: ${error?.message}` }, 500);
+  }
+});
+
+// POST /cancel-draft-order — Delete a draft order that was never paid (awaiting_payment)
+app.post("/make-server-e5e192fb/cancel-draft-order", async (c) => {
+  try {
+    const { orderId } = await c.req.json();
+    console.log(`🗑️ [CANCEL-DRAFT] Cancelling draft order: ${orderId}`);
+
+    if (!orderId) {
+      return c.json({ error: "orderId is required" }, 400);
+    }
+
+    const order = await kvGetWithRetry(`order:${orderId}`);
+    if (!order) {
+      console.log(`ℹ️ [CANCEL-DRAFT] Order not found (already deleted?): ${orderId}`);
+      return c.json({ success: true, message: "Order not found or already deleted" });
+    }
+
+    // Safety: only delete orders that are still in awaiting_payment state
+    if (order.paymentStatus !== "awaiting_payment") {
+      console.log(`❌ [CANCEL-DRAFT] Order ${orderId} is not a draft (paymentStatus: ${order.paymentStatus})`);
+      return c.json({ error: "Cannot cancel - order is not in draft/awaiting_payment state" }, 400);
+    }
+
+    // Remove from user's order list (key is user_orders:userId)
+    if (order.userId) {
+      try {
+        const userOrdersKey = `user_orders:${order.userId}`;
+        const userOrders = await kvGetWithRetry(userOrdersKey) || [];
+        const updatedOrders = userOrders.filter((id: string) => id !== orderId);
+        await kvSetWithRetry(userOrdersKey, updatedOrders);
+        console.log(`✅ [CANCEL-DRAFT] Removed from user ${order.userId} orders list`);
+      } catch (e) {
+        console.log(`⚠️ [CANCEL-DRAFT] Failed to remove from user orders list: ${e}`);
+      }
+    }
+    
+    // Remove from guest orders list if applicable
+    if (order.guestPhone) {
+      try {
+        const guestPhoneKey = `guest_orders:${order.guestPhone.replace(/\\D/g, '')}`;
+        const guestOrders = await kvGetWithRetry(guestPhoneKey) || [];
+        const updatedGuestOrders = guestOrders.filter((id: string) => id !== orderId);
+        await kvSetWithRetry(guestPhoneKey, updatedGuestOrders);
+        console.log(`✅ [CANCEL-DRAFT] Removed from guest orders list`);
+      } catch (e) {
+        console.log(`⚠️ [CANCEL-DRAFT] Failed to remove from guest orders list: ${e}`);
+      }
+    }
+
+    // Delete the order from KV
+    await kv.del(`order:${orderId}`);
+    console.log(`✅ [CANCEL-DRAFT] Draft order ${orderId} deleted`);
+
+    return c.json({ success: true, message: "Draft order cancelled and deleted" });
+  } catch (error) {
+    console.log(`❌ [CANCEL-DRAFT] Error: ${error}`);
+    return c.json({ error: `Failed to cancel draft order: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== DELIVERY ZONES ====================
+
+// Haversine formula
+function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+const DEFAULT_DELIVERY_CONFIG = {
+  restaurantLocation: { lat: -6.2088, lng: 106.8456 },
+  maxDistance: 15,
+  zones: [
+    { id: "1", name: "Nearby", minKm: 0, maxKm: 3, fee: 8000 },
+    { id: "2", name: "Medium", minKm: 3, maxKm: 7, fee: 15000 },
+    { id: "3", name: "Far", minKm: 7, maxKm: 12, fee: 25000 },
+    { id: "4", name: "Very Far", minKm: 12, maxKm: 15, fee: 40000 },
+  ],
+};
+
+// Get delivery zones config (public)
+app.get("/make-server-e5e192fb/delivery-zones", async (c) => {
+  try {
+    const config = await kvGetWithRetry("delivery_zones_config") || DEFAULT_DELIVERY_CONFIG;
+    return c.json(config);
+  } catch (error) {
+    console.error("Get delivery zones error:", error);
+    return c.json(DEFAULT_DELIVERY_CONFIG);
+  }
+});
+
+// Update delivery zones config (admin only)
+app.put("/make-server-e5e192fb/admin/delivery-zones", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ error: "Authentication required" }, 401);
+    }
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ error: "Admin access required" }, 401);
+    }
+
+    const config = await c.req.json();
+    
+    // Validate
+    if (!config.restaurantLocation?.lat || !config.restaurantLocation?.lng) {
+      return c.json({ error: "Restaurant location (lat/lng) is required" }, 400);
+    }
+    if (!config.maxDistance || config.maxDistance <= 0) {
+      return c.json({ error: "Max distance must be positive" }, 400);
+    }
+    if (!config.zones || !Array.isArray(config.zones) || config.zones.length === 0) {
+      return c.json({ error: "At least one delivery zone is required" }, 400);
+    }
+
+    await kvSetWithRetry("delivery_zones_config", config);
+    console.log(`✅ Delivery zones config updated: ${config.zones.length} zones, max ${config.maxDistance}km`);
+    
+    return c.json({ success: true, config });
+  } catch (error) {
+    console.error("Update delivery zones error:", error);
+    return c.json({ error: `Failed to update delivery zones: ${error?.message}` }, 500);
+  }
+});
+
+// Calculate delivery fee from coordinates (public)
+app.post("/make-server-e5e192fb/calculate-delivery-fee", async (c) => {
+  try {
+    const { lat, lng } = await c.req.json();
+    
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      return c.json({ error: "lat and lng are required as numbers" }, 400);
+    }
+
+    const config = await kvGetWithRetry("delivery_zones_config") || DEFAULT_DELIVERY_CONFIG;
+    const distance = haversineDistance(
+      config.restaurantLocation.lat,
+      config.restaurantLocation.lng,
+      lat,
+      lng
+    );
+    const distanceKm = parseFloat(distance.toFixed(2));
+
+    if (distanceKm > config.maxDistance) {
+      return c.json({
+        available: false,
+        distance: distanceKm,
+        maxDistance: config.maxDistance,
+        message: `Delivery not available beyond ${config.maxDistance} km. Your distance: ${distanceKm} km.`,
+      });
+    }
+
+    // Find matching zone
+    const sortedZones = [...config.zones].sort((a: any, b: any) => a.minKm - b.minKm);
+    let matchedZone = null;
+    for (const zone of sortedZones) {
+      if (distanceKm >= zone.minKm && distanceKm < zone.maxKm) {
+        matchedZone = zone;
+        break;
+      }
+    }
+    // Edge case: exactly at maxKm of last zone
+    if (!matchedZone && sortedZones.length > 0) {
+      const lastZone = sortedZones[sortedZones.length - 1];
+      if (distanceKm <= lastZone.maxKm) {
+        matchedZone = lastZone;
+      }
+    }
+
+    if (!matchedZone) {
+      return c.json({
+        available: false,
+        distance: distanceKm,
+        message: `No delivery zone configured for ${distanceKm} km distance.`,
+      });
+    }
+
+    return c.json({
+      available: true,
+      distance: distanceKm,
+      zone: matchedZone,
+      fee: matchedZone.fee,
+    });
+  } catch (error) {
+    console.error("Calculate delivery fee error:", error);
+    return c.json({ error: `Failed to calculate delivery fee: ${error?.message}` }, 500);
+  }
+});
+
+// Search places via Nominatim — returns multiple results for autocomplete
+app.get("/make-server-e5e192fb/search-places", async (c) => {
+  try {
+    const q = c.req.query("q");
+    if (!q || q.trim().length < 2) {
+      return c.json({ results: [] });
+    }
+
+    const query = encodeURIComponent(`${q.trim()}, Jakarta, Indonesia`);
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=8&countrycodes=id&addressdetails=1`,
+      {
+        headers: {
+          'User-Agent': 'TikkaNTalk-Restaurant-App/1.0',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.error(`Nominatim search error: ${response.status}`);
+      return c.json({ results: [] });
+    }
+
+    const data = await response.json();
+    
+    const results = (data || []).map((item: any) => {
+      const addr = item.address || {};
+      let name = item.name || "";
+      let subtitle = "";
+      
+      const parts: string[] = [];
+      if (addr.road) parts.push(addr.road);
+      if (addr.suburb) parts.push(addr.suburb);
+      if (addr.city_district) parts.push(addr.city_district);
+      if (addr.city) parts.push(addr.city);
+      subtitle = parts.filter((p: string) => p && p !== name).join(", ");
+      
+      const type = item.type || item.class || "place";
+      const typeLabels: Record<string, string> = {
+        apartment: "Apartment", apartments: "Apartment", residential: "Residential",
+        hotel: "Hotel", mall: "Mall", shop: "Shop", restaurant: "Restaurant",
+        cafe: "Cafe", office: "Office", hospital: "Hospital", school: "School",
+        university: "University", mosque: "Mosque", church: "Church",
+        station: "Station", bus_station: "Bus Station", park: "Park",
+        building: "Building", house: "House", suburb: "Area", village: "Village",
+        neighbourhood: "Neighborhood", administrative: "District", city: "City",
+        road: "Street", highway: "Road", tertiary: "Street", secondary: "Street",
+        primary: "Road", bank: "Bank", marketplace: "Market", supermarket: "Supermarket",
+        fuel: "Gas Station", pharmacy: "Pharmacy", clinic: "Clinic",
+        cinema: "Cinema", museum: "Museum", library: "Library",
+      };
+      
+      const typeLabel = typeLabels[type] || (item.class === "building" ? "Building" : 
+                         item.class === "amenity" ? "Place" : 
+                         item.class === "shop" ? "Shop" :
+                         item.class === "tourism" ? "Tourism" :
+                         item.class === "highway" ? "Street" : "Place");
+
+      return {
+        id: item.place_id?.toString() || `${item.lat}-${item.lon}`,
+        name: name || subtitle.split(",")[0] || item.display_name?.split(",")[0] || "Unknown",
+        subtitle: subtitle || item.display_name || "",
+        fullAddress: item.display_name || "",
+        type: typeLabel,
+        lat: parseFloat(item.lat),
+        lng: parseFloat(item.lon),
+      };
+    });
+
+    return c.json({ results });
+  } catch (error) {
+    console.error(`Search places error: ${error?.message}`);
+    return c.json({ results: [] });
+  }
+});
+
+// Geocode address via Nominatim (public)
+app.post("/make-server-e5e192fb/geocode-address", async (c) => {
+  try {
+    const { address } = await c.req.json();
+    
+    if (!address || typeof address !== 'string') {
+      return c.json({ error: "Address string is required" }, 400);
+    }
+
+    // Call Nominatim (OpenStreetMap) geocoding API
+    const query = encodeURIComponent(address);
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1&countrycodes=id`,
+      {
+        headers: {
+          'User-Agent': 'TikkaNTalk-Restaurant-App/1.0',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.error(`Nominatim API error: ${response.status}`);
+      return c.json({ error: "Geocoding service temporarily unavailable" }, 503);
+    }
+
+    const results = await response.json();
+    
+    if (!results || results.length === 0) {
+      return c.json({
+        found: false,
+        message: "Could not find coordinates for this address. Try using GPS or selecting an area.",
+      });
+    }
+
+    const result = results[0];
+    return c.json({
+      found: true,
+      lat: parseFloat(result.lat),
+      lng: parseFloat(result.lon),
+      displayName: result.display_name,
+    });
+  } catch (error) {
+    console.error("Geocode address error:", error);
+    return c.json({ error: `Geocoding failed: ${error?.message}` }, 500);
+  }
+});
+
+// Reverse geocode lat/lng to human-readable address via Nominatim (public)
+app.post("/make-server-e5e192fb/reverse-geocode", async (c) => {
+  try {
+    const { lat, lng } = await c.req.json();
+    
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      return c.json({ error: "lat and lng are required as numbers" }, 400);
+    }
+
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&zoom=18`,
+      {
+        headers: {
+          'User-Agent': 'TikkaNTalk-Restaurant-App/1.0',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.error(`Nominatim reverse geocode error: ${response.status}`);
+      return c.json({ found: false, message: "Reverse geocoding service temporarily unavailable" });
+    }
+
+    const result = await response.json();
+    
+    if (!result || result.error) {
+      return c.json({ found: false, message: "Could not resolve this location to an address." });
+    }
+
+    // Build a clean, short address from the address components
+    const addr = result.address || {};
+    const parts: string[] = [];
+    
+    // Building / house / amenity
+    if (addr.building || addr.amenity || addr.shop) {
+      parts.push(addr.building || addr.amenity || addr.shop);
+    }
+    // House number + road
+    if (addr.road) {
+      const road = addr.house_number ? `${addr.road} No. ${addr.house_number}` : addr.road;
+      parts.push(road);
+    }
+    // Neighbourhood / suburb / village
+    if (addr.neighbourhood) parts.push(addr.neighbourhood);
+    else if (addr.suburb) parts.push(addr.suburb);
+    else if (addr.village) parts.push(addr.village);
+    // Sub-district / city district
+    if (addr.city_district) parts.push(addr.city_district);
+    // City
+    if (addr.city || addr.town || addr.municipality) {
+      parts.push(addr.city || addr.town || addr.municipality);
+    }
+    // Postcode
+    if (addr.postcode) parts.push(addr.postcode);
+
+    const shortAddress = parts.length > 0 ? parts.join(", ") : result.display_name;
+
+    console.log(`📍 Reverse geocode: (${lat}, ${lng}) -> ${shortAddress}`);
+
+    return c.json({
+      found: true,
+      address: shortAddress,
+      fullAddress: result.display_name,
+      components: addr,
+    });
+  } catch (error) {
+    console.error("Reverse geocode error:", error);
+    return c.json({ found: false, message: `Reverse geocoding failed: ${error?.message}` });
+  }
+});
+
+// ==================== SAVED ADDRESSES ====================
+
+// GET saved addresses for a user
+app.get("/make-server-e5e192fb/user-addresses", async (c) => {
+  try {
+    const userId = c.req.query("userId");
+    if (!userId) {
+      return c.json({ error: "userId is required" }, 400);
+    }
+
+    const addresses = await kv.get(`user_addresses:${userId}`);
+    return c.json({ addresses: addresses || [] });
+  } catch (error) {
+    console.log(`Error fetching user addresses: ${error?.message}`);
+    return c.json({ error: `Failed to fetch addresses: ${error?.message}` }, 500);
+  }
+});
+
+// POST save a new address
+app.post("/make-server-e5e192fb/user-addresses", async (c) => {
+  try {
+    const { userId, address } = await c.req.json();
+    if (!userId || !address) {
+      return c.json({ error: "userId and address are required" }, 400);
+    }
+
+    const existing = (await kv.get(`user_addresses:${userId}`)) || [];
+
+    const newAddress = {
+      id: `addr_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+      label: address.label || "Home",
+      address: address.address || "",
+      unitNumber: address.unitNumber || "",
+      area: address.area || "",
+      lat: address.lat || null,
+      lng: address.lng || null,
+      createdAt: new Date().toISOString(),
+    };
+
+    existing.push(newAddress);
+
+    // Limit to 10 saved addresses per user
+    if (existing.length > 10) {
+      existing.splice(0, existing.length - 10);
+    }
+
+    await kv.set(`user_addresses:${userId}`, existing);
+    console.log(`📍 Saved new address for user ${userId}: ${newAddress.label} - ${newAddress.address}`);
+    return c.json({ success: true, address: newAddress, addresses: existing });
+  } catch (error) {
+    console.log(`Error saving address: ${error?.message}`);
+    return c.json({ error: `Failed to save address: ${error?.message}` }, 500);
+  }
+});
+
+// DELETE a saved address
+app.delete("/make-server-e5e192fb/user-addresses/:addressId", async (c) => {
+  try {
+    const addressId = c.req.param("addressId");
+    const userId = c.req.query("userId");
+    if (!userId || !addressId) {
+      return c.json({ error: "userId and addressId are required" }, 400);
+    }
+
+    const existing = (await kv.get(`user_addresses:${userId}`)) || [];
+    const filtered = existing.filter((a: any) => a.id !== addressId);
+
+    if (filtered.length === existing.length) {
+      return c.json({ error: "Address not found" }, 404);
+    }
+
+    await kv.set(`user_addresses:${userId}`, filtered);
+    console.log(`🗑️ Deleted address ${addressId} for user ${userId}`);
+    return c.json({ success: true, addresses: filtered });
+  } catch (error) {
+    console.log(`Error deleting address: ${error?.message}`);
+    return c.json({ error: `Failed to delete address: ${error?.message}` }, 500);
   }
 });
 

@@ -7,9 +7,10 @@ import { toast } from "sonner";
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
 import { Separator } from "../components/ui/separator";
-import { Truck, ShoppingBag, UtensilsCrossed, Phone, MapPin, Clock } from "lucide-react";
+import { Truck, ShoppingBag, UtensilsCrossed, Phone, MapPin, Clock, CreditCard, Wallet, Ticket } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { formatIDR } from "../lib/currency";
+import { loadSnapJs, openSnapPayment } from "../lib/midtrans";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -47,6 +48,14 @@ export default function OrderConfirmation() {
   const [validating, setValidating] = useState(true);
   const [error, setError] = useState("");
   
+  // Payment failure state — shows retry + pay-on-delivery options on this page
+  const [paymentFailed, setPaymentFailed] = useState(false);
+  const [retryingPayment, setRetryingPayment] = useState(false);
+  const [switchingToCash, setSwitchingToCash] = useState(false);
+  
+  // Store the order payload so retry/pay-on-delivery can create the real order
+  const savedOrderPayloadRef = useRef<any>(null);
+  
   // Use STATE for cart items so it triggers re-render when loaded
   const [cartItems, setCartItems] = useState<any[]>([]);
   
@@ -67,6 +76,12 @@ export default function OrderConfirmation() {
   // Extract state from SAVED ref (not current location.state which can become null)
   const locationState = savedLocationStateRef.current || {};
   let { orderType, address, phone, specialInstructions, offerId, fromCart, cartItems: passedCartItems, guestInfo } = locationState;
+  const paymentMethod = locationState.paymentMethod || "pay-later";
+  const passedDeliveryFee = locationState.deliveryFee || 0;
+  const passedDeliveryZone = locationState.deliveryZone || null;
+  const passedDeliveryDistance = locationState.deliveryDistance || null;
+  const passedPromoApplied = locationState.promoApplied || null;
+  const passedPromoDiscount = locationState.promoDiscount || 0;
   
   // CRITICAL FIX: If no guestInfo but we have phone and no user, create guestInfo
   if (!guestInfo && phone && !user) {
@@ -415,9 +430,13 @@ export default function OrderConfirmation() {
         }
       }
 
-      const tax = subtotal * 0.10;
-      const deliveryFee = 0; // Will be calculated based on location
-      const total = subtotal + tax + deliveryFee;
+      // Apply promo discount
+      const promoDisc = Math.min(passedPromoDiscount, subtotal);
+      const discountedSubtotal = subtotal - promoDisc;
+      const tax = discountedSubtotal * 0.10;
+      const rawDeliveryFee = orderType === "delivery" ? passedDeliveryFee : 0;
+      const deliveryFee = passedPromoApplied?.freeDelivery ? 0 : rawDeliveryFee;
+      const total = discountedSubtotal + tax + deliveryFee;
 
       const orderPayload = {
         userId: user?.id || null, // null for guest orders
@@ -431,6 +450,8 @@ export default function OrderConfirmation() {
         phone: phone,
         address: orderType === "delivery" ? address : undefined,
         specialInstructions: specialInstructions,
+        // Pass payment method so server knows this is a pay-now order
+        paymentMethod: paymentMethod === "pay-now" ? "midtrans" : "cash",
         subtotal: parseFloat(subtotal.toFixed(2)),
         tax: parseFloat(tax.toFixed(2)),
         deliveryFee: parseFloat(deliveryFee.toFixed(2)),
@@ -444,12 +465,173 @@ export default function OrderConfirmation() {
           category: item.category,
           originalPrice: item.originalPrice,
           discountPercentage: item.discountPercentage
-        }))
+        })),
+        ...(passedPromoApplied && {
+          promoCode: passedPromoApplied.code,
+          promoDiscount: promoDisc,
+          promoVoucherTitle: passedPromoApplied.voucherTitle,
+          promoUserVoucherId: passedPromoApplied.userVoucherId,
+        }),
       };
 
       console.log("Order Payload:", JSON.stringify(orderPayload, null, 2));
       console.log("API URL:", `${API_BASE}/orders`);
 
+      // ===== PAY NOW FLOW: Get Snap token FIRST, only create order AFTER payment succeeds =====
+      // This ensures NO order is ever created if payment fails/cancels.
+      if (paymentMethod === "pay-now") {
+        console.log("💳 [PAY-NOW] Payment-first flow — NO order created yet");
+        
+        // Save payload for retry/pay-on-delivery handlers
+        savedOrderPayloadRef.current = orderPayload;
+        
+        try {
+          await loadSnapJs();
+          
+          // Get Snap token WITHOUT creating an order
+          console.log("💳 [PAY-NOW] Creating payment intent (no order yet)...");
+          const intentResponse = await fetch(`${API_BASE}/create-payment-intent`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${publicAnonKey}`,
+            },
+            body: JSON.stringify({
+              total: orderPayload.total,
+              items: orderPayload.items,
+              guestName: orderPayload.guestName,
+              guestPhone: orderPayload.guestPhone,
+              phone: orderPayload.phone,
+              customerName: user?.name,
+            }),
+          });
+          
+          const intentData = await intentResponse.json();
+          console.log("💳 [PAY-NOW] Payment intent response:", intentData);
+          
+          if (!intentResponse.ok || !intentData.snapToken) {
+            console.error("❌ [PAY-NOW] Failed to create payment intent:", intentData);
+            setPaymentFailed(true);
+            setPlacing(false);
+            hasPlacedOrderRef.current = false;
+            toast.error("Failed to set up payment. You can retry or switch to Pay on Delivery.");
+            return;
+          }
+          
+          setPlacing(false);
+          
+          // Open Snap popup
+          const snapResult = await openSnapPayment(intentData.snapToken);
+          console.log("💳 [PAY-NOW] Snap result:", snapResult);
+          
+          if (snapResult.status === "success" || snapResult.status === "pending") {
+            // ✅ Payment succeeded/pending — NOW create the real order
+            console.log("💳 [PAY-NOW] Payment OK — creating real order now...");
+            setPlacing(true);
+            
+            const createPayload = {
+              ...orderPayload,
+              paymentMethod: "midtrans",
+              // Tell server this is already paid
+              paymentReceived: snapResult.status === "success",
+              midtransTransactionData: snapResult.result || {},
+            };
+            
+            const response = await fetch(`${API_BASE}/orders`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${publicAnonKey}`,
+              },
+              body: JSON.stringify(createPayload),
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok || !data.order?.id) {
+              console.error("❌ [PAY-NOW] Order creation after payment failed:", data);
+              toast.error("Payment was successful but order creation failed. Please contact support.");
+              hasPlacedOrderRef.current = false;
+              setPlacing(false);
+              return;
+            }
+            
+            const orderId = data.order.id;
+            console.log("✅ [PAY-NOW] Order created:", orderId);
+            
+            // If payment was success (not just pending), confirm it on server
+            if (snapResult.status === "success") {
+              try {
+                await fetch(`${API_BASE}/confirm-payment-frontend`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${publicAnonKey}`,
+                  },
+                  body: JSON.stringify({
+                    orderId,
+                    transactionData: snapResult.result || {},
+                  }),
+                });
+              } catch (e) {
+                console.error("⚠️ [PAY-NOW] Confirm failed (webhook will handle):", e);
+              }
+            }
+            
+            // Mark promo voucher as used (pay-now flow)
+            if (passedPromoApplied?.userVoucherId && accessToken) {
+              try {
+                await fetch(`${API_BASE}/use-voucher`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${publicAnonKey}`,
+                    "X-Custom-Auth": accessToken,
+                  },
+                  body: JSON.stringify({ userVoucherId: passedPromoApplied.userVoucherId }),
+                });
+              } catch (e) { console.error("⚠️ Failed to mark voucher as used:", e); }
+            }
+
+            // Finalize (clear cart, guest session, etc.)
+            if (guestInfo && typeof window !== 'undefined') {
+              localStorage.setItem('guestOrderSession', JSON.stringify({
+                orderId, phone: guestInfo.phone, name: guestInfo.name,
+                expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+              }));
+            }
+            if (accessToken) { try { await refreshProfile(); } catch(e) {} }
+            try { await clearCart(); } catch(e) {}
+            
+            toast.success(snapResult.status === "success" 
+              ? "Payment successful! Your order is confirmed." 
+              : "Payment is being processed. We'll update you shortly.");
+            navigate(`/order-success/${orderId}`);
+            return;
+          } else {
+            // ❌ Payment failed or closed — NO ORDER WAS CREATED. Nothing to clean up.
+            console.log("💳 [PAY-NOW] Payment not completed:", snapResult.status, "— no order was created");
+            setPaymentFailed(true);
+            hasPlacedOrderRef.current = false;
+            if (snapResult.status === "error") {
+              toast.error("Payment failed. You can retry or switch to Pay on Delivery.");
+            } else {
+              toast.warning("Payment cancelled. You can retry or switch to Pay on Delivery.");
+            }
+            return;
+          }
+          
+        } catch (paymentError) {
+          console.error("❌ [PAY-NOW] Payment flow error:", paymentError);
+          setPaymentFailed(true);
+          setPlacing(false);
+          hasPlacedOrderRef.current = false;
+          toast.error("Payment setup failed. You can retry or switch to Pay on Delivery.");
+          return;
+        }
+      }
+
+      // ===== PAY LATER FLOW: Create order normally =====
       const response = await fetch(`${API_BASE}/orders`, {
         method: "POST",
         headers: {
@@ -521,51 +703,52 @@ export default function OrderConfirmation() {
         return;
       }
       
-      // ✅ Store guest order session for tracking (if guest order)
-      if (guestInfo && typeof window !== 'undefined') {
-        console.log("💾 Storing guest order session...");
-        const guestOrderSession = {
-          orderId: orderData.id,
-          phone: guestInfo.phone,
-          name: guestInfo.name,
-          expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000), // 7 days
-        };
-        localStorage.setItem('guestOrderSession', JSON.stringify(guestOrderSession));
-        console.log("✅ Guest order session stored:", guestOrderSession);
-      }
-      
-      console.log("📦 About to refresh profile and clear cart...");
-      
-      // Refresh profile and clear cart with error handling
-      // Only refresh profile for logged-in users
-      if (accessToken) {
-        try {
-          console.log("🔄 Refreshing profile...");
-          await refreshProfile();
-          console.log("✅ Profile refreshed");
-        } catch (error) {
-          console.error("⚠️ Profile refresh failed:", error);
-          // Continue anyway
-        }
-      } else {
-        console.log("ℹ️ Skipping profile refresh (guest order)");
-      }
-      
-      try {
-        console.log("🗑️ Clearing cart...");
-        await clearCart();
-        console.log("✅ Cart cleared");
-      } catch (error) {
-        console.error("⚠️ Cart clear failed:", error);
-        // Continue anyway
-      }
-      
-      console.log("🎉 About to navigate to order-success");
+      console.log("🎉 Order created. Payment method:", paymentMethod);
       console.log("Order ID:", orderData.id);
+
+      // ===== Helper: finalize order (clear cart, refresh profile, store guest session) =====
+      // Only call this AFTER payment succeeds or for pay-later orders.
+      // For pay-now: if payment fails, we DON'T finalize — the draft order gets deleted.
+      const finalizeOrder = async () => {
+        // Store guest order session
+        if (guestInfo && typeof window !== 'undefined') {
+          const guestOrderSession = {
+            orderId: orderData.id,
+            phone: guestInfo.phone,
+            name: guestInfo.name,
+            expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000),
+          };
+          localStorage.setItem('guestOrderSession', JSON.stringify(guestOrderSession));
+        }
+        // Refresh profile
+        if (accessToken) {
+          try { await refreshProfile(); } catch (e) { console.error("⚠️ Profile refresh failed:", e); }
+        }
+        // Clear cart
+        try { await clearCart(); } catch (e) { console.error("⚠️ Cart clear failed:", e); }
+      };
       
+      // ===== Mark promo voucher as used =====
+      if (passedPromoApplied?.userVoucherId && accessToken) {
+        try {
+          await fetch(`${API_BASE}/use-voucher`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${publicAnonKey}`,
+              "X-Custom-Auth": accessToken,
+            },
+            body: JSON.stringify({ userVoucherId: passedPromoApplied.userVoucherId }),
+          });
+          console.log("✅ Promo voucher marked as used");
+        } catch (e) {
+          console.error("⚠️ Failed to mark voucher as used:", e);
+        }
+      }
+
+      // ===== PAY LATER FLOW: finalize immediately =====
+      await finalizeOrder();
       toast.success("Order placed successfully!");
-      
-      // Navigate with order ID in URL - more reliable than location.state
       console.log("🚀 Navigating to order-success with ID:", orderData.id);
       navigate(`/order-success/${orderData.id}`);
       console.log("✅ navigate() called successfully");
@@ -580,6 +763,169 @@ export default function OrderConfirmation() {
       hasPlacedOrderRef.current = false;
     } finally {
       setPlacing(false);
+    }
+  };
+
+  // Retry payment for failed Pay Now orders
+  const handleRetryPayment = async () => {
+    if (retryingPayment || !savedOrderPayloadRef.current) return;
+    setRetryingPayment(true);
+    
+    try {
+      const payload = savedOrderPayloadRef.current;
+      console.log("💳 [RETRY] Retrying payment (no order exists yet)...");
+      await loadSnapJs();
+      
+      // Get a new Snap token (no order in KV)
+      const intentResponse = await fetch(`${API_BASE}/create-payment-intent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify({
+          total: payload.total,
+          items: payload.items,
+          guestName: payload.guestName,
+          guestPhone: payload.guestPhone,
+          phone: payload.phone,
+          customerName: user?.name,
+        }),
+      });
+      
+      const intentData = await intentResponse.json();
+      console.log("💳 [RETRY] Payment intent response:", intentData);
+      
+      if (!intentResponse.ok || !intentData.snapToken) {
+        toast.error("Failed to create payment. Please try again.");
+        setRetryingPayment(false);
+        return;
+      }
+      
+      setRetryingPayment(false);
+      
+      const snapResult = await openSnapPayment(intentData.snapToken);
+      console.log("💳 [RETRY] Snap result:", snapResult);
+      
+      if (snapResult.status === "success" || snapResult.status === "pending") {
+        // ✅ Payment OK — NOW create the real order
+        console.log("💳 [RETRY] Payment OK — creating real order...");
+        setPlacing(true);
+        
+        const createPayload = {
+          ...payload,
+          paymentMethod: "midtrans",
+          paymentReceived: snapResult.status === "success",
+          midtransTransactionData: snapResult.result || {},
+        };
+        
+        const response = await fetch(`${API_BASE}/orders`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify(createPayload),
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok || !data.order?.id) {
+          toast.error("Payment was successful but order creation failed. Please contact support.");
+          setPlacing(false);
+          return;
+        }
+        
+        const orderId = data.order.id;
+        
+        // Confirm payment on server
+        if (snapResult.status === "success") {
+          try {
+            await fetch(`${API_BASE}/confirm-payment-frontend`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${publicAnonKey}`,
+              },
+              body: JSON.stringify({ orderId, transactionData: snapResult.result || {} }),
+            });
+          } catch (e) { console.error("⚠️ [RETRY] Confirm failed:", e); }
+        }
+        
+        // Finalize
+        if (guestInfo && typeof window !== 'undefined') {
+          localStorage.setItem('guestOrderSession', JSON.stringify({
+            orderId, phone: guestInfo.phone, name: guestInfo.name,
+            expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+          }));
+        }
+        if (accessToken) { try { await refreshProfile(); } catch(e) {} }
+        try { await clearCart(); } catch(e) {}
+        
+        toast.success(snapResult.status === "success"
+          ? "Payment successful! Your order is confirmed."
+          : "Payment is being processed.");
+        navigate(`/order-success/${orderId}`);
+      } else {
+        toast.error("Payment not completed. Try again or switch to Pay on Delivery.");
+      }
+    } catch (err) {
+      console.error("❌ [RETRY] Error:", err);
+      toast.error("Payment failed. Please try again.");
+      setRetryingPayment(false);
+      setPlacing(false);
+    }
+  };
+  
+  // Switch to cash/pay-on-delivery — create order normally with cash payment
+  const handleSwitchToCash = async () => {
+    if (switchingToCash || !savedOrderPayloadRef.current) return;
+    setSwitchingToCash(true);
+    
+    try {
+      const payload = savedOrderPayloadRef.current;
+      console.log("💰 [SWITCH] Creating order with cash payment...");
+      
+      const createPayload = {
+        ...payload,
+        paymentMethod: "cash",
+      };
+      
+      const response = await fetch(`${API_BASE}/orders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify(createPayload),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok || !data.order?.id) {
+        toast.error("Failed to place order. Please try again.");
+        setSwitchingToCash(false);
+        return;
+      }
+      
+      const orderId = data.order.id;
+      
+      // Finalize
+      if (guestInfo && typeof window !== 'undefined') {
+        localStorage.setItem('guestOrderSession', JSON.stringify({
+          orderId, phone: guestInfo.phone, name: guestInfo.name,
+          expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        }));
+      }
+      if (accessToken) { try { await refreshProfile(); } catch(e) {} }
+      try { await clearCart(); } catch(e) {}
+      
+      toast.success("Order placed! Pay on " + (orderType === "pickup" ? "pickup" : "delivery") + ".");
+      navigate(`/order-success/${orderId}`);
+    } catch (err) {
+      console.error("❌ [SWITCH] Error:", err);
+      toast.error("Failed to place order. Please try again.");
+      setSwitchingToCash(false);
     }
   };
 
@@ -610,8 +956,80 @@ export default function OrderConfirmation() {
       <div className="min-h-screen bg-gray-50">
         <Header showBack title="Order Confirmation" />
         <div className="flex items-center justify-center h-screen">
-          <p className="text-muted-foreground">Placing your order...</p>
+          <div className="text-center">
+            <div className="w-12 h-12 border-4 border-gray-200 border-t-[#D91A60] rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-muted-foreground">
+              {paymentMethod === "pay-now" ? "Preparing payment..." : "Placing your order..."}
+            </p>
+          </div>
         </div>
+      </div>
+    );
+  }
+
+  // Show payment failed state with retry + pay-on-delivery options
+  if (paymentFailed) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Header showBack title="Payment Failed" />
+        <main className="max-w-md mx-auto px-4 py-6">
+          {/* Failure Icon */}
+          <div className="text-center mb-6">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
+              <CreditCard className="w-8 h-8 text-red-500" />
+            </div>
+            <h1 className="text-lg font-bold text-gray-900">Payment Not Completed</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              No order has been created yet. Choose how you'd like to proceed:
+            </p>
+          </div>
+          
+          <div className="space-y-3">
+            {/* Retry Payment */}
+            <Button
+              onClick={handleRetryPayment}
+              disabled={retryingPayment || switchingToCash}
+              className="w-full h-12 rounded-xl font-semibold text-white flex items-center justify-center gap-2 text-sm"
+              style={{ backgroundColor: "#D91A60" }}
+            >
+              {retryingPayment ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Preparing Payment...
+                </>
+              ) : (
+                <>
+                  <CreditCard className="w-4 h-4" />
+                  Retry Online Payment
+                </>
+              )}
+            </Button>
+            
+            {/* Switch to Pay on Delivery */}
+            <Button
+              onClick={handleSwitchToCash}
+              disabled={retryingPayment || switchingToCash}
+              variant="outline"
+              className="w-full h-12 rounded-xl font-semibold flex items-center justify-center gap-2 text-sm border-2"
+            >
+              {switchingToCash ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+                  Switching...
+                </>
+              ) : (
+                <>
+                  <Wallet className="w-4 h-4" />
+                  Pay on {orderType === "pickup" ? "Pickup" : "Delivery"} Instead
+                </>
+              )}
+            </Button>
+          </div>
+          
+          <p className="text-xs text-center text-muted-foreground mt-4">
+            Choosing "Pay on {orderType === "pickup" ? "Pickup" : "Delivery"}" means you'll pay with cash when you receive your order.
+          </p>
+        </main>
       </div>
     );
   }
@@ -647,9 +1065,13 @@ export default function OrderConfirmation() {
     return null;
   }
 
-  const tax = subtotal * 0.10; // 10% PPN tax
-  const deliveryFee = 0; // Will be calculated based on location
-  const total = subtotal + tax + deliveryFee;
+  // Apply promo discount for display
+  const renderPromoDisc = Math.min(passedPromoDiscount, subtotal);
+  const renderDiscountedSubtotal = subtotal - renderPromoDisc;
+  const tax = renderDiscountedSubtotal * 0.10; // 10% PPN tax
+  const renderRawDeliveryFee = orderType === "delivery" ? passedDeliveryFee : 0;
+  const deliveryFee = passedPromoApplied?.freeDelivery ? 0 : renderRawDeliveryFee;
+  const total = renderDiscountedSubtotal + tax + deliveryFee;
 
   const getOrderTypeIcon = () => {
     switch (orderType) {
@@ -669,15 +1091,28 @@ export default function OrderConfirmation() {
       <Header showBack title="Order Confirmation" />
       
       <main className="max-w-md mx-auto px-4 py-6 space-y-4">
-        {/* Order Type */}
+        {/* Order Type + Payment Method */}
         <div className="bg-white rounded-xl shadow-md p-5">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-              <OrderIcon className="w-6 h-6 text-primary" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+                <OrderIcon className="w-6 h-6 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Order Type</p>
+                <p className="font-semibold capitalize">{orderType}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Order Type</p>
-              <p className="font-semibold capitalize">{orderType}</p>
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
+              paymentMethod === "pay-now" 
+                ? "bg-blue-100 text-blue-700" 
+                : "bg-gray-100 text-gray-600"
+            }`}>
+              {paymentMethod === "pay-now" ? (
+                <><CreditCard className="w-3.5 h-3.5" /> Pay Now</>
+              ) : (
+                <><Wallet className="w-3.5 h-3.5" /> Pay Later</>
+              )}
             </div>
           </div>
         </div>
@@ -756,15 +1191,47 @@ export default function OrderConfirmation() {
               <span className="text-muted-foreground">Subtotal</span>
               <span>{formatIDR(subtotal)}</span>
             </div>
+            {renderPromoDisc > 0 && (
+              <div className="flex justify-between text-sm">
+                <span className="text-green-600 flex items-center gap-1">
+                  <Ticket className="w-3 h-3" />
+                  Promo ({passedPromoApplied?.code})
+                </span>
+                <span className="text-green-600 font-medium">-{formatIDR(renderPromoDisc)}</span>
+              </div>
+            )}
+            {passedPromoApplied?.freeDelivery && orderType === "delivery" && renderRawDeliveryFee > 0 && (
+              <div className="flex justify-between text-sm">
+                <span className="text-green-600 flex items-center gap-1">
+                  <Truck className="w-3 h-3" />
+                  Free Delivery
+                </span>
+                <span className="text-green-600 font-medium">-{formatIDR(renderRawDeliveryFee)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Tax (10%)</span>
               <span>{formatIDR(tax)}</span>
             </div>
             {orderType === "delivery" && (
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Delivery Fee</span>
-                <span className="text-muted-foreground italic">To be Calculated</span>
-              </div>
+              <>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Delivery Fee</span>
+                  {deliveryFee > 0 ? (
+                    <span className="font-medium">{formatIDR(deliveryFee)}</span>
+                  ) : (
+                    <span className="text-muted-foreground italic">To be Calculated</span>
+                  )}
+                </div>
+                {deliveryFee > 0 && passedDeliveryZone && (
+                  <p className="text-[10px] text-green-600 -mt-1">
+                    Zone: {passedDeliveryZone.name} &middot; {passedDeliveryDistance?.toFixed(1)} km
+                  </p>
+                )}
+                {deliveryFee === 0 && (
+                  <p className="text-[10px] text-amber-600 -mt-1">Delivery fee will be added by the restaurant based on your location</p>
+                )}
+              </>
             )}
             <Separator />
             <div className="flex justify-between font-semibold">
@@ -774,13 +1241,33 @@ export default function OrderConfirmation() {
           </div>
         </div>
 
+        {/* Payment Info Banner (Pay Now) */}
+        {paymentMethod === "pay-now" && (
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <CreditCard className="w-4 h-4 text-blue-600" />
+              <span className="text-sm font-semibold text-blue-800">Online Payment</span>
+            </div>
+            <p className="text-[11px] text-blue-600">
+              After confirming, a secure payment popup will open. Your order will be auto-confirmed once payment is complete.
+            </p>
+          </div>
+        )}
+
         {/* Confirm Button */}
         <Button
           onClick={handlePlaceOrder}
-          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-12"
+          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-12 flex items-center justify-center gap-2"
           disabled={placing}
         >
-          {placing ? "Placing Order..." : "Confirm Order"}
+          {paymentMethod === "pay-now" ? (
+            <>
+              <CreditCard className="w-5 h-5" />
+              {placing ? "Processing..." : "Place Order & Pay"}
+            </>
+          ) : (
+            placing ? "Placing Order..." : "Confirm Order"
+          )}
         </Button>
       </main>
     </div>

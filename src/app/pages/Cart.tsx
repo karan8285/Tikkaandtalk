@@ -20,9 +20,6 @@ export default function Cart() {
   const handleCheckout = () => {
     if (cartItems.length === 0) return;
     
-    console.log("🛒 Starting checkout with", cartItems.length, "items");
-    console.log("🛒 Cart items:", JSON.stringify(cartItems, null, 2));
-    
     // If user is logged in, go directly to order page
     // Otherwise, go to checkout page for login/guest selection
     if (user) {
@@ -46,7 +43,7 @@ export default function Cart() {
 
       <main className="max-w-md mx-auto px-4 py-6 pb-32">
         {cartItems.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-md p-12 text-center">
+          <div className="bg-white rounded-xl shadow-md p-8 sm:p-12 text-center">
             <ShoppingCart className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
             <h2 className="text-xl font-semibold mb-2">Your cart is empty</h2>
             <p className="text-muted-foreground mb-6">
@@ -147,6 +144,7 @@ export default function Cart() {
                   <span className="text-muted-foreground">Delivery Fee</span>
                   <span className="font-medium text-muted-foreground italic">To be Calculated</span>
                 </div>
+                <p className="text-[10px] text-amber-600 -mt-1">Delivery fee (if applicable) will be set by the restaurant</p>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Tax (PPN 10%)</span>
                   <span className="font-medium">
@@ -169,7 +167,7 @@ export default function Cart() {
 
       {/* Bottom Checkout Bar */}
       {cartItems.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg p-4">
+        <div className="sticky bottom-0 left-0 right-0 bg-white border-t shadow-lg p-4 z-40">
           <div className="max-w-md mx-auto">
             <Button
               onClick={handleCheckout}

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, X } from "lucide-react";
 import { Button } from "./ui/button";
 
 interface PinInputProps {
@@ -102,7 +102,7 @@ export function PinInput({
               onPaste={handlePaste}
               disabled={disabled}
               className={`
-                w-12 h-14 text-center text-2xl font-semibold
+                w-9 h-11 sm:w-12 sm:h-14 text-center text-lg sm:text-2xl font-semibold
                 border-2 rounded-lg
                 transition-all duration-200
                 focus:outline-none focus:ring-2 focus:ring-orange-500
@@ -120,20 +120,34 @@ export function PinInput({
           ))}
         </div>
         
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowPin(!showPin)}
-          disabled={disabled}
-          className="ml-2"
-        >
-          {showPin ? (
-            <EyeOff className="h-5 w-5 text-gray-500" />
-          ) : (
-            <Eye className="h-5 w-5 text-gray-500" />
-          )}
-        </Button>
+        <div className="flex flex-col items-center gap-0.5 ml-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowPin(!showPin)}
+            disabled={disabled}
+            className="p-1 h-auto"
+          >
+            {showPin ? (
+              <EyeOff className="h-5 w-5 text-gray-500" />
+            ) : (
+              <Eye className="h-5 w-5 text-gray-500" />
+            )}
+          </Button>
+
+          <button
+            type="button"
+            onClick={() => {
+              onChange("");
+              inputRefs.current[0]?.focus();
+            }}
+            disabled={disabled}
+            className="text-[10px] text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50"
+          >
+            Clear
+          </button>
+        </div>
       </div>
       
       <p className="text-xs text-gray-500 text-center">

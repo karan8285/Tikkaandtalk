@@ -124,10 +124,10 @@ export function GuestAccountCreationDialog({
             </div>
           </div>
           <DialogTitle className="text-center text-lg sm:text-xl">
-            {hasName ? `Hi ${guestName}! Claim Your Points` : "Save Your Rewards!"}
+            {hasName ? `Hi ${guestName}! Member Registration` : "Member Registration"}
           </DialogTitle>
           <DialogDescription className="text-center text-sm">
-            Just set a PIN to claim <strong className="text-primary">+{pointsToEarn} points</strong> from this order
+            Join our loyalty program to unlock vouchers & rewards — claim <strong className="text-primary">+{pointsToEarn} points</strong> from this order
           </DialogDescription>
         </DialogHeader>
 

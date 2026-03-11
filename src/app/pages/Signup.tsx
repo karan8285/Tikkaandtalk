@@ -8,6 +8,8 @@ import { PinInput } from "../components/PinInput";
 import { Smartphone, AlertCircle, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import logoImage from "../lib/logo";
+import { CountryCodeSelect } from "../components/CountryCodeSelect";
+import { DEFAULT_COUNTRY_CODE, buildFullPhone } from "../lib/countryCodes";
 
 export default function Signup() {
   const navigate = useNavigate();
@@ -15,25 +17,12 @@ export default function Signup() {
   const { signUp } = useAuth();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [countryCode, setCountryCode] = useState(DEFAULT_COUNTRY_CODE.code);
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [pinError, setPinError] = useState("");
   const [loading, setLoading] = useState(false);
   const [signupComplete, setSignupComplete] = useState(false);
-
-  const formatPhoneNumber = (value: string) => {
-    const cleaned = value.replace(/\D/g, '');
-    const limited = cleaned.slice(0, 10);
-    
-    if (limited.length <= 3) return limited;
-    if (limited.length <= 6) return `${limited.slice(0, 3)}-${limited.slice(3)}`;
-    return `${limited.slice(0, 3)}-${limited.slice(3, 6)}-${limited.slice(6)}`;
-  };
-
-  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const formatted = formatPhoneNumber(e.target.value);
-    setPhone(formatted);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,6 +40,18 @@ export default function Signup() {
     }
 
     setLoading(true);
+    try {
+      // Build full international phone number (e.g., +628123456789)
+      const rawPhone = phone.replace(/\D/g, "");
+      const fullPhone = buildFullPhone(countryCode, rawPhone);
+      await signUp(fullPhone, pin, name.trim());
+      setSignupComplete(true);
+    } catch (error) {
+      console.error("❌ Registration error:", error);
+      setPinError(error instanceof Error ? error.message : "Registration failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -74,9 +75,12 @@ export default function Signup() {
       <div className="max-w-md w-full space-y-8">
         {/* Back Button */}
         <button
-          onMouseDown={(e) => {
-            e.preventDefault();
-            navigate(-1);
+          onClick={() => {
+            if (window.history.state?.idx > 0) {
+              navigate(-1);
+            } else {
+              navigate("/", { replace: true });
+            }
           }}
           className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
         >
@@ -97,12 +101,12 @@ export default function Signup() {
               }}
             />
           </div>
-          <h1 className="text-2xl font-bold">Create Account</h1>
-          <p className="text-sm text-muted-foreground">Join Our Loyalty Program</p>
+          <h1 className="text-2xl font-bold">Member Registration</h1>
+          <p className="text-sm text-muted-foreground">Join our loyalty program to unlock vouchers & rewards</p>
         </div>
 
         {/* Signup Form */}
-        <div className="bg-white rounded-xl shadow-md p-8">
+        <div className="bg-white rounded-xl shadow-md p-5 sm:p-8">
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="name">Full Name</Label>
@@ -119,18 +123,24 @@ export default function Signup() {
 
             <div className="space-y-2">
               <Label htmlFor="phone">Mobile Number</Label>
-              <Input
-                id="phone"
-                type="tel"
-                placeholder="e.g., 081234567890"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                maxLength={12}
-                required
-                className="bg-input-background"
-              />
+              <div className="flex">
+                <CountryCodeSelect
+                  value={countryCode}
+                  onChange={setCountryCode}
+                />
+                <Input
+                  id="phone"
+                  type="tel"
+                  placeholder="8123456789"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
+                  maxLength={13}
+                  required
+                  className="bg-input-background rounded-l-none border-l-0"
+                />
+              </div>
               <p className="text-xs text-muted-foreground">
-                Phone number (up to 12 digits). Use 9999-xxx-xxxx for admin access
+                Enter your local number without leading zero
               </p>
             </div>
 
@@ -174,12 +184,12 @@ export default function Signup() {
               disabled={loading}
               className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-12"
             >
-              {loading ? "Creating account..." : "Create Account"}
+              {loading ? "Registering..." : "Register as Member"}
             </Button>
           </form>
 
           <div className="mt-6 text-center text-sm">
-            <span className="text-muted-foreground">Already have an account? </span>
+            <span className="text-muted-foreground">Already a member? </span>
             <Link to="/login" state={{ from: location.state?.from }} className="text-primary font-medium hover:underline">
               Sign in
             </Link>

@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 import { Header } from "../components/Header";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Clock, MapPin, Phone, RefreshCw, Package, CheckCircle2, ChefHat, Truck, PartyPopper, XCircle, DollarSign, AlertCircle } from "lucide-react";
+import { Clock, MapPin, Phone, RefreshCw, Package, CheckCircle2, ChefHat, Truck, PartyPopper, XCircle, DollarSign, AlertCircle, CreditCard, Loader2, Ticket } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import logoImage from "../lib/logo";
+import { getShortOrderId } from "../lib/orderUtils";
+import { WHATSAPP_NUMBER } from "../lib/whatsapp";
+import { loadSnapJs, openSnapPayment } from "../lib/midtrans";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -41,6 +44,9 @@ interface Order {
   status: string;
   paymentReceived: boolean;
   paymentDetails?: string;
+  paymentStatus?: 'unpaid' | 'partial' | 'paid';
+  paidAmount?: number;
+  paymentHistory?: Array<{ amount: number; date: string; method?: string; note?: string }>;
   pointsAwarded: boolean;
   pointsEarned?: number;
   statusHistory?: StatusHistoryItem[];
@@ -50,6 +56,9 @@ interface Order {
   cancellationReason?: string;
   orderNumber?: string;
   createdByAdmin?: boolean;
+  promoCode?: string;
+  promoDiscount?: number;
+  promoVoucherTitle?: string;
 }
 
 const statusConfig: Record<string, { icon: string; color: string; description: string }> = {
@@ -107,6 +116,8 @@ export default function OrderTracking() {
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [payingNow, setPayingNow] = useState(false);
+  const [showPayConfirm, setShowPayConfirm] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -165,6 +176,90 @@ export default function OrderTracking() {
     fetchOrder(true);
   };
 
+  // Handle Midtrans Pay Now for unpaid/partial orders
+  const handleMidtransPayNow = async () => {
+    if (!order || payingNow) return;
+    setPayingNow(true);
+    setShowPayConfirm(false);
+
+    try {
+      console.log("💳 [TRACKING-PAY] Loading Snap.js...");
+      await loadSnapJs();
+
+      const payAmount = (order.total || 0) - (order.paidAmount || 0);
+      console.log(`💳 [TRACKING-PAY] Creating payment intent for order ${order.id}, amount: ${payAmount}`);
+
+      const intentResponse = await fetch(`${API_BASE}/create-payment-intent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify({
+          total: payAmount,
+          items: order.items,
+          phone: order.phone,
+          customerName: user?.name || "Customer",
+          existingOrderId: order.id,
+        }),
+      });
+
+      const intentData = await intentResponse.json();
+      console.log("💳 [TRACKING-PAY] Payment intent response:", intentData);
+
+      if (!intentResponse.ok || !intentData.snapToken) {
+        console.error("❌ [TRACKING-PAY] Failed to create payment intent:", intentData);
+        toast.error("Failed to set up payment. Please try again.");
+        setPayingNow(false);
+        return;
+      }
+
+      setPayingNow(false);
+
+      // Open Snap popup
+      const snapResult = await openSnapPayment(intentData.snapToken);
+      console.log("💳 [TRACKING-PAY] Snap result:", snapResult);
+
+      if (snapResult.status === "success" || snapResult.status === "pending") {
+        // Confirm payment on server
+        try {
+          console.log("💳 [TRACKING-PAY] Confirming payment on server...");
+          await fetch(`${API_BASE}/confirm-payment-frontend`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${publicAnonKey}`,
+            },
+            body: JSON.stringify({
+              orderId: order.id,
+              transactionData: snapResult.result || {},
+            }),
+          });
+        } catch (e) {
+          console.error("⚠️ [TRACKING-PAY] Confirm call failed (webhook will handle):", e);
+        }
+
+        toast.success(
+          snapResult.status === "success"
+            ? "Payment successful! Your order is now paid."
+            : "Payment is being processed. We'll update shortly."
+        );
+
+        // Refresh order to reflect new payment status
+        await fetchOrder();
+      } else if (snapResult.status === "error") {
+        toast.error("Payment failed. Please try again.");
+      } else {
+        toast.warning("Payment cancelled.");
+      }
+    } catch (error) {
+      console.error("❌ [TRACKING-PAY] Payment flow error:", error);
+      toast.error("Payment setup failed. Please try again.");
+    } finally {
+      setPayingNow(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleString("en-US", {
@@ -202,23 +297,25 @@ export default function OrderTracking() {
       };
     }
     
-    if (order.status === 'closed' && order.paymentReceived) {
+    const effectivePS = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+    
+    if (order.status === 'closed' && effectivePS === 'paid') {
       return {
         message: `✅ You earned ${pointsAmount} points`,
         color: "#00AA99"
       };
     }
     
-    if (order.status === 'closed' && !order.paymentReceived) {
+    if (order.status === 'closed' && effectivePS !== 'paid') {
       return {
-        message: `⏳ ${pointsAmount} points pending payment confirmation`,
+        message: `⏳ ${pointsAmount} points pending full payment`,
         color: "#D91A60"
       };
     }
     
     if (order.status === 'delivered') {
       return {
-        message: `⏳ You will earn ${pointsAmount} points once payment is confirmed`,
+        message: `⏳ You will earn ${pointsAmount} points once fully paid`,
         color: "#D91A60"
       };
     }
@@ -270,7 +367,8 @@ export default function OrderTracking() {
     if (inHistory) return true;
     
     // Special case: payment_received
-    if (statusKey === 'payment_received' && order.paymentReceived) return true;
+    const effectivePS = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+    if (statusKey === 'payment_received' && effectivePS === 'paid') return true;
     
     // Check if current status
     if (order.status === statusKey) return true;
@@ -364,6 +462,7 @@ export default function OrderTracking() {
             />
           </div>
           <div className="mt-3 text-sm">
+            <h2 className="text-2xl font-extrabold text-gray-900 mb-1">{getShortOrderId(order.orderNumber || order.id)}</h2>
             <span className="font-semibold">Your Order ID:</span> {order.orderNumber || `TNT${order.id.substring(0, 8).toUpperCase()}`}
             {order.createdByAdmin && (
               <div className="mt-2">
@@ -372,6 +471,77 @@ export default function OrderTracking() {
                 </span>
               </div>
             )}
+          </div>
+
+          {/* Current Order Status & Payment Status */}
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            {/* Order Status */}
+            <div className="rounded-xl p-3 text-center"
+              style={{
+                backgroundColor: '#00AA9912',
+                border: '1px solid #00AA9925',
+              }}
+            >
+              <div className="text-[10px] uppercase tracking-wider font-medium text-gray-500 mb-1">Order Status</div>
+              <div className="w-8 h-8 rounded-full flex items-center justify-center mx-auto mb-1"
+                style={{ backgroundColor: '#00AA99' }}
+              >
+                <CheckCircle2 className="w-5 h-5 text-white" />
+              </div>
+              <div className="text-sm font-bold capitalize" style={{ color: '#00AA99' }}>
+                {getAllStatuses().find(s => s.key === order.status)?.label || order.status.replace(/_/g, ' ')}
+              </div>
+              <div className="text-[10px] mt-0.5" style={{ color: '#00AA99', opacity: 0.8 }}>
+                {statusConfig[order.status]?.description || ''}
+              </div>
+            </div>
+
+            {/* Payment Status */}
+            {(() => {
+              const ps = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+              const remaining = (order.total || 0) - (order.paidAmount || 0);
+              const statusColor = ps === 'paid' ? '#00AA99' : ps === 'partial' ? '#E89700' : '#E74C3C';
+              const label = ps === 'paid' ? 'Paid' : ps === 'partial' ? 'Partial' : 'Unpaid';
+              const subtitle = ps === 'paid' ? 'Payment confirmed' : ps === 'partial' ? `Rp ${(order.paidAmount || 0).toLocaleString()} of Rp ${order.total.toLocaleString()}` : 'Awaiting payment';
+              const StatusIcon = ps === 'paid' ? CheckCircle2 : ps === 'partial' ? DollarSign : AlertCircle;
+
+              return (
+                <div className="rounded-xl p-3 text-center"
+                  style={{
+                    backgroundColor: `${statusColor}12`,
+                    border: `1px solid ${statusColor}25`,
+                  }}
+                >
+                  <div className="text-[10px] uppercase tracking-wider font-medium text-gray-500 mb-1">Payment Status</div>
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center mx-auto mb-1"
+                    style={{ backgroundColor: statusColor }}
+                  >
+                    <StatusIcon className="w-5 h-5 text-white" />
+                  </div>
+                  <div className="text-sm font-bold capitalize" style={{ color: statusColor }}>
+                    {label}
+                  </div>
+                  <div className="text-[10px] mt-0.5" style={{ color: statusColor, opacity: 0.8 }}>
+                    {subtitle}
+                  </div>
+                  {ps !== 'paid' && (
+                    <button
+                      onClick={() => setShowPayConfirm(true)}
+                      disabled={payingNow}
+                      className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 rounded-full text-[11px] font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-60"
+                      style={{ backgroundColor: '#D91A60' }}
+                    >
+                      {payingNow ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <CreditCard className="w-3 h-3" />
+                      )}
+                      {payingNow ? 'Processing...' : 'Pay Now'}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
 
@@ -417,9 +587,35 @@ export default function OrderTracking() {
             </div>
           </div>
 
-          <div className="pt-3 border-t mt-3">
-            <div className="text-2xl font-bold" style={{ color: '#D91A60' }}>
-              Rp {order.total.toLocaleString()}
+          <div className="pt-3 border-t mt-3 space-y-1.5 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Subtotal</span>
+              <span>Rp {(order.subtotal || 0).toLocaleString()}</span>
+            </div>
+            {(order.promoDiscount != null && order.promoDiscount > 0) && (
+              <div className="flex justify-between">
+                <span className="text-green-600 flex items-center gap-1">
+                  <Ticket className="w-3 h-3" />
+                  Promo {order.promoCode ? `(${order.promoCode})` : ''}
+                </span>
+                <span className="text-green-600 font-medium">-Rp {order.promoDiscount.toLocaleString()}</span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Tax (PPN 10%)</span>
+              <span>Rp {(order.tax || 0).toLocaleString()}</span>
+            </div>
+            {order.deliveryMethod === 'delivery' && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Delivery Fee</span>
+                <span className={(order.deliveryFee || 0) > 0 ? "" : "text-amber-600 italic text-xs"}>
+                  {(order.deliveryFee || 0) > 0 ? `Rp ${order.deliveryFee.toLocaleString()}` : "To be Calculated"}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between pt-1.5 border-t font-bold text-lg" style={{ color: '#D91A60' }}>
+              <span>Total</span>
+              <span>Rp {order.total.toLocaleString()}</span>
             </div>
           </div>
 
@@ -538,6 +734,89 @@ export default function OrderTracking() {
           </Button>
         </div>
       </main>
+
+      {/* Payment Confirmation Modal */}
+      {showPayConfirm && order && (() => {
+        const ps = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+        const payAmount = (order.total || 0) - (order.paidAmount || 0);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowPayConfirm(false)}>
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+            <div
+              className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="px-5 pt-5 pb-3 text-center">
+                <div className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center" style={{ backgroundColor: '#D91A6015' }}>
+                  <CreditCard className="w-7 h-7" style={{ color: '#D91A60' }} />
+                </div>
+                <h3 className="text-lg font-bold text-gray-900">Confirm Payment</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  You're about to pay for order <span className="font-semibold">{getShortOrderId(order.orderNumber || order.id)}</span>
+                </p>
+              </div>
+
+              {/* Payment Details */}
+              <div className="mx-5 mb-4 rounded-xl p-3.5" style={{ backgroundColor: '#FFF0F5', border: '1px solid #D91A6020' }}>
+                <div className="space-y-2">
+                  {ps === 'partial' && (
+                    <>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Order Total</span>
+                        <span className="text-gray-700">Rp {order.total.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Already Paid</span>
+                        <span className="text-green-600 font-medium">- Rp {(order.paidAmount || 0).toLocaleString()}</span>
+                      </div>
+                      <div className="border-t border-pink-200 my-1" />
+                    </>
+                  )}
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-semibold text-gray-700">
+                      {ps === 'partial' ? 'Remaining Amount' : 'Amount to Pay'}
+                    </span>
+                    <span className="text-lg font-bold" style={{ color: '#D91A60' }}>
+                      Rp {payAmount.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment methods info */}
+              <div className="mx-5 mb-4">
+                <p className="text-[11px] text-gray-400 text-center">
+                  Secure payment via Midtrans — GoPay, QRIS, Bank Transfer, Credit Card & more
+                </p>
+              </div>
+
+              {/* Buttons */}
+              <div className="flex gap-3 px-5 pb-5">
+                <button
+                  onClick={() => setShowPayConfirm(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors active:scale-95"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleMidtransPayNow}
+                  disabled={payingNow}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-60 flex items-center justify-center gap-1.5"
+                  style={{ backgroundColor: '#D91A60' }}
+                >
+                  {payingNow ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <CreditCard className="w-4 h-4" />
+                  )}
+                  {payingNow ? 'Processing...' : 'Pay Now'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

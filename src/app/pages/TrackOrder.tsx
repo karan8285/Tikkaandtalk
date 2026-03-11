@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { Clock, MapPin, Phone, RefreshCw, Package, CheckCircle2, ArrowLeft } from "lucide-react";
+import { Clock, MapPin, Phone, RefreshCw, Package, CheckCircle2, ArrowLeft, Ticket } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import logoImage from "../lib/logo";
+import { getShortOrderId } from "../lib/orderUtils";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -45,8 +46,14 @@ interface Order {
   cancellationReason?: string;
   cancelledBy?: string;
   paymentReceived?: boolean;
+  paymentStatus?: 'unpaid' | 'partial' | 'paid';
+  paidAmount?: number;
+  paymentHistory?: Array<{ amount: number; date: string; method?: string; note?: string }>;
   pointsAwarded?: boolean;
   pointsEarned?: number;
+  promoCode?: string;
+  promoDiscount?: number;
+  promoVoucherTitle?: string;
 }
 
 const statusConfig: Record<string, { icon: string; color: string; description: string }> = {
@@ -210,7 +217,8 @@ export default function TrackOrder() {
     if (inHistory) return true;
     
     // Special case: payment_received
-    if (statusKey === 'payment_received' && order.paymentReceived) return true;
+    const effectivePS = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+    if (statusKey === 'payment_received' && effectivePS === 'paid') return true;
     
     // Check if current status
     if (order.status === statusKey) return true;
@@ -263,30 +271,32 @@ export default function TrackOrder() {
       };
     }
     
-    if (order.status === 'closed' && order.paymentReceived) {
+    const effectivePS = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+    
+    if (order.status === 'closed' && effectivePS === 'paid') {
       return {
         message: `✅ Customer earned ${pointsAmount} points`,
         color: "#00AA99"
       };
     }
     
-    if (order.status === 'closed' && !order.paymentReceived) {
+    if (order.status === 'closed' && effectivePS !== 'paid') {
       return {
-        message: `⏳ ${pointsAmount} points pending payment confirmation`,
+        message: `⏳ ${pointsAmount} points pending full payment`,
         color: "#D91A60"
       };
     }
     
     if (order.status === 'delivered') {
       return {
-        message: `⏳ Will earn ${pointsAmount} points once payment is confirmed`,
+        message: `⏳ Will earn ${pointsAmount} points once fully paid`,
         color: "#D91A60"
       };
     }
     
     return {
-      message: `💡 Will earn ${pointsAmount} points when order is delivered and paid`,
-      color: "#666"
+        message: `💡 Will earn ${pointsAmount} points when order is delivered and paid`,
+        color: "#666"
     };
   };
 
@@ -388,6 +398,7 @@ export default function TrackOrder() {
             />
           </div>
           <div className="mt-3 text-sm">
+            <h2 className="text-2xl font-extrabold text-gray-900 mb-1">{getShortOrderId(order.orderNumber)}</h2>
             <span className="font-semibold">Your Order ID:</span> {order.orderNumber}
           </div>
         </div>
@@ -439,9 +450,35 @@ export default function TrackOrder() {
             </div>
           )}
 
-          <div className="pt-3 border-t mt-3">
-            <div className="text-2xl font-bold" style={{ color: '#D91A60' }}>
-              Rp {order.total.toLocaleString()}
+          <div className="pt-3 border-t mt-3 space-y-1.5 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Subtotal</span>
+              <span>Rp {(order.subtotal || 0).toLocaleString()}</span>
+            </div>
+            {(order.promoDiscount != null && order.promoDiscount > 0) && (
+              <div className="flex justify-between">
+                <span className="text-green-600 flex items-center gap-1">
+                  <Ticket className="w-3 h-3" />
+                  Promo {order.promoCode ? `(${order.promoCode})` : ''}
+                </span>
+                <span className="text-green-600 font-medium">-Rp {order.promoDiscount.toLocaleString()}</span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Tax (PPN 10%)</span>
+              <span>Rp {(order.tax || 0).toLocaleString()}</span>
+            </div>
+            {order.deliveryMethod === 'delivery' && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Delivery Fee</span>
+                <span className={(order.deliveryFee || 0) > 0 ? "" : "text-amber-600 italic text-xs"}>
+                  {(order.deliveryFee || 0) > 0 ? `Rp ${order.deliveryFee.toLocaleString()}` : "To be Calculated"}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between pt-1.5 border-t font-bold text-lg" style={{ color: '#D91A60' }}>
+              <span>Total</span>
+              <span>Rp {order.total.toLocaleString()}</span>
             </div>
           </div>
 

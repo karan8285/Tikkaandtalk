@@ -120,13 +120,13 @@ export function SalesReportsAdmin({ customToken }: { customToken: string | null 
         case 'revenueRealized':
           filteredOrders = filteredOrders.filter((o: any) => 
             (o.status === 'delivered' || o.status === 'completed' || o.status === 'closed') && 
-            o.paymentReceived === true
+            (o.paymentStatus === 'paid' || (o.paymentStatus === undefined && o.paymentReceived === true))
           );
           break;
         case 'pendingPayment':
           filteredOrders = filteredOrders.filter((o: any) => 
             (o.status === 'delivered' || o.status === 'completed' || o.status === 'closed') && 
-            !o.paymentReceived
+            (o.paymentStatus === 'unpaid' || o.paymentStatus === 'partial' || (o.paymentStatus === undefined && !o.paymentReceived))
           );
           break;
         case 'paymentRate':
@@ -423,9 +423,12 @@ export function SalesReportsAdmin({ customToken }: { customToken: string | null 
                             {order.orderNumber || order.id.substring(0, 8)}
                           </p>
                           {getStatusBadge(order.status)}
-                          {order.paymentReceived && (
-                            <Badge className="bg-green-500 text-white">Paid</Badge>
-                          )}
+                          {(() => {
+                            const ps = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+                            if (ps === 'paid') return <Badge className="bg-green-500 text-white">Paid</Badge>;
+                            if (ps === 'partial') return <Badge className="bg-amber-500 text-white">Partial</Badge>;
+                            return null;
+                          })()}
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {new Date(order.createdAt).toLocaleString()}

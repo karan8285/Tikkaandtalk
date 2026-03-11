@@ -3,10 +3,12 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
+import { WHATSAPP_NUMBER, WHATSAPP_DISPLAY, getWhatsAppLink } from "../lib/whatsapp";
 import logoImage from "../lib/logo";
 import { Badge } from "../components/ui/badge";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { ActiveOrderBar } from "../components/ActiveOrderBar";
 
 interface MenuCounts {
   todaysSpecial: number;
@@ -59,12 +61,9 @@ export default function Home() {
           setRestaurantStatus(status);
         } else {
           // Silently fail - restaurant is accepting orders by default
-          console.log("Restaurant status not configured, defaulting to open");
           setRestaurantStatus({ isOpen: true, acceptingOrders: true });
         }
-      } catch (error) {
-        // Silently fail - restaurant is accepting orders by default
-        console.log("Restaurant status endpoint unavailable, defaulting to open");
+      } catch {
         setRestaurantStatus({ isOpen: true, acceptingOrders: true });
       }
     };
@@ -229,18 +228,18 @@ export default function Home() {
   };
 
   const handleOrderLineClick = () => {
-    window.open("https://wa.me/628192515550?text=Hello%20Tikka%20N%20Talk%2C%20I%20want%20to%20place%20an%20order.", "_blank");
+    window.open(getWhatsAppLink("Hello Tikka N Talk, I want to place an order."), "_blank");
   };
 
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: "#FFF5F7" }}>
       {/* Login/Register Link */}
-      <div className="px-6 pt-4">
-        <div className="max-w-md mx-auto flex items-center justify-between">
+      <div className="px-5 sm:px-7 pt-4 sm:pt-5">
+        <div className="max-w-lg mx-auto flex items-center justify-between">
           {user ? (
             <button
               onClick={() => navigate("/profile")}
-              className="text-sm font-medium hover:underline"
+              className="text-base font-medium hover:underline"
               style={{ color: "#D91A60" }}
             >
               {user.name || user.phone}
@@ -248,7 +247,7 @@ export default function Home() {
           ) : (
             <button
               onClick={() => navigate("/login")}
-              className="text-sm font-medium hover:underline"
+              className="text-base font-medium hover:underline"
               style={{ color: "#D91A60" }}
             >
               Login / Register
@@ -258,12 +257,12 @@ export default function Home() {
           {/* Cart Icon */}
           <button
             onClick={() => navigate("/cart")}
-            className="relative p-2 -mr-2"
+            className="relative p-2.5 -mr-2"
           >
-            <ShoppingCart className="w-6 h-6" style={{ color: "#D91A60" }} />
+            <ShoppingCart className="w-6 sm:w-7 h-6 sm:h-7" style={{ color: "#D91A60" }} />
             {totalItems > 0 && (
               <span
-                className="absolute -top-1 -right-1 w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center text-white"
+                className="absolute -top-1 -right-1 w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center text-white"
                 style={{ backgroundColor: "#D91A60" }}
               >
                 {totalItems}
@@ -274,16 +273,17 @@ export default function Home() {
       </div>
 
       {/* Logo Section */}
-      <div className="text-center pt-2 pb-4 px-4">
+      <div className="text-center pt-1.5 sm:pt-3 pb-3 sm:pb-4 px-5">
         {/* Restaurant Logo */}
         <div className="flex justify-center">
           <img 
             src={logoImage} 
             alt="Tikka N Talk - An Indian Kitchen" 
-            className="w-56 h-auto max-w-full mx-auto"
+            className="w-48 sm:w-64 h-auto max-w-full mx-auto"
             style={{ 
               filter: "drop-shadow(0 2px 8px rgba(217, 26, 96, 0.15))",
-              objectFit: "contain"
+              objectFit: "contain",
+              mixBlendMode: "multiply"
             }}
           />
         </div>
@@ -291,8 +291,8 @@ export default function Home() {
 
       {/* Store Closed Message - Full Page */}
       {(!restaurantStatus.isOpen || !restaurantStatus.acceptingOrders) ? (
-        <div className="flex-1 flex items-center justify-center px-6 pb-20">
-          <div className="max-w-md w-full text-center space-y-6">
+        <div className="flex-1 flex items-center justify-center px-4 sm:px-6 pb-20">
+          <div className="max-w-lg w-full text-center space-y-4 sm:space-y-6">
             {/* Closed Icon */}
             <div className="flex justify-center">
               <div 
@@ -325,7 +325,7 @@ export default function Home() {
               >
                 <MessageCircle className="w-5 h-5 text-white" />
                 <span className="text-white font-semibold">
-                  WhatsApp: 0819-2515-550
+                  WhatsApp: {WHATSAPP_DISPLAY}
                 </span>
               </button>
             </div>
@@ -355,8 +355,8 @@ export default function Home() {
       ) : (
         <>
           {/* Menu Categories Grid */}
-          <div className="px-6 pb-6">
-            <div className="grid grid-cols-2 gap-5 max-w-md mx-auto">
+          <div className="px-4 sm:px-5 pb-4 sm:pb-5">
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 max-w-lg mx-auto">
               {menuCategories.map((category) => {
                 const IconComponent = category.icon;
                 const countKey = category.route.replace("/", "").replace("-", "") as keyof MenuCounts;
@@ -372,12 +372,12 @@ export default function Home() {
                   <button
                     key={category.id}
                     onClick={() => handleCategoryClick(category.route)}
-                    className="relative bg-white rounded-3xl p-8 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col items-center justify-center gap-4 active:scale-95"
-                    style={{ minHeight: "160px" }}
+                    className="relative bg-white rounded-2xl p-4 sm:p-5 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col items-center justify-center gap-2 sm:gap-2.5 active:scale-95"
+                    style={{ minHeight: "108px" }}
                   >
                     {/* Badge at top-right */}
                     {count > 0 && (
-                      <div className="absolute top-3 right-3">
+                      <div className="absolute top-2 right-2">
                         <Badge 
                           count={count}
                           style={{ backgroundColor: "#D91A60", color: "white" }}
@@ -387,13 +387,13 @@ export default function Home() {
                     
                     {/* Icon - Direct, No Circle Background */}
                     <IconComponent 
-                      className="w-14 h-14" 
+                      className="w-10 h-10 sm:w-12 sm:h-12" 
                       strokeWidth={2} 
                       style={{ color: category.color }}
                     />
                     
                     {/* Category Name */}
-                    <span className="text-base font-semibold text-center leading-tight" style={{ color: "#4A4A4A" }}>
+                    <span className="text-sm sm:text-base font-semibold text-center leading-tight" style={{ color: "#4A4A4A" }}>
                       {category.title}
                     </span>
                   </button>
@@ -403,12 +403,12 @@ export default function Home() {
           </div>
 
           {/* My Orders & My Rewards Buttons - Always visible */}
-          <div className="px-6 pb-6">
-            <div className="grid grid-cols-2 gap-4 max-w-md mx-auto">
+          <div className="px-4 sm:px-7 pb-3 sm:pb-5">
+            <div className="grid grid-cols-2 gap-3.5 sm:gap-5 max-w-lg mx-auto">
               {/* My Orders */}
               <button
                 onClick={() => navigate("/order-history")}
-                className="relative bg-white rounded-2xl p-5 shadow-sm hover:shadow-md transition-all duration-200 flex items-center gap-3 active:scale-95"
+                className="relative bg-white rounded-2xl p-4 sm:p-6 shadow-sm hover:shadow-md transition-all duration-200 flex items-center gap-2.5 sm:gap-3.5 active:scale-95"
               >
                 {user && userCounts.activeOrders > 0 && (
                   <div className="absolute top-2 right-2">
@@ -418,8 +418,8 @@ export default function Home() {
                     />
                   </div>
                 )}
-                <Package className="w-6 h-6" style={{ color: "#D91A60" }} />
-                <span className="text-sm font-semibold" style={{ color: "#4A4A4A" }}>
+                <Package className="w-6 h-6 sm:w-7 sm:h-7" style={{ color: "#D91A60" }} />
+                <span className="text-sm sm:text-base font-semibold" style={{ color: "#4A4A4A" }}>
                   My Orders
                 </span>
               </button>
@@ -427,7 +427,7 @@ export default function Home() {
               {/* My Rewards */}
               <button
                 onClick={() => navigate("/rewards")}
-                className="relative bg-white rounded-2xl p-5 shadow-sm hover:shadow-md transition-all duration-200 flex items-center gap-3 active:scale-95"
+                className="relative bg-white rounded-2xl p-4 sm:p-6 shadow-sm hover:shadow-md transition-all duration-200 flex items-center gap-2.5 sm:gap-3.5 active:scale-95"
               >
                 {user && userCounts.availableRewards > 0 && (
                   <div className="absolute top-2 right-2">
@@ -437,8 +437,8 @@ export default function Home() {
                     />
                   </div>
                 )}
-                <Gift className="w-6 h-6" style={{ color: "#D91A60" }} />
-                <span className="text-sm font-semibold" style={{ color: "#4A4A4A" }}>
+                <Gift className="w-6 h-6 sm:w-7 sm:h-7" style={{ color: "#D91A60" }} />
+                <span className="text-sm sm:text-base font-semibold" style={{ color: "#4A4A4A" }}>
                   My Rewards
                 </span>
               </button>
@@ -447,34 +447,40 @@ export default function Home() {
         </>
       )}
 
-      {/* Footer Section */}
-      <div 
-        className="py-8 px-6 mx-[0px] mt-auto mb-[4px]"
-        style={{
-          background: "linear-gradient(180deg, #E91E63 0%, #C2185B 100%)"
-        }}
-      >
-        <div className="max-w-md mx-auto text-center space-y-6">
-          {/* WhatsApp Order Line - Inline Text Style */}
-          <div
-            onClick={handleOrderLineClick}
-            className="flex items-center justify-center gap-3 cursor-pointer hover:opacity-90 transition-opacity"
-          >
-            <svg className="w-10 h-10 flex-shrink-0" viewBox="0 0 24 24" fill="white">
-              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
-            </svg>
-            <span className="text-white text-xl font-semibold mx-[0px] mt-[0px] mb-[6px]">0819-2515-550</span>
-          </div>
+      {/* Bottom section: Active Order + Footer - always pushed to bottom */}
+      <div className="mt-auto">
+        {/* Active Order Tracking Bar */}
+        <ActiveOrderBar />
 
-          {/* Address */}
-          <div className="flex items-start justify-center gap-2">
-            <svg className="w-5 h-5 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
-              <circle cx="12" cy="10" r="3"></circle>
-            </svg>
-            <p className="text-white leading-tight text-[12px] line-clamp-2">
-              Jl. Epicentrum Tengah No.3, Rasuna Garden Food Street, Karet Kuningan, Setiabudi, South Jakarta 12940
-            </p>
+        {/* Footer Section */}
+        <div 
+          className="py-2 sm:py-3 px-5 sm:px-7"
+          style={{
+            background: "linear-gradient(180deg, #E91E63 0%, #C2185B 100%)"
+          }}
+        >
+          <div className="max-w-lg mx-auto text-center space-y-2 sm:space-y-2.5">
+            {/* WhatsApp Order Line - Inline Text Style */}
+            <div
+              onClick={handleOrderLineClick}
+              className="flex items-center justify-center gap-3 cursor-pointer hover:opacity-90 transition-opacity"
+            >
+              <svg className="w-10 h-10 sm:w-12 sm:h-12 flex-shrink-0" viewBox="0 0 24 24" fill="white">
+                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+              </svg>
+              <span className="text-white text-xl sm:text-2xl font-semibold">{WHATSAPP_DISPLAY}</span>
+            </div>
+
+            {/* Address */}
+            <div className="flex items-start justify-center gap-2">
+              <svg className="w-6 h-6 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+                <circle cx="12" cy="10" r="3"></circle>
+              </svg>
+              <p className="text-white leading-tight text-xs sm:text-[13px] line-clamp-2">
+                Jl. Epicentrum Tengah No.3, Rasuna Garden Food Street, Karet Kuningan, Setiabudi, South Jakarta 12940
+              </p>
+            </div>
           </div>
         </div>
       </div>

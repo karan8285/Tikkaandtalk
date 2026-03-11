@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
-import { Plus, Edit, Trash2, RefreshCw, Search, Image as ImageIcon, PackageX } from "lucide-react";
+import { Plus, Edit, Trash2, RefreshCw, Search, Image as ImageIcon, PackageX, Award, ChefHat } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 
@@ -21,6 +21,8 @@ interface MenuItem {
   image?: string;
   isAvailable: boolean;
   outOfStock?: boolean;
+  isBestSeller?: boolean;
+  isChefSpecial?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -50,6 +52,8 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
     name: "",
     price: "",
     image: "",
+    isBestSeller: false,
+    isChefSpecial: false,
   });
 
   useEffect(() => {
@@ -167,6 +171,8 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
           name: formData.name,
           price: parseFloat(formData.price),
           image: formData.image,
+          isBestSeller: formData.isBestSeller,
+          isChefSpecial: formData.isChefSpecial,
         }),
       });
 
@@ -175,7 +181,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
       if (response.ok) {
         toast.success("Menu item added successfully!");
         setAddDialog(false);
-        setFormData({ category: "", name: "", price: "", image: "" });
+        setFormData({ category: "", name: "", price: "", image: "", isBestSeller: false, isChefSpecial: false });
         fetchItems();
       } else {
         toast.error(data.error || "Failed to add menu item");
@@ -205,6 +211,8 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
           name: formData.name,
           price: parseFloat(formData.price),
           image: formData.image,
+          isBestSeller: formData.isBestSeller,
+          isChefSpecial: formData.isChefSpecial,
         }),
       });
 
@@ -214,7 +222,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
         toast.success("Menu item updated successfully!");
         setEditDialog(false);
         setSelectedItem(null);
-        setFormData({ category: "", name: "", price: "", image: "" });
+        setFormData({ category: "", name: "", price: "", image: "", isBestSeller: false, isChefSpecial: false });
         fetchItems();
       } else {
         toast.error(data.error || "Failed to update menu item");
@@ -305,8 +313,35 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
     }
   };
 
+  const handleToggleBadge = async (item: MenuItem, field: "isBestSeller" | "isChefSpecial") => {
+    try {
+      const response = await fetch(`${API_BASE}/admin/regular-menu/${item.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": customToken,
+        },
+        body: JSON.stringify({
+          [field]: !item[field],
+        }),
+      });
+
+      if (response.ok) {
+        const label = field === "isBestSeller" ? "Best Seller" : "Chef Special";
+        toast.success(`${item.name} ${!item[field] ? `marked as ${label}` : `removed from ${label}`}`);
+        fetchItems();
+      } else {
+        toast.error("Failed to update badge");
+      }
+    } catch (error) {
+      console.error("Failed to toggle badge:", error);
+      toast.error("Failed to update badge");
+    }
+  };
+
   const openAddDialog = () => {
-    setFormData({ category: "", name: "", price: "", image: "" });
+    setFormData({ category: "", name: "", price: "", image: "", isBestSeller: false, isChefSpecial: false });
     setAddDialog(true);
   };
 
@@ -317,6 +352,8 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
       name: item.name,
       price: item.price.toString(),
       image: item.image || "",
+      isBestSeller: item.isBestSeller || false,
+      isChefSpecial: item.isChefSpecial || false,
     });
     setEditDialog(true);
   };
@@ -340,12 +377,12 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
   return (
     <div className="p-6 space-y-6">
       {/* Header Actions */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h2 className="text-2xl font-bold">Regular Menu Management</h2>
-          <p className="text-muted-foreground">Manage your restaurant menu items</p>
+          <h2 className="text-xl sm:text-2xl font-bold">Regular Menu Management</h2>
+          <p className="text-muted-foreground text-sm">Manage your restaurant menu items</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button onClick={fetchItems} variant="outline" size="sm">
             <RefreshCw className="w-4 h-4 mr-2" />
             Refresh
@@ -369,7 +406,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-4">
+      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
           <Input
@@ -381,7 +418,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
           />
         </div>
         <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-          <SelectTrigger className="w-[200px]">
+          <SelectTrigger className="w-full sm:w-[200px]">
             <SelectValue placeholder="Filter by category" />
           </SelectTrigger>
           <SelectContent>
@@ -396,7 +433,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         <Card className="p-4">
           <div className="text-2xl font-bold">{items.length}</div>
           <div className="text-sm text-muted-foreground">Total Items</div>
@@ -417,6 +454,22 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
           </div>
           <div className="text-sm text-muted-foreground">Unavailable</div>
         </Card>
+        <Card className="p-4 border-amber-200 bg-amber-50">
+          <div className="text-2xl font-bold text-amber-700">
+            {items.filter((item) => item.isBestSeller).length}
+          </div>
+          <div className="text-sm text-amber-600 flex items-center gap-1">
+            <Award className="w-3 h-3" /> Best Sellers
+          </div>
+        </Card>
+        <Card className="p-4 border-purple-200 bg-purple-50">
+          <div className="text-2xl font-bold text-purple-700">
+            {items.filter((item) => item.isChefSpecial).length}
+          </div>
+          <div className="text-sm text-purple-600 flex items-center gap-1">
+            <ChefHat className="w-3 h-3" /> Chef Specials
+          </div>
+        </Card>
       </div>
 
       {/* Items Table */}
@@ -428,6 +481,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
                 <th className="text-left p-4">Category</th>
                 <th className="text-left p-4">Name</th>
                 <th className="text-left p-4">Price</th>
+                <th className="text-left p-4">Badges</th>
                 <th className="text-left p-4">Status</th>
                 <th className="text-right p-4">Actions</th>
               </tr>
@@ -435,7 +489,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
             <tbody>
               {filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="text-center p-8 text-muted-foreground">
+                  <td colSpan={6} className="text-center p-8 text-muted-foreground">
                     {items.length === 0 ? "No menu items yet. Click 'Seed Menu Data' to populate." : "No items match your filters."}
                   </td>
                 </tr>
@@ -445,8 +499,48 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
                     <td className="p-4">
                       <Badge variant="outline">{item.category}</Badge>
                     </td>
-                    <td className="p-4 font-medium">{item.name}</td>
+                    <td className="p-4">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{item.name}</span>
+                        {item.isBestSeller && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">
+                            <Award className="w-3 h-3" />
+                          </span>
+                        )}
+                        {item.isChefSpecial && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-700">
+                            <ChefHat className="w-3 h-3" />
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="p-4">{formatIDR(item.price)}</td>
+                    <td className="p-4">
+                      <div className="flex flex-col gap-1.5">
+                        <button
+                          onClick={() => handleToggleBadge(item, "isBestSeller")}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-all cursor-pointer border ${
+                            item.isBestSeller
+                              ? "bg-amber-100 text-amber-700 border-amber-300 hover:bg-amber-200"
+                              : "bg-gray-50 text-gray-400 border-gray-200 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200"
+                          }`}
+                        >
+                          <Award className="w-3.5 h-3.5" />
+                          Best Seller
+                        </button>
+                        <button
+                          onClick={() => handleToggleBadge(item, "isChefSpecial")}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-all cursor-pointer border ${
+                            item.isChefSpecial
+                              ? "bg-purple-100 text-purple-700 border-purple-300 hover:bg-purple-200"
+                              : "bg-gray-50 text-gray-400 border-gray-200 hover:bg-purple-50 hover:text-purple-600 hover:border-purple-200"
+                          }`}
+                        >
+                          <ChefHat className="w-3.5 h-3.5" />
+                          Chef Special
+                        </button>
+                      </div>
+                    </td>
                     <td className="p-4">
                       <div className="flex flex-col gap-2">
                         <Button
@@ -534,6 +628,36 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
                 placeholder="e.g., https://example.com/image.jpg"
               />
             </div>
+            {/* Badge Toggles */}
+            <div>
+              <Label className="mb-2 block">Special Badges</Label>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, isBestSeller: !formData.isBestSeller })}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
+                    formData.isBestSeller
+                      ? "bg-amber-100 text-amber-700 border-amber-300"
+                      : "bg-gray-50 text-gray-500 border-gray-200 hover:bg-amber-50 hover:border-amber-200"
+                  }`}
+                >
+                  <Award className="w-4 h-4" />
+                  Best Seller
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, isChefSpecial: !formData.isChefSpecial })}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
+                    formData.isChefSpecial
+                      ? "bg-purple-100 text-purple-700 border-purple-300"
+                      : "bg-gray-50 text-gray-500 border-gray-200 hover:bg-purple-50 hover:border-purple-200"
+                  }`}
+                >
+                  <ChefHat className="w-4 h-4" />
+                  Chef Special
+                </button>
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddDialog(false)}>
@@ -585,6 +709,36 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
                 onChange={(e) => setFormData({ ...formData, image: e.target.value })}
                 placeholder="e.g., https://example.com/image.jpg"
               />
+            </div>
+            {/* Badge Toggles */}
+            <div>
+              <Label className="mb-2 block">Special Badges</Label>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, isBestSeller: !formData.isBestSeller })}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
+                    formData.isBestSeller
+                      ? "bg-amber-100 text-amber-700 border-amber-300"
+                      : "bg-gray-50 text-gray-500 border-gray-200 hover:bg-amber-50 hover:border-amber-200"
+                  }`}
+                >
+                  <Award className="w-4 h-4" />
+                  Best Seller
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, isChefSpecial: !formData.isChefSpecial })}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
+                    formData.isChefSpecial
+                      ? "bg-purple-100 text-purple-700 border-purple-300"
+                      : "bg-gray-50 text-gray-500 border-gray-200 hover:bg-purple-50 hover:border-purple-200"
+                  }`}
+                >
+                  <ChefHat className="w-4 h-4" />
+                  Chef Special
+                </button>
+              </div>
             </div>
           </div>
           <DialogFooter>

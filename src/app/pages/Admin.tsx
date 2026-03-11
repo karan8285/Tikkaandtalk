@@ -13,7 +13,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -26,6 +26,9 @@ import { SalesReportsAdmin } from "../components/SalesReportsAdmin";
 import { AnalyticsAdmin } from "../components/AnalyticsAdmin";
 import { RestaurantSettingsAdmin } from "../components/RestaurantSettingsAdmin";
 import { SystemHealthAdmin } from "../components/SystemHealthAdmin";
+import { BusinessInsightsAdmin } from "../components/BusinessInsightsAdmin";
+import { getShortOrderId } from "../lib/orderUtils";
+import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -60,12 +63,19 @@ interface Order {
   items?: any[];
   paymentReceived?: boolean;
   paymentDetails?: string;
+  paymentStatus?: 'unpaid' | 'partial' | 'paid';
+  paidAmount?: number;
+  paymentHistory?: Array<{ amount: number; date: string; method?: string; note?: string }>;
+  paymentMethod?: string;
   pointsAwarded?: boolean;
   pointsEarned?: number;
   statusHistory?: any[];
   cancelledBy?: string; // 'user' or 'admin'
   cancellationReason?: string; // Admin's reason for cancellation
   orderNumber?: string; // New field for order number
+  promoCode?: string;
+  promoDiscount?: number;
+  promoVoucherTitle?: string;
 }
 
 const ORDER_STATUSES = ["pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
@@ -109,8 +119,19 @@ export default function Admin() {
   const [notificationSound, setNotificationSound] = useState<HTMLAudioElement | null>(null);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   
+  // Add Payment form state
+  const [addPaymentOrderId, setAddPaymentOrderId] = useState<string | null>(null);
+  const [addPaymentAmount, setAddPaymentAmount] = useState("");
+  const [addPaymentMethod, setAddPaymentMethod] = useState("");
+  const [addPaymentNote, setAddPaymentNote] = useState("");
+
+
+
   // Order filters
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [paymentFilter, setPaymentFilter] = useState<string>("all");
+  const [deliveryFilter, setDeliveryFilter] = useState<string>("all");
+  const [dateFilter, setDateFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   
   // Bulk actions
@@ -359,16 +380,22 @@ export default function Admin() {
     }));
   };
 
-  const handlePaymentChange = (orderId: string, newValue: boolean) => {
+  const handlePaymentStatusChange = (orderId: string, newStatus: 'unpaid' | 'partial' | 'paid') => {
     setOrderChanges(prev => ({
       ...prev,
       [orderId]: {
         ...prev[orderId],
-        paymentReceived: newValue,
-        // Clear payment details if unchecking
-        paymentDetails: newValue ? (prev[orderId]?.paymentDetails || '') : undefined
+        paymentStatus: newStatus,
+        paymentReceived: newStatus === 'paid',
+        // Clear payment details if setting to unpaid
+        paymentDetails: newStatus === 'unpaid' ? undefined : (prev[orderId]?.paymentDetails || '')
       }
     }));
+  };
+
+  // Legacy - kept for backward compat but now routes through paymentStatus
+  const handlePaymentChange = (orderId: string, newValue: boolean) => {
+    handlePaymentStatusChange(orderId, newValue ? 'paid' : 'unpaid');
   };
 
   const handlePaymentDetailsChange = (orderId: string, details: string) => {
@@ -379,6 +406,34 @@ export default function Admin() {
         paymentDetails: details
       }
     }));
+  };
+
+  const handleAddPayment = async (orderId: string, amount: number, method?: string, note?: string) => {
+    try {
+      setSubmitting(orderId);
+      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": accessToken,
+        },
+        body: JSON.stringify({ addPayment: { amount, method, note } }),
+      });
+
+      if (response.ok) {
+        toast.success(`Payment of Rp ${amount.toLocaleString()} recorded`);
+        fetchOrders();
+      } else {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        toast.error(`Failed to add payment: ${errorData.error || response.status}`);
+      }
+    } catch (error: any) {
+      console.error("Failed to add payment:", error);
+      toast.error(`Failed to add payment: ${error.message}`);
+    } finally {
+      setSubmitting(null);
+    }
   };
 
   const submitOrderChanges = async (orderId: string) => {
@@ -646,7 +701,7 @@ export default function Admin() {
       setResettingPin(true);
 
       const response = await fetch(
-        `${API_BASE}/admin/users/${resetPinCustomer.id}/password`,
+        `${API_BASE}/admin/users/${resetPinCustomer.id}/reset-pin`,
         {
           method: "POST",
           headers: {
@@ -654,7 +709,7 @@ export default function Admin() {
             Authorization: `Bearer ${publicAnonKey}`,
             "X-Custom-Auth": accessToken || "",
           },
-          body: JSON.stringify({ password: newPin }),
+          body: JSON.stringify({ pin: newPin }),
         }
       );
 
@@ -781,11 +836,31 @@ export default function Admin() {
 
   // Filter orders
   const filteredOrders = orders.filter(order => {
-    const matchesStatus = statusFilter === "all" || order.status === statusFilter;
+    const matchesStatus = statusFilter === "all" || 
+      (statusFilter === "active_group" ? !["delivered", "closed", "cancelled"].includes(order.status) : order.status === statusFilter);
+    
+    // Payment filter (support new paymentStatus + legacy)
+    const effectivePaymentStatus = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+    const matchesPayment = paymentFilter === "all" || 
+      (paymentFilter === "paid" && effectivePaymentStatus === 'paid') ||
+      (paymentFilter === "partial" && effectivePaymentStatus === 'partial') ||
+      (paymentFilter === "unpaid" && effectivePaymentStatus === 'unpaid' && order.status !== "cancelled");
+    
+    // Delivery method filter
+    const matchesDelivery = deliveryFilter === "all" || order.deliveryMethod === deliveryFilter;
+    
+    // Date filter
+    const matchesDate = dateFilter === "all" || (() => {
+      const orderDate = new Date(order.createdAt);
+      const today = new Date();
+      return orderDate.toDateString() === today.toDateString();
+    })();
     
     // Enhanced search logic
     const searchLower = searchQuery.toLowerCase();
     const matchesSearch = searchQuery === "" || 
+      // Search short order ID (TNT-102)
+      getShortOrderId(order.orderNumber || order.id).toLowerCase().includes(searchLower) ||
       // Search order number (TNT00000001)
       order.orderNumber?.toLowerCase().includes(searchLower) ||
       // Search legacy item title
@@ -804,8 +879,27 @@ export default function Admin() {
         return customer?.name?.toLowerCase().includes(searchLower);
       })();
     
-    return matchesStatus && matchesSearch;
+    return matchesStatus && matchesPayment && matchesDelivery && matchesDate && matchesSearch;
   });
+  
+  const hasActiveFilters = statusFilter !== "all" || paymentFilter !== "all" || deliveryFilter !== "all" || dateFilter !== "all" || searchQuery !== "";
+  
+  const clearAllFilters = () => {
+    setStatusFilter("all");
+    setPaymentFilter("all");
+    setDeliveryFilter("all");
+    setDateFilter("all");
+    setSearchQuery("");
+  };
+  
+  // Additional stats
+  const getEffectivePaymentStatus = (o: Order) => o.paymentStatus || (o.paymentReceived ? 'paid' : 'unpaid');
+  const unpaidOrders = orders.filter(o => getEffectivePaymentStatus(o) === 'unpaid' && o.status !== "cancelled");
+  const unpaidTotal = unpaidOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+  const partialOrders = orders.filter(o => getEffectivePaymentStatus(o) === 'partial' && o.status !== "cancelled");
+  const partialTotal = partialOrders.reduce((sum, o) => sum + ((o.total || 0) - (o.paidAmount || 0)), 0);
+  const paidOrders = orders.filter(o => getEffectivePaymentStatus(o) === 'paid');
+  const paidTotal = paidOrders.reduce((sum, o) => sum + (o.total || 0), 0);
 
   const getTierInfo = (points: number) => {
     if (points >= 5000) return { name: "Diamond", color: "text-blue-600", bg: "bg-blue-100" };
@@ -840,52 +934,168 @@ export default function Admin() {
           </Button>
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="p-5">
+        {/* Stats Cards - Clickable */}
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+          {/* Unpaid Orders - Prominent */}
+          <Card 
+            className="p-4 cursor-pointer transition-all hover:shadow-md"
+            style={{
+              borderLeft: '4px solid #D91A60',
+              backgroundColor: unpaidOrders.length > 0 ? '#FFF1F5' : undefined,
+              outline: paymentFilter === 'unpaid' ? '2px solid #D91A60' : 'none',
+              outlineOffset: '-2px',
+            }}
+            onClick={() => {
+              const wasUnpaid = paymentFilter === 'unpaid';
+              clearAllFilters();
+              if (!wasUnpaid) {
+                setPaymentFilter('unpaid');
+              }
+            }}
+          >
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                <ShoppingCart className="w-6 h-6 text-primary" />
+              <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgba(217,26,96,0.1)' }}>
+                <AlertCircle className="w-5 h-5" style={{ color: '#D91A60' }} />
               </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Today's Orders</p>
-                <p className="text-2xl font-bold">{todayOrders.length}</p>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground">Unpaid</p>
+                <p className="text-xl font-bold" style={{ color: unpaidOrders.length > 0 ? '#D91A60' : undefined }}>{unpaidOrders.length}</p>
+                <p className="text-[10px] font-medium truncate" style={{ color: '#D91A60' }}>{formatIDR(unpaidTotal)}</p>
               </div>
             </div>
           </Card>
 
-          <Card className="p-5">
+          {/* Partially Paid */}
+          <Card 
+            className="p-4 cursor-pointer transition-all hover:shadow-md"
+            style={{
+              borderLeft: '4px solid #F59E0B',
+              backgroundColor: partialOrders.length > 0 ? '#FFFBEB' : undefined,
+              outline: paymentFilter === 'partial' ? '2px solid #F59E0B' : 'none',
+              outlineOffset: '-2px',
+            }}
+            onClick={() => {
+              const wasPartial = paymentFilter === 'partial';
+              clearAllFilters();
+              if (!wasPartial) {
+                setPaymentFilter('partial');
+              }
+            }}
+          >
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-green-600" />
+              <div className="w-10 h-10 rounded-full flex items-center justify-center bg-amber-500/10">
+                <CircleDollarSign className="w-5 h-5 text-amber-600" />
               </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Today's Revenue</p>
-                <p className="text-2xl font-bold">{formatIDR(todayRevenue)}</p>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground">Partial</p>
+                <p className="text-xl font-bold text-amber-600">{partialOrders.length}</p>
+                <p className="text-[10px] font-medium text-amber-600 truncate">{formatIDR(partialTotal)} due</p>
               </div>
             </div>
           </Card>
 
-          <Card className="p-5">
+          {/* Today's Orders */}
+          <Card 
+            className="p-4 cursor-pointer transition-all hover:shadow-md"
+            style={{
+              borderLeft: '4px solid #D91A60',
+              outline: dateFilter === 'today' ? '2px solid #D91A60' : 'none',
+              outlineOffset: '-2px',
+            }}
+            onClick={() => {
+              const wasToday = dateFilter === 'today';
+              clearAllFilters();
+              if (!wasToday) {
+                setDateFilter('today');
+              }
+            }}
+          >
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-yellow-500/10 flex items-center justify-center">
-                <Clock className="w-6 h-6 text-yellow-600" />
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                <ShoppingCart className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Active Orders</p>
-                <p className="text-2xl font-bold">{activeOrders.length}</p>
+                <p className="text-xs text-muted-foreground">Today</p>
+                <p className="text-xl font-bold">{todayOrders.length}</p>
+                <p className="text-[10px] text-muted-foreground">{formatIDR(todayRevenue)}</p>
               </div>
             </div>
           </Card>
 
-          <Card className="p-5">
+          {/* Active Orders */}
+          <Card 
+            className="p-4 cursor-pointer transition-all hover:shadow-md"
+            style={{
+              borderLeft: '4px solid #F59E0B',
+              outline: statusFilter === 'active_group' ? '2px solid #F59E0B' : 'none',
+              outlineOffset: '-2px',
+            }}
+            onClick={() => {
+              const wasActive = statusFilter === 'active_group';
+              clearAllFilters();
+              if (!wasActive) {
+                setStatusFilter('active_group');
+              }
+            }}
+          >
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center">
-                <Users className="w-6 h-6 text-blue-600" />
+              <div className="w-10 h-10 rounded-full bg-yellow-500/10 flex items-center justify-center">
+                <Clock className="w-5 h-5 text-yellow-600" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">New Customers</p>
-                <p className="text-2xl font-bold">{newCustomersToday.length}</p>
+                <p className="text-xs text-muted-foreground">Active</p>
+                <p className="text-xl font-bold">{activeOrders.length}</p>
+                <p className="text-[10px] text-muted-foreground">In progress</p>
+              </div>
+            </div>
+          </Card>
+
+          {/* Paid Revenue */}
+          <Card 
+            className="p-4 cursor-pointer transition-all hover:shadow-md"
+            style={{
+              borderLeft: '4px solid #00AA99',
+              outline: paymentFilter === 'paid' ? '2px solid #00AA99' : 'none',
+              outlineOffset: '-2px',
+            }}
+            onClick={() => {
+              const wasPaid = paymentFilter === 'paid';
+              clearAllFilters();
+              if (!wasPaid) {
+                setPaymentFilter('paid');
+              }
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center">
+                <CircleDollarSign className="w-5 h-5 text-green-600" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground">Paid</p>
+                <p className="text-xl font-bold text-green-700">{paidOrders.length}</p>
+                <p className="text-[10px] font-medium text-green-600 truncate">{formatIDR(paidTotal)}</p>
+              </div>
+            </div>
+          </Card>
+
+          {/* All Orders */}
+          <Card 
+            className="p-4 cursor-pointer transition-all hover:shadow-md"
+            style={{
+              borderLeft: '4px solid #6B7280',
+              outline: !hasActiveFilters ? '2px solid #6B7280' : 'none',
+              outlineOffset: '-2px',
+            }}
+            onClick={() => clearAllFilters()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-gray-500/10 flex items-center justify-center">
+                <Package className="w-5 h-5 text-gray-600" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">All Orders</p>
+                <p className="text-xl font-bold">{orders.length}</p>
+                <p className="text-[10px] text-muted-foreground">Total</p>
               </div>
             </div>
           </Card>
@@ -905,6 +1115,7 @@ export default function Admin() {
               <TabsTrigger value="todays-special">Special</TabsTrigger>
               <TabsTrigger value="kids-menu">Kids</TabsTrigger>
               <TabsTrigger value="flash-sale">Flash</TabsTrigger>
+              <TabsTrigger value="insights">Insights</TabsTrigger>
               <TabsTrigger value="settings">Settings</TabsTrigger>
               <TabsTrigger value="health">Health</TabsTrigger>
             </TabsList>
@@ -912,21 +1123,58 @@ export default function Admin() {
 
           {/* Orders Tab */}
           <TabsContent value="orders" className="space-y-4">
-            <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
-              <div className="flex flex-col md:flex-row gap-3 flex-1 w-full md:w-auto">
+            {/* Search + Filter Row */}
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
                 <Input
-                  placeholder="Search orders (ID, item, phone)..."
+                  placeholder="Search orders (ID, name, item, phone)..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="max-w-md"
                 />
+                <div className="flex gap-2 w-full md:w-auto">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => navigate("/admin/kitchen")}
+                    className="flex-1 md:flex-none bg-orange-600 hover:bg-orange-700"
+                  >
+                    <ChefHat className="w-4 h-4 mr-2" />
+                    Kitchen
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => navigate("/admin/create-custom-order")}
+                    className="flex-1 md:flex-none"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Create Order
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchOrders}
+                    disabled={refreshing}
+                    className="flex-1 md:flex-none"
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </Button>
+                </div>
+              </div>
+
+              {/* Filter Dropdowns Row */}
+              <div className="flex flex-wrap gap-2 items-center">
+                <Filter className="w-4 h-4 text-muted-foreground hidden md:block" />
                 
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-full md:w-[200px]">
-                    <SelectValue placeholder="Filter by status" />
+                  <SelectTrigger className="w-[140px] h-9 text-xs">
+                    <SelectValue placeholder="Status" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Status</SelectItem>
+                    <SelectItem value="active_group">Active Orders</SelectItem>
                     {ORDER_STATUSES.map(status => (
                       <SelectItem key={status} value={status}>
                         {STATUS_LABELS[status]}
@@ -934,40 +1182,58 @@ export default function Admin() {
                     ))}
                   </SelectContent>
                 </Select>
+
+                <Select value={paymentFilter} onValueChange={setPaymentFilter}>
+                  <SelectTrigger className="w-[130px] h-9 text-xs">
+                    <SelectValue placeholder="Payment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Payment</SelectItem>
+                    <SelectItem value="paid">Paid</SelectItem>
+                    <SelectItem value="partial">Partial</SelectItem>
+                    <SelectItem value="unpaid">Not Paid</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Select value={deliveryFilter} onValueChange={setDeliveryFilter}>
+                  <SelectTrigger className="w-[130px] h-9 text-xs">
+                    <SelectValue placeholder="Delivery" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    <SelectItem value="pickup">Pickup</SelectItem>
+                    <SelectItem value="delivery">Delivery</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {hasActiveFilters && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearAllFilters}
+                    className="h-9 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="w-3 h-3 mr-1" />
+                    Clear
+                  </Button>
+                )}
               </div>
 
-              <div className="flex gap-2 w-full md:w-auto">
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={() => navigate("/admin/kitchen")}
-                  className="flex-1 md:flex-none bg-orange-600 hover:bg-orange-700"
-                >
-                  <ChefHat className="w-4 h-4 mr-2" />
-                  Kitchen
-                </Button>
-
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={() => navigate("/admin/create-custom-order")}
-                  className="flex-1 md:flex-none"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Create Order
-                </Button>
-                
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={fetchOrders}
-                  disabled={refreshing}
-                  className="flex-1 md:flex-none"
-                >
-                  <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-                  Refresh
-                </Button>
-              </div>
+              {/* Filter Results Counter */}
+              {hasActiveFilters && (
+                <div className="flex items-center justify-between rounded-lg px-3 py-2" style={{ backgroundColor: '#FFF1F5' }}>
+                  <p className="text-xs font-medium" style={{ color: '#D91A60' }}>
+                    Showing {filteredOrders.length} of {orders.length} orders
+                  </p>
+                  <button
+                    onClick={clearAllFilters}
+                    className="text-xs font-semibold underline"
+                    style={{ color: '#D91A60' }}
+                  >
+                    Show All
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Bulk Actions Bar */}
@@ -1018,14 +1284,32 @@ export default function Admin() {
               <Card className="p-8 text-center">
                 <Package className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
                 <p className="text-muted-foreground">No orders found</p>
+                {hasActiveFilters && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={clearAllFilters}
+                    className="mt-3"
+                  >
+                    Clear Filters
+                  </Button>
+                )}
               </Card>
             ) : (
               <div className="space-y-4">
                 {filteredOrders.map((order) => {
                   const customer = getCustomerByUserId(order.userId);
+                  const effectivePS = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+                  const isPaid = effectivePS === 'paid';
+                  const isPartial = effectivePS === 'partial';
+                  const borderColor = isPaid ? '#00AA99' : isPartial ? '#F59E0B' : '#D91A60';
                   
                   return (
-                    <Card key={order.id} className="p-5">
+                    <Card 
+                      key={order.id} 
+                      className="p-5 overflow-hidden"
+                      style={{ borderLeft: `4px solid ${borderColor}` }}
+                    >
                       <div className="space-y-4">
                         {/* Order Header */}
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
@@ -1037,7 +1321,8 @@ export default function Admin() {
                             />
                             <div>
                               <div className="flex items-center gap-2 flex-wrap">
-                                <h3 className="font-semibold">{order.orderNumber || `Order #${order.id.slice(0, 8)}`}</h3>
+                                <h3 className="font-bold text-lg">{getShortOrderId(order.orderNumber || order.id)}</h3>
+                                <span className="text-[10px] text-muted-foreground">{order.orderNumber || order.id}</span>
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -1053,6 +1338,15 @@ export default function Admin() {
                                 <Badge className={`${STATUS_COLORS[order.status]} text-white`}>
                                   {STATUS_LABELS[order.status]}
                                 </Badge>
+                                <span 
+                                  className="inline-flex items-center px-2 py-0.5 text-[11px] font-semibold rounded-full"
+                                  style={{ 
+                                    backgroundColor: isPaid ? '#E0F7F5' : '#FCE4EC',
+                                    color: isPaid ? '#00AA99' : '#D91A60'
+                                  }}
+                                >
+                                  {isPaid ? '✅ Paid' : '⏳ Not Paid'}
+                                </span>
                                 <Badge variant="outline" className="capitalize">
                                   {order.deliveryMethod}
                                 </Badge>
@@ -1061,16 +1355,29 @@ export default function Admin() {
                                     Admin Created
                                   </Badge>
                                 )}
+                                {/* Payment Method Flag */}
+                                {order.paymentMethod === "midtrans" ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                                    <CreditCard className="w-3 h-3" />
+                                    Paid Online
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                                    <Banknote className="w-3 h-3" />
+                                    COD
+                                  </span>
+                                )}
                               </div>
                               <p className="text-sm text-muted-foreground mt-1">
-                                {new Date(order.createdAt).toLocaleString()}
+                                {new Date(order.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                {customer && <span className="ml-2 font-medium text-foreground">{customer.name}</span>}
                               </p>
                             </div>
                           </div>
                           <div className="text-left md:text-right">
-                            <p className="font-semibold text-primary">{formatIDR(order.total)}</p>
-                            {customer && (
-                              <p className="text-sm text-muted-foreground">{customer.name}</p>
+                            <p className="font-semibold" style={{ color: isPaid ? '#1F2937' : '#D91A60' }}>{formatIDR(order.total)}</p>
+                            {customer?.phone && (
+                              <p className="text-xs text-muted-foreground">{customer.phone}</p>
                             )}
                           </div>
                         </div>
@@ -1109,6 +1416,39 @@ export default function Admin() {
                           ) : (
                             <p className="text-sm">{order.itemTitle}</p>
                           )}
+                        </div>
+
+                        {/* Bill Breakdown */}
+                        <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1.5">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Subtotal</span>
+                            <span>{formatIDR(order.subtotal || 0)}</span>
+                          </div>
+                          {(order.promoDiscount != null && order.promoDiscount > 0) && (
+                            <div className="flex justify-between">
+                              <span className="text-green-600 flex items-center gap-1">
+                                <Ticket className="w-3 h-3" />
+                                Promo {order.promoCode ? `(${order.promoCode})` : ''}
+                              </span>
+                              <span className="text-green-600 font-medium">-{formatIDR(order.promoDiscount)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Tax (PPN 10%)</span>
+                            <span>{formatIDR(order.tax || 0)}</span>
+                          </div>
+                          {order.deliveryMethod === 'delivery' && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-muted-foreground flex items-center gap-1">
+                                <Truck className="w-3.5 h-3.5" /> Delivery Fee
+                              </span>
+                              <span className="font-medium">{formatIDR(order.deliveryFee || 0)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between pt-1.5 mt-1 border-t border-gray-200 font-semibold">
+                            <span>Total</span>
+                            <span style={{ color: isPaid ? '#1F2937' : '#D91A60' }}>{formatIDR(order.total)}</span>
+                          </div>
                         </div>
 
                         {/* Contact Info */}
@@ -1173,38 +1513,185 @@ export default function Admin() {
                               </Select>
                             </div>
                             
-                            {/* Payment Received Checkbox */}
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                id={`payment-${order.id}`}
-                                checked={orderChanges[order.id]?.paymentReceived !== undefined 
-                                  ? orderChanges[order.id]?.paymentReceived 
-                                  : order.paymentReceived || false}
-                                onChange={(e) => handlePaymentChange(order.id, e.target.checked)}
-                                className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
-                              />
-                              <Label htmlFor={`payment-${order.id}`} className="text-sm cursor-pointer">
-                                Payment Received {order.paymentReceived && '✅'}
-                              </Label>
-                            </div>
-                            
-                            {/* Payment Details Input */}
-                            {orderChanges[order.id]?.paymentReceived && (
-                              <div className="mt-2">
-                                <Label htmlFor={`payment-details-${order.id}`} className="text-sm">
-                                  Payment Details:
-                                </Label>
-                                <Input
-                                  id={`payment-details-${order.id}`}
-                                  type="text"
-                                  placeholder="Enter payment details"
-                                  value={orderChanges[order.id]?.paymentDetails || ''}
-                                  onChange={(e) => handlePaymentDetailsChange(order.id, e.target.value)}
-                                  className="mt-1"
-                                />
+                            {/* Payment Status Selector */}
+                            <div>
+                              <Label className="text-sm font-medium mb-1.5 block">Payment Status</Label>
+                              <div className="flex gap-1.5">
+                                {(['unpaid', 'partial', 'paid'] as const).map((ps) => {
+                                  const currentPS = orderChanges[order.id]?.paymentStatus ?? effectivePS;
+                                  const isActive = currentPS === ps;
+                                  const paidSoFar = order.paidAmount || 0;
+                                  const orderTotal = order.total || 0;
+                                  const currentActualPS = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+                                  // Once fully paid, lock all buttons — no going back
+                                  const isLockedBecausePaid = currentActualPS === 'paid' && ps !== 'paid';
+                                  // "Paid" only clickable when collected amount covers the total
+                                  const isPaidLocked = ps === 'paid' && paidSoFar < orderTotal;
+                                  // "Partial" is auto-determined from payment entries, not manually selectable
+                                  const isPartialLocked = ps === 'partial';
+                                  const isLocked = isPaidLocked || isPartialLocked || isLockedBecausePaid;
+                                  const colors = {
+                                    unpaid: { bg: 'bg-red-50 border-red-300 text-red-700', active: 'bg-red-500 text-white border-red-500' },
+                                    partial: { bg: 'bg-amber-50 border-amber-300 text-amber-700', active: 'bg-amber-500 text-white border-amber-500' },
+                                    paid: { bg: 'bg-green-50 border-green-300 text-green-700', active: 'bg-green-500 text-white border-green-500' },
+                                  };
+                                  return (
+                                    <button
+                                      key={ps}
+                                      onClick={() => { if (!isLocked) handlePaymentStatusChange(order.id, ps); }}
+                                      disabled={isLocked}
+                                      className={`flex-1 py-1.5 px-2 text-xs font-semibold rounded-lg border transition-all ${
+                                        isActive ? colors[ps].active : isLocked ? 'bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed' : colors[ps].bg
+                                      }`}
+                                    >
+                                      {ps === 'unpaid' ? '🔴 Unpaid' : ps === 'partial' ? '🟡 Partial' : '🟢 Paid'}
+                                    </button>
+                                  );
+                                })}
                               </div>
-                            )}
+
+                              {/* Hint messages */}
+                              {effectivePS === 'paid' && (
+                                <p className="mt-1.5 text-[10px] text-green-600 font-medium">
+                                  🔒 Fully paid — payment status is locked and cannot be reversed.
+                                </p>
+                              )}
+                              {effectivePS !== 'paid' && (order.paidAmount || 0) < (order.total || 0) && order.status !== 'cancelled' && (
+                                <p className="mt-1.5 text-[10px] text-gray-500 italic">
+                                  💡 Use "Add Payment" below to record payments. "Paid" unlocks when collected ≥ total.
+                                </p>
+                              )}
+                              
+                              {/* Paid Amount Display */}
+                              {(effectivePS === 'partial' || (order.paidAmount && order.paidAmount > 0 && effectivePS !== 'paid')) && (
+                                <div className="mt-2 text-xs bg-amber-50 border border-amber-200 rounded-lg p-2">
+                                  <span className="font-medium text-amber-800">
+                                    Collected: Rp {(order.paidAmount || 0).toLocaleString()} of Rp {(order.total || 0).toLocaleString()}
+                                  </span>
+                                  <span className="text-amber-600 ml-1">
+                                    (Rp {((order.total || 0) - (order.paidAmount || 0)).toLocaleString()} remaining)
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* Payment History Log */}
+                              {order.paymentHistory && order.paymentHistory.length > 0 && (
+                                <div className="mt-2 space-y-1">
+                                  <div className="text-[10px] uppercase tracking-wider font-medium text-gray-500">Payment History</div>
+                                  {order.paymentHistory.map((entry: any, idx: number) => (
+                                    <div key={idx} className="flex items-center justify-between text-xs bg-gray-50 rounded px-2 py-1 border">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-green-600 font-semibold">+Rp {entry.amount?.toLocaleString()}</span>
+                                        {entry.method && <span className="text-gray-400">• {entry.method}</span>}
+                                      </div>
+                                      <span className="text-gray-400">{new Date(entry.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Add Payment Button / Form */}
+                              {effectivePS !== 'paid' && order.status !== 'cancelled' && (
+                                <>
+                                  {addPaymentOrderId === order.id ? (
+                                    <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+                                      {(() => {
+                                        const remaining = (order.total || 0) - (order.paidAmount || 0);
+                                        const enteredAmt = Number(addPaymentAmount) || 0;
+                                        const exceedsRemaining = enteredAmt > remaining;
+                                        return (
+                                          <>
+                                            <div className="flex items-center justify-between">
+                                              <div className="text-xs font-semibold text-blue-800">Add Payment</div>
+                                              <div className="text-[10px] text-blue-600 font-medium">
+                                                Remaining: Rp {remaining.toLocaleString()}
+                                              </div>
+                                            </div>
+                                            <Input
+                                              type="number"
+                                              placeholder={`Amount (max Rp ${remaining.toLocaleString()})`}
+                                              value={addPaymentAmount}
+                                              onChange={(e) => setAddPaymentAmount(e.target.value)}
+                                              max={remaining}
+                                              min={1}
+                                              className={`h-8 text-sm ${exceedsRemaining ? 'border-red-400 bg-red-50 focus:ring-red-400' : ''}`}
+                                            />
+                                            {exceedsRemaining && (
+                                              <p className="text-[10px] text-red-600 font-medium">
+                                                ⚠️ Amount exceeds remaining balance (Rp {remaining.toLocaleString()}). Max allowed: Rp {remaining.toLocaleString()}
+                                              </p>
+                                            )}
+                                          </>
+                                        );
+                                      })()}
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <Input
+                                          type="text"
+                                          placeholder="Method (e.g. Cash, Transfer)"
+                                          value={addPaymentMethod}
+                                          onChange={(e) => setAddPaymentMethod(e.target.value)}
+                                          className="h-8 text-xs"
+                                        />
+                                        <Input
+                                          type="text"
+                                          placeholder="Note (optional)"
+                                          value={addPaymentNote}
+                                          onChange={(e) => setAddPaymentNote(e.target.value)}
+                                          className="h-8 text-xs"
+                                        />
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <Button
+                                          size="sm"
+                                          className="flex-1 h-7 text-xs"
+                                          disabled={!addPaymentAmount || Number(addPaymentAmount) <= 0 || Number(addPaymentAmount) > ((order.total || 0) - (order.paidAmount || 0)) || submitting === order.id}
+                                          onClick={async () => {
+                                            const amt = Number(addPaymentAmount);
+                                            const maxAllowed = (order.total || 0) - (order.paidAmount || 0);
+                                            if (amt > 0 && amt <= maxAllowed) {
+                                              await handleAddPayment(order.id, amt, addPaymentMethod || undefined, addPaymentNote || undefined);
+                                              setAddPaymentOrderId(null);
+                                              setAddPaymentAmount("");
+                                              setAddPaymentMethod("");
+                                              setAddPaymentNote("");
+                                            }
+                                          }}
+                                        >
+                                          {submitting === order.id ? "Saving..." : "Save Payment"}
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          className="h-7 text-xs"
+                                          onClick={() => {
+                                            setAddPaymentOrderId(null);
+                                            setAddPaymentAmount("");
+                                            setAddPaymentMethod("");
+                                            setAddPaymentNote("");
+                                          }}
+                                        >
+                                          Cancel
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="mt-2 w-full h-7 text-xs border-dashed"
+                                      onClick={() => {
+                                        setAddPaymentOrderId(order.id);
+                                        setAddPaymentAmount("");
+                                        setAddPaymentMethod("");
+                                        setAddPaymentNote("");
+                                      }}
+                                    >
+                                      + Add Payment
+                                    </Button>
+                                  )}
+                                </>
+                              )}
+                            </div>
                             
                             {/* Submit and Cancel Buttons */}
                             {orderChanges[order.id] && (
@@ -1248,7 +1735,7 @@ export default function Admin() {
                                   onClick={() => {
                                     const trackingUrl = `${window.location.origin}/track/${order.orderNumber}`;
                                     const message = `Track your order ${order.orderNumber} here: ${trackingUrl}`;
-                                    const whatsappUrl = `https://wa.me/${order.phone}?text=${encodeURIComponent(message)}`;
+                                    const whatsappUrl = `https://wa.me/${formatPhoneForWhatsApp(order.phone)}?text=${encodeURIComponent(message)}`;
                                     window.open(whatsappUrl, '_blank');
                                   }}
                                   variant="outline"
@@ -1259,15 +1746,17 @@ export default function Admin() {
                                 </Button>
                               </div>
                             
-                              {/* Admin Cancel Order Button */}
-                              <Button
-                                onClick={() => openCancelDialog(order)}
-                                variant="destructive"
-                                size="sm"
-                                className="w-full"
-                              >
-                                Cancel Order
-                              </Button>
+                              {/* Admin Cancel Order Button — hidden when paid, partial paid, or closed */}
+                              {effectivePS !== 'paid' && effectivePS !== 'partial' && order.status !== 'closed' && order.status !== 'cancelled' && (
+                                <Button
+                                  onClick={() => openCancelDialog(order)}
+                                  variant="destructive"
+                                  size="sm"
+                                  className="w-full"
+                                >
+                                  Cancel Order
+                                </Button>
+                              )}
                             </div>
                             
                             {/* Points Info */}
@@ -1276,14 +1765,14 @@ export default function Admin() {
                                 ✅ {order.pointsEarned} points awarded to customer
                               </div>
                             )}
-                            {!order.pointsAwarded && order.status === 'closed' && order.paymentReceived && (
+                            {!order.pointsAwarded && order.status === 'closed' && effectivePS === 'paid' && (
                               <div className="text-xs font-semibold text-amber-700 bg-amber-100 px-3 py-2 rounded border border-amber-300">
                                 ⚠️ Points pending! Should award {Math.floor(order.total / 1000)} points (Check logs)
                               </div>
                             )}
-                            {!order.pointsAwarded && order.status === 'closed' && !order.paymentReceived && (
+                            {!order.pointsAwarded && order.status === 'closed' && effectivePS !== 'paid' && (
                               <div className="text-xs text-orange-600 bg-orange-50 px-3 py-2 rounded border border-orange-200">
-                                💡 Mark "Payment Received" to award {Math.floor(order.total / 1000)} points
+                                💡 Mark as "Paid" to award {Math.floor(order.total / 1000)} points
                               </div>
                             )}
                             {!order.pointsAwarded && order.status !== 'closed' && order.status !== 'cancelled' && (
@@ -1506,6 +1995,17 @@ export default function Admin() {
           <TabsContent value="analytics" className="space-y-4">
             {accessToken ? (
               <AnalyticsAdmin customToken={accessToken} />
+            ) : (
+              <Card className="p-8 text-center">
+                <p className="text-muted-foreground">Loading authentication...</p>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* Business Insights Tab */}
+          <TabsContent value="insights" className="space-y-4">
+            {accessToken ? (
+              <BusinessInsightsAdmin customToken={accessToken} />
             ) : (
               <Card className="p-8 text-center">
                 <p className="text-muted-foreground">Loading authentication...</p>

@@ -77,7 +77,7 @@ export default function Menu() {
       price: item.originalPrice || item.price,
       originalPrice: item.originalPrice || item.price,
       image: item.image,
-      category: categoryTitles[category || 'regular'] || 'Regular Menu',
+      category: item.category || categoryTitles[category || 'regular'] || 'Regular Menu',
     });
   };
 

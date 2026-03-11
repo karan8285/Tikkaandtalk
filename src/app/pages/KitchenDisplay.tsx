@@ -8,6 +8,7 @@ import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { ChefHat, Clock, Phone, MapPin, Package, Flame, CheckCircle2, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
+import { getShortOrderId } from "../lib/orderUtils";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -153,8 +154,8 @@ export default function KitchenDisplay() {
     <div className="min-h-screen bg-gray-900 text-white">
       {/* Header */}
       <div className="bg-gray-800 border-b border-gray-700 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <Button
                 variant="ghost"
@@ -163,20 +164,20 @@ export default function KitchenDisplay() {
                 className="text-white hover:bg-gray-700"
               >
                 <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Admin
+                Back
               </Button>
               <div className="flex items-center gap-2">
-                <ChefHat className="w-6 h-6 text-primary" />
-                <h1 className="text-2xl font-bold">Kitchen Display</h1>
+                <ChefHat className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />
+                <h1 className="text-lg sm:text-2xl font-bold">Kitchen Display</h1>
               </div>
             </div>
-            <div className="flex items-center gap-4">
-              <Badge className="bg-primary text-white text-lg px-4 py-2">
-                {orders.length} {orders.length === 1 ? "Order" : "Orders"} in Queue
+            <div className="flex items-center gap-3 sm:gap-4">
+              <Badge className="bg-primary text-white text-sm sm:text-lg px-3 sm:px-4 py-1 sm:py-2">
+                {orders.length} {orders.length === 1 ? "Order" : "Orders"}
               </Badge>
-              <div className="flex items-center gap-2 text-sm text-gray-400">
+              <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-400">
                 <Clock className="w-4 h-4" />
-                <span>Auto-refresh: 15s</span>
+                <span>Auto: 15s</span>
               </div>
             </div>
           </div>
@@ -206,9 +207,10 @@ export default function KitchenDisplay() {
                 <div className="flex items-start justify-between mb-4">
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <h3 className="text-xl font-bold text-white">
-                        {order.orderNumber || `Order #${order.id.slice(0, 8)}`}
+                      <h3 className="text-2xl font-extrabold text-white">
+                        {getShortOrderId(order.orderNumber || order.id)}
                       </h3>
+                      <span className="text-xs text-gray-400">{order.orderNumber || order.id}</span>
                       <Badge 
                         className={
                           order.status === "confirmed"

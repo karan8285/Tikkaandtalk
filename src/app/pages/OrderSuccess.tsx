@@ -6,6 +6,8 @@ import { Button } from "../components/ui/button";
 import { Separator } from "../components/ui/separator";
 import { GuestAccountCreationDialog } from "../components/GuestAccountCreationDialog";
 import { formatIDR } from "../lib/currency";
+import { getShortOrderId } from "../lib/orderUtils";
+import { WHATSAPP_NUMBER, WHATSAPP_DISPLAY } from "../lib/whatsapp";
 import { toast } from "sonner";
 import { 
   CheckCircle2, 
@@ -18,9 +20,13 @@ import {
   TrendingUp,
   ChevronRight,
   Sparkles,
-  ArrowLeft
+  ArrowLeft,
+  CreditCard,
+  RefreshCw,
+  Ticket
 } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { loadSnapJs, openSnapPayment } from "../lib/midtrans";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -41,6 +47,7 @@ export default function OrderSuccess() {
   const [showAccountDialog, setShowAccountDialog] = useState(false);
   const [dialogDismissed, setDialogDismissed] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [retryingPayment, setRetryingPayment] = useState(false);
   
   // Close dialog if user logs in (no auto-popup — user must tap the banner)
   // MUST be called before any conditional returns (Rules of Hooks)
@@ -207,7 +214,7 @@ export default function OrderSuccess() {
               )}
               <Button 
                 variant="outline"
-                onClick={() => window.open("https://wa.me/628192515550", "_blank")}
+                onClick={() => window.open(`https://wa.me/${WHATSAPP_NUMBER}`, "_blank")}
                 className="w-full"
               >
                 Contact via WhatsApp
@@ -250,7 +257,7 @@ export default function OrderSuccess() {
             <div className="space-y-2">
               <Button 
                 variant="outline"
-                onClick={() => window.open("https://wa.me/628192515550", "_blank")}
+                onClick={() => window.open(`https://wa.me/${WHATSAPP_NUMBER}`, "_blank")}
                 className="w-full"
               >
                 Contact via WhatsApp
@@ -272,6 +279,11 @@ export default function OrderSuccess() {
   const orderNumber = order.orderNumber || `TNT${order.id.slice(0, 8).toUpperCase()}`;
   const potentialPoints = Math.floor(order.total / 1000);
   const isGuestOrder = !order.userId;
+  const isMidtransPayment = order.paymentMethod === "midtrans";
+  const isPaid = order.paymentStatus === "paid";
+  const isPaymentPending = order.paymentStatus === "pending";
+  const isAwaitingPayment = order.paymentStatus === "awaiting_payment";
+  const isPaymentFailed = isMidtransPayment && !isPaid && !isPaymentPending && !isAwaitingPayment;
 
   const handleAccountCreated = async () => {
     console.log("✅ Account created successfully, starting post-signup process...");
@@ -399,6 +411,76 @@ export default function OrderSuccess() {
     console.log("✅ Account creation process complete - user is now logged in!");
   };
   
+  // Retry payment handler for failed/closed Midtrans payments
+  const handleRetryPayment = async () => {
+    if (!order?.id || retryingPayment) return;
+    
+    setRetryingPayment(true);
+    try {
+      console.log("💳 [RETRY] Loading Snap.js...");
+      await loadSnapJs();
+      
+      // Create a fresh payment token
+      console.log("💳 [RETRY] Creating new payment token for order:", order.id);
+      const paymentResponse = await fetch(`${API_BASE}/create-payment`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify({ orderId: order.id }),
+      });
+      
+      const paymentData = await paymentResponse.json();
+      console.log("💳 [RETRY] Payment response:", paymentData);
+      
+      if (!paymentResponse.ok || !paymentData.snapToken) {
+        toast.error("Failed to create payment. Please try again or contact us.");
+        setRetryingPayment(false);
+        return;
+      }
+      
+      setRetryingPayment(false);
+      
+      // Open Snap popup
+      const snapResult = await openSnapPayment(paymentData.snapToken);
+      console.log("💳 [RETRY] Snap result:", snapResult);
+      
+      if (snapResult.status === "success") {
+        // Confirm on server immediately (don't wait for webhook)
+        try {
+          await fetch(`${API_BASE}/confirm-payment-frontend`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${publicAnonKey}`,
+            },
+            body: JSON.stringify({
+              orderId: order.id,
+              transactionData: snapResult.result || {},
+            }),
+          });
+        } catch (e) {
+          console.error("⚠️ [RETRY] Confirm failed (webhook will handle):", e);
+        }
+        toast.success("Payment successful! Your order is confirmed.");
+        // Refresh order data to show updated payment status
+        setTimeout(() => window.location.reload(), 1500);
+      } else if (snapResult.status === "pending") {
+        toast.info("Payment is being processed.");
+        setTimeout(() => window.location.reload(), 2000);
+      } else if (snapResult.status === "error") {
+        toast.error("Payment failed. Please try again.");
+      } else {
+        toast.warning("Payment cancelled.");
+      }
+    } catch (error) {
+      console.error("❌ [RETRY] Error:", error);
+      toast.error("Payment failed. Please try again.");
+      setRetryingPayment(false);
+    }
+  };
+
   // Check for guest order session
   const handleTrackOrder = () => {
     // If this is a guest order (no userId), always go to guest tracking
@@ -461,7 +543,7 @@ export default function OrderSuccess() {
     return encodeURIComponent(message);
   };
   
-  const whatsappLink = `https://wa.me/628192515550?text=${generateWhatsAppMessage()}`;
+  const whatsappLink = `https://wa.me/${WHATSAPP_NUMBER}?text=${generateWhatsAppMessage()}`;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -471,18 +553,26 @@ export default function OrderSuccess() {
         {/* ===== SECTION 1: Success Hero Card ===== */}
         <div className="w-full bg-white rounded-2xl shadow-sm p-4 sm:p-5 mb-3 sm:mb-4 text-center">
           <div className="flex items-center justify-center gap-3 mb-2">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-accent/10 rounded-full flex items-center justify-center">
-              <CheckCircle2 className="w-6 h-6 sm:w-7 sm:h-7 text-accent" />
+            <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center ${
+              isPaid ? 'bg-green-100' : isPaymentPending ? 'bg-yellow-100' : 'bg-accent/10'
+            }`}>
+              <CheckCircle2 className={`w-6 h-6 sm:w-7 sm:h-7 ${
+                isPaid ? 'text-green-600' : isPaymentPending ? 'text-yellow-600' : 'text-accent'
+              }`} />
             </div>
             <div className="text-left">
-              <h1 className="text-base sm:text-lg font-bold text-gray-900">Order Placed!</h1>
-              <p className="text-xs text-muted-foreground">We've received your order</p>
+              <h1 className="text-base sm:text-lg font-bold text-gray-900">
+                {isPaid ? "Order Confirmed!" : "Order Placed!"}
+              </h1>
+              <p className="text-xs text-muted-foreground">
+                {isPaid ? "Payment received — your order is being prepared" : "We've received your order"}
+              </p>
             </div>
           </div>
           <div className="bg-gray-50 rounded-xl px-3 py-2.5 flex items-center justify-between">
             <div className="text-left">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Order No.</p>
-              <p className="text-lg sm:text-xl font-bold text-primary leading-tight">{orderNumber}</p>
+              <p className="text-xl font-extrabold text-gray-900 leading-tight">{getShortOrderId(orderNumber)}</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">ID: {orderNumber}</p>
             </div>
             <div className={`px-2.5 py-1 rounded-full font-semibold text-[10px] sm:text-xs ${
               order.deliveryMethod === 'pickup' 
@@ -495,26 +585,88 @@ export default function OrderSuccess() {
           </div>
         </div>
 
-        {/* ===== SECTION 2: WhatsApp Confirm — THE #1 Action ===== */}
-        <a 
-          href={whatsappLink} 
-          target="_blank" 
-          rel="noopener noreferrer"
-          className="block w-full mb-3 sm:mb-4"
-        >
-          <div className="w-full bg-green-500 hover:bg-green-600 transition-colors rounded-xl p-3 sm:p-4 text-white">
+        {/* ===== SECTION 2: Payment Status or WhatsApp Confirm ===== */}
+        {isMidtransPayment && isPaid ? (
+          /* Paid via Midtrans — show success banner instead of WhatsApp */
+          <div className="w-full bg-green-50 border border-green-200 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center flex-shrink-0">
-                <MessageCircle className="w-5 h-5" />
+              <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <CheckCircle2 className="w-5 h-5 text-green-600" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-bold text-sm sm:text-base">Confirm via WhatsApp</p>
-                <p className="text-[11px] sm:text-xs text-green-100">Pre-filled message — just tap send!</p>
+                <p className="font-bold text-sm sm:text-base text-green-800">Payment Successful</p>
+                <p className="text-[11px] sm:text-xs text-green-600">
+                  Paid {formatIDR(order.paidAmount || order.total)} via Midtrans — no manual confirmation needed!
+                </p>
               </div>
-              <ChevronRight className="w-5 h-5 text-white/70 flex-shrink-0" />
             </div>
           </div>
-        </a>
+        ) : isMidtransPayment && isPaymentPending ? (
+          /* Payment pending */
+          <div className="w-full bg-yellow-50 border border-yellow-200 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <Clock className="w-5 h-5 text-yellow-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-sm sm:text-base text-yellow-800">Payment Processing</p>
+                <p className="text-[11px] sm:text-xs text-yellow-600">
+                  Your payment is being processed. We'll update you shortly.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : isPaymentFailed ? (
+          /* Payment failed — show retry button */
+          <div className="w-full mb-3 sm:mb-4 space-y-2">
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3 sm:p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                  <CreditCard className="w-5 h-5 text-red-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-sm sm:text-base text-red-800">Payment Incomplete</p>
+                  <p className="text-[11px] sm:text-xs text-red-600">
+                    Your order has been placed but payment was not completed.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <Button
+              onClick={handleRetryPayment}
+              disabled={retryingPayment}
+              className="w-full h-11 rounded-xl font-semibold text-white flex items-center justify-center gap-2"
+              style={{ backgroundColor: "#D91A60" }}
+            >
+              {retryingPayment ? (
+                <><RefreshCw className="w-4 h-4 animate-spin" /> Preparing Payment...</>
+              ) : (
+                <><CreditCard className="w-4 h-4" /> Retry Payment</>
+              )}
+            </Button>
+          </div>
+        ) : (
+          /* Pay Later — show WhatsApp confirm (existing) */
+          <a 
+            href={whatsappLink} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="block w-full mb-3 sm:mb-4"
+          >
+            <div className="w-full bg-green-500 hover:bg-green-600 transition-colors rounded-xl p-3 sm:p-4 text-white">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center flex-shrink-0">
+                  <MessageCircle className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-sm sm:text-base">Confirm via WhatsApp</p>
+                  <p className="text-[11px] sm:text-xs text-green-100">Pre-filled message — just tap send!</p>
+                </div>
+                <ChevronRight className="w-5 h-5 text-white/70 flex-shrink-0" />
+              </div>
+            </div>
+          </a>
+        )}
 
         {/* ===== SECTION 3: Live Status + ETA ===== */}
         <div className="w-full bg-white rounded-xl shadow-sm p-3 sm:p-4 mb-3 sm:mb-4">
@@ -523,8 +675,10 @@ export default function OrderSuccess() {
               <Clock className="w-4 h-4 text-primary" />
               Order Status
             </h2>
-            <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full text-[10px] sm:text-xs font-semibold">
-              Pending Confirmation
+            <span className={`px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold ${
+              isPaid ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+            }`}>
+              {isPaid ? 'Confirmed' : 'Pending Confirmation'}
             </span>
           </div>
           
@@ -538,8 +692,12 @@ export default function OrderSuccess() {
             </div>
             <div className="text-center border-x border-gray-200">
               <p className="text-[10px] text-muted-foreground mb-0.5">Payment</p>
-              <p className="text-xs sm:text-sm font-bold text-gray-900">Cash</p>
-              <p className="text-[10px] text-muted-foreground">on {order.deliveryMethod === 'pickup' ? 'pickup' : 'delivery'}</p>
+              <p className="text-xs sm:text-sm font-bold text-gray-900">
+                {isPaid ? 'Paid' : isMidtransPayment ? 'Online' : 'Cash'}
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                {isPaid ? 'via Midtrans' : isMidtransPayment ? (isPaymentPending ? 'processing' : 'incomplete') : `on ${order.deliveryMethod === 'pickup' ? 'pickup' : 'delivery'}`}
+              </p>
             </div>
             <div className="text-center">
               <p className="text-[10px] text-muted-foreground mb-0.5">Items</p>
@@ -552,6 +710,7 @@ export default function OrderSuccess() {
         </div>
 
         {/* ===== SECTION 4: What Happens Next — Compact Timeline ===== */}
+        {!isPaid && !isPaymentFailed && (
         <div className="w-full bg-blue-50 border border-blue-100 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
           <h2 className="font-bold text-blue-900 mb-2 text-xs sm:text-sm">What Happens Next?</h2>
           <div className="space-y-1.5">
@@ -570,7 +729,8 @@ export default function OrderSuccess() {
             ))}
           </div>
         </div>
-
+        )}
+        
         {/* ===== SECTION 5: Track Order CTA ===== */}
         <Button
           onClick={handleTrackOrder}
@@ -622,6 +782,15 @@ export default function OrderSuccess() {
               <span className="text-muted-foreground">Subtotal</span>
               <span>{formatIDR(order.subtotal)}</span>
             </div>
+            {(order.promoDiscount != null && order.promoDiscount > 0) && (
+              <div className="flex justify-between text-xs">
+                <span className="text-green-600 flex items-center gap-1">
+                  <Ticket className="w-3 h-3" />
+                  Promo {order.promoCode ? `(${order.promoCode})` : ''}
+                </span>
+                <span className="text-green-600 font-medium">-{formatIDR(order.promoDiscount)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">Tax (PPN 10%)</span>
               <span>{formatIDR(order.tax)}</span>
@@ -629,7 +798,9 @@ export default function OrderSuccess() {
             {order.deliveryMethod === 'delivery' && (
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Delivery Fee</span>
-                <span className="text-amber-600">To be Calculated</span>
+                <span className={(order.deliveryFee || 0) > 0 ? "" : "text-amber-600"}>
+                  {(order.deliveryFee || 0) > 0 ? `Rp ${order.deliveryFee.toLocaleString()}` : "To be Calculated"}
+                </span>
               </div>
             )}
             <div className="flex justify-between text-sm font-bold pt-1.5 mt-1.5 border-t">
@@ -668,7 +839,7 @@ export default function OrderSuccess() {
           </div>
         </div>
 
-        {/* ===== SECTION 8: Bottom — Points (compact) & Guest Signup (smaller) ===== */}
+        {/* ===== SECTION 8: Bottom — Points (compact) & Guest Registration (smaller) ===== */}
         
         {/* Points for logged-in users — compact version */}
         {!isGuestOrder && (
@@ -688,7 +859,7 @@ export default function OrderSuccess() {
           </div>
         )}
 
-        {/* Guest Signup — compact bottom banner */}
+        {/* Guest Registration — compact bottom banner */}
         {isGuestOrder && !user && (
           <div 
             className="w-full relative overflow-hidden rounded-xl mb-3 sm:mb-4 cursor-pointer hover:shadow-lg transition-all duration-300 group"
@@ -743,12 +914,12 @@ export default function OrderSuccess() {
         <p className="text-center text-xs text-muted-foreground max-w-md mx-auto">
           Need help? WhatsApp us at{" "}
           <a 
-            href="https://wa.me/628192515550" 
+            href={`https://wa.me/${WHATSAPP_NUMBER}`} 
             className="text-primary font-semibold hover:underline"
             target="_blank"
             rel="noopener noreferrer"
           >
-            0819-2515-550
+            {WHATSAPP_DISPLAY}
           </a>
         </p>
       </div>
