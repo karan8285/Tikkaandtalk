@@ -7,7 +7,7 @@ import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { toast } from "sonner";
 import { DeliveryZonesAdmin } from "./DeliveryZonesAdmin";
 import { Input } from "./ui/input";
-import { MessageCircle, Store, Info, MapPin, Image } from "lucide-react";
+import { MessageCircle, Store, Info, MapPin, Image, Upload, Trash2, Loader2 } from "lucide-react";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -27,6 +27,11 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
   const [settings, setSettings] = useState<RestaurantSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [logoVersion, setLogoVersion] = useState(0);
+  const [logoLoadError, setLogoLoadError] = useState(false);
+  const [localPreview, setLocalPreview] = useState<string | null>(null);
 
   useEffect(() => {
     fetchSettings();
@@ -96,6 +101,106 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleLogoUpload = async (file: File) => {
+    if (!customToken) return;
+    
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp", "image/gif"];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error("Invalid file type. Please upload PNG, JPG, SVG, WebP, or GIF.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("File too large. Maximum size is 5MB.");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      // Show local preview immediately while uploading
+      const objectUrl = URL.createObjectURL(file);
+      setLocalPreview(objectUrl);
+      setLogoLoadError(false);
+
+      const formData = new FormData();
+      formData.append("logo", file);
+
+      const response = await fetch(`${API_BASE}/admin/upload-logo`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": customToken,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: "Upload failed" }));
+        throw new Error(err.error || "Upload failed");
+      }
+
+      const data = await response.json();
+      console.log("✅ Logo upload response:", data);
+      // Use the signed URL directly from the upload response (most reliable)
+      if (settings && data.logoUrl) {
+        setSettings({ ...settings, restaurantLogoUrl: data.logoUrl });
+      }
+      setLogoLoadError(false);
+      setLogoVersion((v) => v + 1); // Cache-bust the preview
+      setLocalPreview(null); // Clear local preview, server URL will take over
+      toast.success("Logo uploaded successfully!");
+    } catch (error: any) {
+      console.error("Logo upload error:", error);
+      toast.error(`Failed to upload logo: ${error.message}`);
+      setLocalPreview(null);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleLogoDelete = async () => {
+    if (!customToken) return;
+
+    setUploading(true);
+    try {
+      const response = await fetch(`${API_BASE}/admin/delete-logo`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": customToken,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete logo");
+      }
+
+      if (settings) {
+        setSettings({ ...settings, restaurantLogoUrl: "" });
+      }
+      setLocalPreview(null);
+      setLogoLoadError(false);
+      toast.success("Logo removed. The default logo will be used.");
+    } catch (error: any) {
+      console.error("Logo delete error:", error);
+      toast.error(`Failed to delete logo: ${error.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleLogoUpload(file);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleLogoUpload(file);
+    e.target.value = ""; // Reset so same file can be re-selected
   };
 
   if (loading) {
@@ -194,43 +299,121 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
           <h3 className="text-lg font-semibold">Restaurant Logo</h3>
         </div>
         <p className="text-sm text-muted-foreground mb-4">
-          Set a custom logo URL. This replaces the default logo on the Home page.
+          Upload your restaurant logo. This replaces the default logo across the app. Use a transparent background for best results.
         </p>
         <div className="space-y-4">
-          <div>
-            <Label htmlFor="restaurant-logo-url">Logo Image URL</Label>
-            <p className="text-xs text-muted-foreground mb-1">
-              Paste a direct link to your logo image (PNG, JPG, or SVG). Use a transparent background for best results.
-            </p>
-            <Input
-              id="restaurant-logo-url"
-              value={settings.restaurantLogoUrl}
-              onChange={(e) => setSettings({ ...settings, restaurantLogoUrl: e.target.value })}
-              placeholder="https://example.com/your-logo.png"
-              className="mt-1"
-            />
-          </div>
-          {settings.restaurantLogoUrl && (
+          {/* Current logo preview */}
+          {(settings.restaurantLogoUrl || localPreview) && (
             <div className="p-4 rounded-lg bg-gray-50 border border-gray-200">
-              <p className="text-xs text-gray-600 font-medium mb-3">Preview:</p>
-              <div className="flex justify-center" style={{ backgroundColor: "#FFF5F7" }}>
-                <img
-                  src={settings.restaurantLogoUrl}
-                  alt="Logo preview"
-                  className="max-w-[200px] max-h-[120px] object-contain"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none";
-                    toast.error("Could not load logo image. Check the URL.");
-                  }}
-                />
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs text-gray-600 font-medium">
+                  {localPreview && uploading ? "Uploading..." : "Current Logo:"}
+                </p>
+                {!uploading && settings.restaurantLogoUrl && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-red-500 hover:text-red-700 hover:bg-red-50 h-7 px-2"
+                    onClick={handleLogoDelete}
+                    disabled={uploading}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-1" />
+                    Remove
+                  </Button>
+                )}
+              </div>
+              <div className="flex flex-col items-center justify-center p-3 rounded-md" style={{ backgroundColor: "#FFF5F7" }}>
+                {localPreview ? (
+                  <img
+                    src={localPreview}
+                    alt="Logo preview"
+                    className="max-w-[200px] max-h-[120px] object-contain"
+                  />
+                ) : (
+                  <>
+                    <img
+                      src={`${settings.restaurantLogoUrl}${settings.restaurantLogoUrl.includes("?") ? "&" : "?"}v=${logoVersion}`}
+                      alt="Logo preview"
+                      className="max-w-[200px] max-h-[120px] object-contain"
+                      onLoad={() => setLogoLoadError(false)}
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                        setLogoLoadError(true);
+                        console.error("Logo preview failed to load:", settings.restaurantLogoUrl);
+                      }}
+                    />
+                    {logoLoadError && (
+                      <div className="flex flex-col items-center gap-1 py-2">
+                        <Info className="w-4 h-4 text-red-400" />
+                        <p className="text-xs text-red-500 text-center">
+                          Could not load logo preview. Try uploading again.
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
+                {uploading && localPreview && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <Loader2 className="animate-spin h-3.5 w-3.5 text-purple-500" />
+                    <p className="text-xs text-purple-600">Saving to server...</p>
+                  </div>
+                )}
               </div>
             </div>
           )}
+
+          {/* Upload area */}
+          <div
+            className={`relative flex flex-col items-center justify-center w-full border-2 border-dashed rounded-lg transition-colors cursor-pointer ${
+              uploading ? "pointer-events-none opacity-60" : ""
+            } ${
+              dragOver
+                ? "border-purple-500 bg-purple-50"
+                : "border-gray-300 hover:border-gray-400 bg-gray-50/50"
+            } ${settings.restaurantLogoUrl ? "py-4" : "py-8"}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+            onClick={() => !uploading && document.getElementById("logo-upload")?.click()}
+          >
+            {uploading ? (
+              <div className="flex flex-col items-center gap-2">
+                <Loader2 className="animate-spin h-8 w-8 text-purple-500" />
+                <p className="text-sm text-purple-600 font-medium">Uploading...</p>
+              </div>
+            ) : (
+              <>
+                <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center mb-3">
+                  <Upload className="h-5 w-5 text-purple-600" />
+                </div>
+                <p className="text-sm font-medium text-gray-700">
+                  {settings.restaurantLogoUrl ? "Replace logo" : "Upload your logo"}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Drag & drop or click to browse
+                </p>
+                <p className="text-[10px] text-gray-400 mt-2">
+                  PNG, JPG, SVG, WebP, GIF — max 5MB
+                </p>
+              </>
+            )}
+            <input
+              type="file"
+              id="logo-upload"
+              className="hidden"
+              accept="image/png,image/jpeg,image/jpg,image/svg+xml,image/webp,image/gif"
+              onChange={handleFileSelect}
+            />
+          </div>
+
           {!settings.restaurantLogoUrl && (
             <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200">
               <Info className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
               <p className="text-xs text-blue-700">
-                When empty, the app uses the default built-in logo. Paste a URL here to use your own custom logo.
+                No logo uploaded yet. The app will use the default built-in logo until you upload one.
               </p>
             </div>
           )}

@@ -445,6 +445,37 @@ async function initializeDefaultData(attempt = 1) {
 // Call initialization (don't await - let it run in background)
 initializeDefaultData();
 
+// ==================== LOGO STORAGE BUCKET ====================
+const LOGO_BUCKET = "make-e5e192fb-logos";
+const LOGO_FILE_PATH = "restaurant-logo";
+let logoBucketReady = false;
+
+async function ensureLogoBucket() {
+  try {
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+    const { data: buckets } = await supabase.storage.listBuckets();
+    const bucketExists = buckets?.some((bucket: any) => bucket.name === LOGO_BUCKET);
+    if (!bucketExists) {
+      const { error } = await supabase.storage.createBucket(LOGO_BUCKET, { public: false });
+      if (error) {
+        console.error(`❌ Failed to create bucket ${LOGO_BUCKET}:`, error.message);
+        return;
+      }
+      console.log(`✅ Created storage bucket: ${LOGO_BUCKET}`);
+    } else {
+      console.log(`✅ Logo storage bucket already exists: ${LOGO_BUCKET}`);
+    }
+    logoBucketReady = true;
+  } catch (error) {
+    console.error("⚠️ Failed to ensure logo bucket:", error);
+  }
+}
+// Initialize bucket in background
+ensureLogoBucket();
+
 // Business configuration
 const RESTAURANT_LOCATION = {
   lat: 40.7580,
@@ -5353,6 +5384,202 @@ app.put("/make-server-e5e192fb/admin/settings", async (c) => {
   } catch (error) {
     console.error("Update settings error:", error);
     return c.json({ error: "Failed to update settings" }, 500);
+  }
+});
+
+// ==================== LOGO UPLOAD & SERVE ====================
+
+// Upload logo (admin only) - accepts multipart form data
+app.post("/make-server-e5e192fb/admin/upload-logo", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required - no token provided" }, 401);
+    }
+
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    const formData = await c.req.formData();
+    const file = formData.get("logo") as File | null;
+    if (!file) {
+      return c.json({ error: "No file provided. Send a 'logo' field in multipart form data." }, 400);
+    }
+
+    // Validate file type
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp", "image/gif"];
+    if (!allowedTypes.includes(file.type)) {
+      return c.json({ error: `Invalid file type: ${file.type}. Allowed: PNG, JPG, SVG, WebP, GIF.` }, 400);
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      return c.json({ error: "File too large. Maximum size is 5MB." }, 400);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    // Ensure bucket exists before uploading (handles cold start race condition)
+    if (!logoBucketReady) {
+      console.log("📦 Logo bucket not ready yet, creating inline...");
+      await ensureLogoBucket();
+      if (!logoBucketReady) {
+        return c.json({ error: "Storage bucket could not be created. Please try again in a moment." }, 500);
+      }
+    }
+
+    // Determine file extension from mime type
+    const extMap: Record<string, string> = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/jpg": "jpg",
+      "image/svg+xml": "svg",
+      "image/webp": "webp",
+      "image/gif": "gif",
+    };
+    const ext = extMap[file.type] || "png";
+    const filePath = `${LOGO_FILE_PATH}.${ext}`;
+
+    // Delete any existing logo files first (all extensions at once)
+    const removeFiles = ["png", "jpg", "svg", "webp", "gif"].map(e => `${LOGO_FILE_PATH}.${e}`);
+    try {
+      await supabase.storage.from(LOGO_BUCKET).remove(removeFiles);
+      console.log("🗑️ Cleaned up old logo files");
+    } catch (cleanupErr) {
+      console.log("⚠️ Cleanup of old logos failed (non-critical):", cleanupErr);
+    }
+
+    // Upload the new file — use Uint8Array for Supabase compatibility
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    console.log(`📤 Uploading logo: ${filePath}, size: ${uint8.length} bytes, type: ${file.type}`);
+
+    const { data, error } = await supabase.storage.from(LOGO_BUCKET).upload(filePath, uint8, {
+      contentType: file.type,
+      upsert: true,
+    });
+
+    if (error) {
+      console.error("❌ Logo upload to storage failed:", JSON.stringify(error));
+      return c.json({ error: `Failed to upload logo to storage: ${error.message}` }, 500);
+    }
+
+    console.log("✅ Logo uploaded to storage:", data.path);
+
+    // Generate a signed URL with very long expiry (10 years ≈ 315360000 seconds)
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(LOGO_BUCKET)
+      .createSignedUrl(filePath, 315360000);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("❌ Failed to create signed URL:", signedUrlError);
+      return c.json({ error: "Logo uploaded but failed to generate access URL. Please try again." }, 500);
+    }
+
+    const logoUrl = signedUrlData.signedUrl;
+    console.log("✅ Logo signed URL generated:", logoUrl.substring(0, 100) + "...");
+
+    // Store logo metadata in KV
+    await kv.set("restaurant_logo_meta", {
+      path: filePath,
+      contentType: file.type,
+      uploadedAt: new Date().toISOString(),
+      size: file.size,
+      signedUrl: logoUrl,
+    });
+
+    // Also update restaurant_settings with the signed logo URL
+    const settings = await kvGetWithRetry("restaurant_settings") || {};
+    settings.restaurantLogoUrl = logoUrl;
+    await kv.set("restaurant_settings", settings);
+
+    return c.json({ success: true, logoUrl, size: file.size });
+  } catch (error) {
+    console.error("Upload logo error:", error);
+    return c.json({ error: `Failed to upload logo: ${error}` }, 500);
+  }
+});
+
+// Delete logo (admin only)
+app.delete("/make-server-e5e192fb/admin/delete-logo", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required" }, 401);
+    }
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    // Delete all logo files (all extensions at once)
+    const removeFiles = ["png", "jpg", "svg", "webp", "gif"].map(e => `${LOGO_FILE_PATH}.${e}`);
+    try {
+      await supabase.storage.from(LOGO_BUCKET).remove(removeFiles);
+    } catch (_) { /* ignore */ }
+
+    // Clear logo metadata
+    await kv.del("restaurant_logo_meta");
+
+    // Clear logo URL from settings
+    const settings = await kvGetWithRetry("restaurant_settings") || {};
+    settings.restaurantLogoUrl = "";
+    await kv.set("restaurant_settings", settings);
+
+    console.log("✅ Logo deleted from storage");
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("Delete logo error:", error);
+    return c.json({ error: `Failed to delete logo: ${error}` }, 500);
+  }
+});
+
+// Serve logo (public fallback — redirects to signed URL)
+app.get("/make-server-e5e192fb/logo", async (c) => {
+  try {
+    const meta = await kvGetWithRetry("restaurant_logo_meta");
+    if (!meta?.path) {
+      return c.json({ error: "No logo uploaded" }, 404);
+    }
+
+    // If we have a cached signed URL, redirect to it
+    if (meta.signedUrl) {
+      return c.redirect(meta.signedUrl, 302);
+    }
+
+    // Fallback: generate a fresh signed URL and redirect
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(LOGO_BUCKET)
+      .createSignedUrl(meta.path, 315360000);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("Logo signed URL error:", signedUrlError);
+      return c.json({ error: "Logo file not accessible" }, 404);
+    }
+
+    // Cache the signed URL for future requests
+    meta.signedUrl = signedUrlData.signedUrl;
+    await kv.set("restaurant_logo_meta", meta);
+
+    return c.redirect(signedUrlData.signedUrl, 302);
+  } catch (error) {
+    console.error("Serve logo error:", error);
+    return c.json({ error: "Failed to serve logo" }, 500);
   }
 });
 
