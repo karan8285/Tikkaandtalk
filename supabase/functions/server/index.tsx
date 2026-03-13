@@ -10,7 +10,11 @@ import { getImageForDish } from "./menu_images.tsx";
 const app = new Hono();
 
 // Custom JWT secret for our own token system (bypasses Supabase Auth mismatch)
-const JWT_SECRET = Deno.env.get('JWT_SECRET') || 'tikka-n-talk-secret-key-change-in-production';
+// ⚠️ PRODUCTION: Set JWT_SECRET in Supabase Dashboard → Edge Functions → Secrets
+const JWT_SECRET = Deno.env.get('JWT_SECRET') || (() => {
+  console.warn('⚠️ JWT_SECRET env var not set! Using insecure default. Set JWT_SECRET in Supabase Dashboard before go-live.');
+  return 'tikka-n-talk-default-dev-key-CHANGE-ME';
+})();
 
 // Helper: Create our own JWT key
 async function getJwtKey() {
@@ -149,10 +153,19 @@ app.use('*', cors({
 // Logger
 app.use('*', logger(console.log));
 
-// Default admin credentials (full international format)
-const ADMIN_PHONE = "+629999999999";
-const ADMIN_PHONE_LEGACY = "9999999999"; // Old format for backward compat
-const ADMIN_PIN = "999999";
+// Admin credentials — configurable via env vars or KV store
+// ⚠️ PRODUCTION: Set ADMIN_PHONE and ADMIN_PIN in Supabase Dashboard → Edge Functions → Secrets
+const ADMIN_PHONE = Deno.env.get('ADMIN_PHONE') || "+629999999999";
+const ADMIN_PHONE_LEGACY = (() => {
+  const phone = ADMIN_PHONE.replace(/\D/g, '');
+  // If starts with 62, also keep the version without country code
+  return phone.startsWith('62') ? phone.slice(2) : phone;
+})();
+const ADMIN_PIN = Deno.env.get('ADMIN_PIN') || "999999";
+
+if (!Deno.env.get('ADMIN_PHONE') || !Deno.env.get('ADMIN_PIN')) {
+  console.warn('⚠️ ADMIN_PHONE and/or ADMIN_PIN env vars not set! Using insecure defaults. Set them in Supabase Dashboard before go-live.');
+}
 
 // Helper: Validate 6-digit PIN format
 function isValidPin(input: string): boolean {
@@ -400,13 +413,18 @@ async function initializeDefaultData(attempt = 1) {
       console.log("✅ Admin user already exists:", existingAdmin.id);
       // Update admin password to current ADMIN_PIN (handles migration from old passwords like "admin123")
       console.log("🔧 Updating admin password to current ADMIN_PIN...");
-      const { error: updatePwError } = await supabase.auth.admin.updateUserById(existingAdmin.id, {
-        password: ADMIN_PIN,
-      });
-      if (updatePwError) {
-        console.error("⚠️ Failed to update admin password:", updatePwError.message);
-      } else {
-        console.log("✅ Admin password updated to current ADMIN_PIN");
+      try {
+        const { error: updatePwError } = await supabase.auth.admin.updateUserById(existingAdmin.id, {
+          password: ADMIN_PIN,
+        });
+        if (updatePwError) {
+          console.log("⚠️ Failed to update admin password (non-critical, skipping):", updatePwError.message);
+        } else {
+          console.log("✅ Admin password updated to current ADMIN_PIN");
+        }
+      } catch (pwUpdateErr: any) {
+        // Network errors (connection reset, timeout) are transient — log and continue
+        console.log("⚠️ Admin password update hit a network error (non-critical, skipping):", pwUpdateErr?.message || pwUpdateErr);
       }
       console.log("🔧 Ensuring admin user data in KV...");
       await ensureAdminKVData(existingAdmin.id, existingAdmin.created_at, ADMIN_PHONE);
@@ -5287,6 +5305,15 @@ app.get("/make-server-e5e192fb/admin/settings", async (c) => {
       maintenanceMode: false,
     };
     
+    // Ensure defaults
+    if (settings.taxRate === undefined) settings.taxRate = 11;
+    if (settings.whatsappNumber === undefined) settings.whatsappNumber = "";
+    if (settings.whatsappDisplay === undefined) settings.whatsappDisplay = "";
+    if (settings.restaurantName === undefined) settings.restaurantName = "";
+    if (settings.restaurantTagline === undefined) settings.restaurantTagline = "";
+    if (settings.restaurantAddress === undefined) settings.restaurantAddress = "";
+    if (settings.restaurantLogoUrl === undefined) settings.restaurantLogoUrl = "";
+
     return c.json(settings);
   } catch (error) {
     console.error("Get settings error:", error);
@@ -5329,12 +5356,158 @@ app.put("/make-server-e5e192fb/admin/settings", async (c) => {
   }
 });
 
+// ==================== PAYMENT GATEWAY SETTINGS ====================
+// Get payment gateway config (admin only)
+app.get("/make-server-e5e192fb/admin/payment-gateway", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required" }, 401);
+    }
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    const pgConfig = await kvGetWithRetry("payment_gateway_settings") || {};
+    
+    // Merge with env var fallbacks for backward compatibility
+    const envServerKey = Deno.env.get('MIDTRANS_SERVER_KEY') || '';
+    const envClientKey = Deno.env.get('MIDTRANS_CLIENT_KEY') || '';
+    const envIsProduction = Deno.env.get('MIDTRANS_IS_PRODUCTION') === 'true';
+
+    return c.json({
+      enabled: pgConfig.enabled ?? true,
+      isProduction: pgConfig.isProduction ?? envIsProduction,
+      clientKey: pgConfig.clientKey || envClientKey,
+      serverKey: pgConfig.serverKey || envServerKey,
+      merchantId: pgConfig.merchantId || '',
+    });
+  } catch (error) {
+    console.error("Get payment gateway config error:", error);
+    return c.json({ error: "Failed to get payment gateway config" }, 500);
+  }
+});
+
+// Update payment gateway config (admin only)
+app.put("/make-server-e5e192fb/admin/payment-gateway", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required" }, 401);
+    }
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    const body = await c.req.json();
+    const pgConfig = {
+      enabled: body.enabled ?? true,
+      isProduction: body.isProduction ?? false,
+      clientKey: body.clientKey || '',
+      serverKey: body.serverKey || '',
+      merchantId: body.merchantId || '',
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set("payment_gateway_settings", pgConfig);
+    console.log(`✅ Payment gateway config updated. Mode: ${pgConfig.isProduction ? 'PRODUCTION' : 'SANDBOX'}, Enabled: ${pgConfig.enabled}`);
+
+    return c.json({ success: true, config: { ...pgConfig, serverKey: '***hidden***' } });
+  } catch (error) {
+    console.error("Update payment gateway config error:", error);
+    return c.json({ error: "Failed to update payment gateway config" }, 500);
+  }
+});
+
+// Test payment gateway connection (admin only)
+app.post("/make-server-e5e192fb/admin/payment-gateway/test", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required" }, 401);
+    }
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    // Read config from KV (or fallback to env)
+    const { serverKey, snapApiUrl, isProduction } = await getMidtransConfig();
+    if (!serverKey) {
+      return c.json({ success: false, error: "Server Key is not configured. Please save your credentials first." }, 400);
+    }
+
+    // Test by trying to create a minimal Snap token (Midtrans validates the key)
+    const authString = btoa(serverKey + ":");
+    const testPayload = {
+      transaction_details: {
+        order_id: `TEST-${Date.now()}`,
+        gross_amount: 10000,
+      },
+      customer_details: {
+        first_name: "Test",
+        phone: "08123456789",
+      },
+      item_details: [{
+        id: "test-item",
+        price: 10000,
+        quantity: 1,
+        name: "Connection Test",
+      }],
+    };
+
+    const snapResponse = await fetch(snapApiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Basic ${authString}`,
+        "Accept": "application/json",
+      },
+      body: JSON.stringify(testPayload),
+    });
+
+    const snapData = await snapResponse.json();
+
+    if (snapResponse.ok && snapData.token) {
+      return c.json({
+        success: true,
+        message: `Connection successful! Midtrans ${isProduction ? 'Production' : 'Sandbox'} API is reachable and credentials are valid.`,
+      });
+    } else {
+      const errorMsg = snapData.error_messages?.join(', ') || JSON.stringify(snapData);
+      return c.json({
+        success: false,
+        error: `Midtrans API returned an error: ${errorMsg}`,
+      }, 400);
+    }
+  } catch (error) {
+    console.error("Payment gateway test error:", error);
+    return c.json({ success: false, error: `Connection test failed: ${error?.message}` }, 500);
+  }
+});
+
 // Check if restaurant is accepting orders (public endpoint)
 app.get("/make-server-e5e192fb/restaurant-status", async (c) => {
   try {
     const settings = await kvGetWithRetry("restaurant_settings");
+    const taxRate = settings?.taxRate ?? 11;
+    const whatsappNumber = settings?.whatsappNumber || "";
+    const whatsappDisplay = settings?.whatsappDisplay || "";
+    const restaurantName = settings?.restaurantName || "";
+    const restaurantTagline = settings?.restaurantTagline || "";
+    const restaurantAddress = settings?.restaurantAddress || "";
+    const restaurantLogoUrl = settings?.restaurantLogoUrl || "";
+    
+    // Fetch payment gateway enabled status
+    const pgConfig = await kvGetWithRetry("payment_gateway_settings");
+    const onlinePaymentsEnabled = pgConfig?.enabled ?? true;
+
+    const baseInfo = { taxRate, onlinePaymentsEnabled, whatsappNumber, whatsappDisplay, restaurantName, restaurantTagline, restaurantAddress, restaurantLogoUrl };
+    
     if (!settings) {
-      return c.json({ isOpen: true, acceptingOrders: true });
+      return c.json({ isOpen: true, acceptingOrders: true, ...baseInfo });
     }
 
     // Check maintenance mode
@@ -5342,7 +5515,8 @@ app.get("/make-server-e5e192fb/restaurant-status", async (c) => {
       return c.json({ 
         isOpen: false, 
         acceptingOrders: false,
-        reason: "Restaurant is temporarily closed for maintenance" 
+        reason: "Restaurant is temporarily closed for maintenance",
+        ...baseInfo,
       });
     }
 
@@ -5351,14 +5525,15 @@ app.get("/make-server-e5e192fb/restaurant-status", async (c) => {
       return c.json({ 
         isOpen: false, 
         acceptingOrders: false,
-        reason: "Restaurant is not accepting orders at this time" 
+        reason: "Restaurant is not accepting orders at this time",
+        ...baseInfo,
       });
     }
 
-    return c.json({ isOpen: true, acceptingOrders: true });
+    return c.json({ isOpen: true, acceptingOrders: true, ...baseInfo });
   } catch (error) {
     console.error("Get restaurant status error:", error);
-    return c.json({ isOpen: true, acceptingOrders: true });
+    return c.json({ isOpen: true, acceptingOrders: true, taxRate: 11, onlinePaymentsEnabled: true, whatsappNumber: "", whatsappDisplay: "", restaurantName: "", restaurantTagline: "", restaurantAddress: "", restaurantLogoUrl: "" });
   }
 });
 
@@ -6639,22 +6814,26 @@ app.post("/make-server-e5e192fb/admin/fresh-start", async (c) => {
 // MIDTRANS PAYMENT INTEGRATION
 // ===================================================================
 
-// Midtrans config helper
-function getMidtransConfig() {
-  const isProduction = Deno.env.get('MIDTRANS_IS_PRODUCTION') === 'true';
-  const serverKey = Deno.env.get('MIDTRANS_SERVER_KEY') || '';
-  const clientKey = Deno.env.get('MIDTRANS_CLIENT_KEY') || '';
+// Midtrans config helper — reads from KV (admin-configured) first, falls back to env vars
+async function getMidtransConfig() {
+  const pgConfig = await kvGetWithRetry("payment_gateway_settings");
+  
+  const isProduction = pgConfig?.isProduction ?? (Deno.env.get('MIDTRANS_IS_PRODUCTION') === 'true');
+  const serverKey = pgConfig?.serverKey || Deno.env.get('MIDTRANS_SERVER_KEY') || '';
+  const clientKey = pgConfig?.clientKey || Deno.env.get('MIDTRANS_CLIENT_KEY') || '';
+  const merchantId = pgConfig?.merchantId || '';
+  const enabled = pgConfig?.enabled ?? true;
   const snapApiUrl = isProduction
     ? 'https://app.midtrans.com/snap/v1/transactions'
     : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
-  return { isProduction, serverKey, clientKey, snapApiUrl };
+  return { isProduction, serverKey, clientKey, merchantId, enabled, snapApiUrl };
 }
 
 // GET /midtrans-config — Frontend fetches client key + mode
 app.get("/make-server-e5e192fb/midtrans-config", async (c) => {
   try {
-    const { isProduction, clientKey } = getMidtransConfig();
-    return c.json({ clientKey, isProduction });
+    const { isProduction, clientKey, enabled } = await getMidtransConfig();
+    return c.json({ clientKey, isProduction, enabled });
   } catch (error) {
     console.log(`❌ midtrans-config error: ${error}`);
     return c.json({ error: `Failed to get Midtrans config: ${error.message}` }, 500);
@@ -6674,7 +6853,10 @@ app.post("/make-server-e5e192fb/create-payment-intent", async (c) => {
       return c.json({ error: "total is required and must be > 0" }, 400);
     }
 
-    const { serverKey, snapApiUrl } = getMidtransConfig();
+    const { serverKey, snapApiUrl, enabled } = await getMidtransConfig();
+    if (!enabled) {
+      return c.json({ error: "Online payments are currently disabled" }, 400);
+    }
     if (!serverKey) {
       return c.json({ error: "Payment gateway not configured" }, 500);
     }
@@ -6775,7 +6957,10 @@ app.post("/make-server-e5e192fb/create-payment", async (c) => {
       return c.json({ error: "Order is already paid" }, 400);
     }
 
-    const { serverKey, snapApiUrl } = getMidtransConfig();
+    const { serverKey, snapApiUrl, enabled } = await getMidtransConfig();
+    if (!enabled) {
+      return c.json({ error: "Online payments are currently disabled" }, 400);
+    }
     if (!serverKey) {
       console.log(`❌ [CREATE-PAYMENT] MIDTRANS_SERVER_KEY not configured`);
       return c.json({ error: "Payment gateway not configured" }, 500);
@@ -6889,7 +7074,7 @@ app.post("/make-server-e5e192fb/midtrans-notification", async (c) => {
     } = notification;
 
     // Verify signature: SHA512(order_id + status_code + gross_amount + server_key)
-    const { serverKey } = getMidtransConfig();
+    const { serverKey } = await getMidtransConfig();
     const signatureInput = midtransOrderId + statusCode + grossAmount + serverKey;
     const encoder = new TextEncoder();
     const sigData = encoder.encode(signatureInput);

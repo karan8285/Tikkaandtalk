@@ -14,29 +14,7 @@ import { loadSnapJs, openSnapPayment } from "../lib/midtrans";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
-const specialOffers = [
-  {
-    id: 1,
-    title: "Chicken Tikka Masala",
-    originalPrice: 285000,
-    discountedPrice: 210000,
-    image: "https://images.unsplash.com/photo-1652545296821-09a023a9fd08?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0aWtrYSUyMG1hc2FsYSUyMGluZGlhbiUyMGZvb2R8ZW58MXx8fHwxNzcyMTA0ODgwfDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-  },
-  {
-    id: 2,
-    title: "Butter Chicken with Rice",
-    originalPrice: 255000,
-    discountedPrice: 180000,
-    image: "https://images.unsplash.com/photo-1707448829764-9474458021ed?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxidXR0ZXIlMjBjaGlja2VuJTIwY3VycnklMjByaWNlfGVufDF8fHx8MTc3MjEwNDg4MHww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-  },
-  {
-    id: 3,
-    title: "Samosa Platter",
-    originalPrice: 135000,
-    discountedPrice: 90000,
-    image: "https://images.unsplash.com/photo-1697155836252-d7f969108b5a?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxzYW1vc2ElMjBpbmRpYW4lMjBhcHBldGl6ZXJ8ZW58MXx8fHwxNzcyMDYxMTIyfDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-  },
-];
+// No more hardcoded specialOffers — offer data is passed via location.state.offerData
 
 export default function OrderConfirmation() {
   const navigate = useNavigate();
@@ -76,12 +54,14 @@ export default function OrderConfirmation() {
   // Extract state from SAVED ref (not current location.state which can become null)
   const locationState = savedLocationStateRef.current || {};
   let { orderType, address, phone, specialInstructions, offerId, fromCart, cartItems: passedCartItems, guestInfo } = locationState;
+  const offerData = locationState.offerData || null; // Dynamic offer data from FlashSale/KidsMenu/TodaysSpecial
   const paymentMethod = locationState.paymentMethod || "pay-later";
   const passedDeliveryFee = locationState.deliveryFee || 0;
   const passedDeliveryZone = locationState.deliveryZone || null;
   const passedDeliveryDistance = locationState.deliveryDistance || null;
   const passedPromoApplied = locationState.promoApplied || null;
   const passedPromoDiscount = locationState.promoDiscount || 0;
+  const passedTaxRate = locationState.taxRate ?? 11;
   
   // CRITICAL FIX: If no guestInfo but we have phone and no user, create guestInfo
   if (!guestInfo && phone && !user) {
@@ -245,17 +225,14 @@ export default function OrderConfirmation() {
       console.log("❌ [VALIDATION EFFECT] No fromCart and no offerId - REDIRECTING to /cart");
       toast.error("No items in order");
       navigate("/cart");
-    } else if (offerId) {
-      // Check if offer exists
-      const selectedOffer = specialOffers.find(offer => offer.id === offerId);
-      if (!selectedOffer) {
-        console.log("❌ [VALIDATION EFFECT] Invalid offer - REDIRECTING to /");
-        toast.error("Invalid offer selected");
-        navigate("/");
-      } else {
-        console.log("✅ [VALIDATION EFFECT] Valid offer, setting validating=false");
-        setValidating(false);
-      }
+    } else if (offerId && offerData) {
+      // Offer data passed dynamically from FlashSale/KidsMenu/TodaysSpecial
+      console.log("✅ [VALIDATION EFFECT] Valid offer from offerData, setting validating=false");
+      setValidating(false);
+    } else if (offerId && !offerData) {
+      console.log("❌ [VALIDATION EFFECT] offerId present but no offerData - REDIRECTING to /");
+      toast.error("Invalid offer selected");
+      navigate("/");
     } else {
       console.log("✅ [VALIDATION EFFECT] No validation needed, setting validating=false");
       setValidating(false);
@@ -417,23 +394,20 @@ export default function OrderConfirmation() {
         orderTitle = cartItems.length > 1 
           ? `${cartItems[0].title} and ${cartItems.length - 1} more item${cartItems.length > 2 ? 's' : ''}`
           : cartItems[0].title;
-      } else if (offerId) {
-        const selectedOffer = specialOffers.find(offer => offer.id === offerId);
-        if (selectedOffer) {
-          items = [{ 
-            ...selectedOffer, 
-            price: selectedOffer.discountedPrice,
-            quantity: 1 
-          }];
-          subtotal = selectedOffer.discountedPrice;
-          orderTitle = selectedOffer.title;
-        }
+      } else if (offerId && offerData) {
+        items = [{ 
+          ...offerData, 
+          price: offerData.discountedPrice || offerData.price,
+          quantity: 1 
+        }];
+        subtotal = offerData.discountedPrice || offerData.price;
+        orderTitle = offerData.title;
       }
 
       // Apply promo discount
       const promoDisc = Math.min(passedPromoDiscount, subtotal);
       const discountedSubtotal = subtotal - promoDisc;
-      const tax = discountedSubtotal * 0.10;
+      const tax = discountedSubtotal * (passedTaxRate / 100);
       const rawDeliveryFee = orderType === "delivery" ? passedDeliveryFee : 0;
       const deliveryFee = passedPromoApplied?.freeDelivery ? 0 : rawDeliveryFee;
       const total = discountedSubtotal + tax + deliveryFee;
@@ -454,6 +428,7 @@ export default function OrderConfirmation() {
         paymentMethod: paymentMethod === "pay-now" ? "midtrans" : "cash",
         subtotal: parseFloat(subtotal.toFixed(2)),
         tax: parseFloat(tax.toFixed(2)),
+        taxRate: passedTaxRate,
         deliveryFee: parseFloat(deliveryFee.toFixed(2)),
         total: parseFloat(total.toFixed(2)),
         items: items.map(item => ({
@@ -1044,22 +1019,15 @@ export default function OrderConfirmation() {
     orderTitle = cartItems.length > 1 
       ? `${cartItems[0].title} and ${cartItems.length - 1} more item${cartItems.length > 2 ? 's' : ''}`
       : cartItems[0].title;
-  } else if (offerId) {
-    // Order from single offer
-    const selectedOffer = specialOffers.find(offer => offer.id === offerId);
-    if (selectedOffer) {
-      // Transform offer to match expected item structure
-      items = [{ 
-        ...selectedOffer, 
-        price: selectedOffer.discountedPrice, // Use discountedPrice as price
-        quantity: 1 
-      }];
-      subtotal = selectedOffer.discountedPrice;
-      orderTitle = selectedOffer.title;
-    } else {
-      // Will be handled by useEffect
-      return null;
-    }
+  } else if (offerId && offerData) {
+    // Order from single offer (dynamic data from FlashSale/KidsMenu/TodaysSpecial)
+    items = [{ 
+      ...offerData, 
+      price: offerData.discountedPrice || offerData.price,
+      quantity: 1 
+    }];
+    subtotal = offerData.discountedPrice || offerData.price;
+    orderTitle = offerData.title;
   } else {
     // Will be handled by useEffect
     return null;
@@ -1068,7 +1036,7 @@ export default function OrderConfirmation() {
   // Apply promo discount for display
   const renderPromoDisc = Math.min(passedPromoDiscount, subtotal);
   const renderDiscountedSubtotal = subtotal - renderPromoDisc;
-  const tax = renderDiscountedSubtotal * 0.10; // 10% PPN tax
+  const tax = renderDiscountedSubtotal * (passedTaxRate / 100); // Admin-defined PPN tax
   const renderRawDeliveryFee = orderType === "delivery" ? passedDeliveryFee : 0;
   const deliveryFee = passedPromoApplied?.freeDelivery ? 0 : renderRawDeliveryFee;
   const total = renderDiscountedSubtotal + tax + deliveryFee;
@@ -1210,26 +1178,21 @@ export default function OrderConfirmation() {
               </div>
             )}
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Tax (10%)</span>
+              <span className="text-muted-foreground">Tax ({passedTaxRate}%)</span>
               <span>{formatIDR(tax)}</span>
             </div>
             {orderType === "delivery" && (
               <>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Delivery Fee</span>
-                  {deliveryFee > 0 ? (
-                    <span className="font-medium">{formatIDR(deliveryFee)}</span>
-                  ) : (
-                    <span className="text-muted-foreground italic">To be Calculated</span>
-                  )}
+                  <span className={`font-medium ${passedPromoApplied?.freeDelivery ? "line-through text-muted-foreground" : ""}`}>
+                    {formatIDR(renderRawDeliveryFee)}
+                  </span>
                 </div>
-                {deliveryFee > 0 && passedDeliveryZone && (
+                {passedDeliveryZone && (
                   <p className="text-[10px] text-green-600 -mt-1">
                     Zone: {passedDeliveryZone.name} &middot; {passedDeliveryDistance?.toFixed(1)} km
                   </p>
-                )}
-                {deliveryFee === 0 && (
-                  <p className="text-[10px] text-amber-600 -mt-1">Delivery fee will be added by the restaurant based on your location</p>
                 )}
               </>
             )}

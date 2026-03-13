@@ -27,9 +27,6 @@ const Admin = React.lazy(() => import("./pages/Admin"));
 const CreateCustomOrder = React.lazy(() => import("./pages/CreateCustomOrder"));
 const KitchenDisplay = React.lazy(() => import("./pages/KitchenDisplay"));
 const ForgotPassword = React.lazy(() => import("./pages/ForgotPassword"));
-const Debug = React.lazy(() => import("./pages/Debug"));
-const AdminDebug = React.lazy(() => import("./pages/AdminDebug"));
-const TestAuth = React.lazy(() => import("./pages/TestAuth"));
 const TrackOrder = React.lazy(() => import("./pages/TrackOrder"));
 const GuestOrderTracking = React.lazy(() => import("./pages/GuestOrderTracking"));
 
@@ -184,18 +181,6 @@ export const router = createBrowserRouter(
         {
           path: "admin/kitchen",
           element: <Lazy><KitchenDisplay /></Lazy>,
-        },
-        {
-          path: "admin-debug",
-          element: <Lazy><AdminDebug /></Lazy>,
-        },
-        {
-          path: "debug",
-          element: <Lazy><Debug /></Lazy>,
-        },
-        {
-          path: "test-auth",
-          element: <Lazy><TestAuth /></Lazy>,
         },
         {
           path: "track/:orderNumber",

@@ -58,6 +58,7 @@ interface Order {
   promoCode?: string;
   promoDiscount?: number;
   promoVoucherTitle?: string;
+  taxRate?: number; // New field for tax rate
 }
 
 const statusConfig: Record<string, { color: string; bgColor: string; label: string }> = {
@@ -828,7 +829,7 @@ export default function OrderHistory() {
                               </div>
                             )}
                             <div className="flex justify-between">
-                              <span className="text-muted-foreground">Tax (10%):</span>
+                              <span className="text-muted-foreground">Tax ({order.taxRate ? `${order.taxRate}%` : 'PPN'}):</span>
                               <span>Rp {order.tax?.toLocaleString()}</span>
                             </div>
                             <div className="flex justify-between">

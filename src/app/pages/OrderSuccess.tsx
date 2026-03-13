@@ -7,7 +7,7 @@ import { Separator } from "../components/ui/separator";
 import { GuestAccountCreationDialog } from "../components/GuestAccountCreationDialog";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
-import { WHATSAPP_NUMBER, WHATSAPP_DISPLAY } from "../lib/whatsapp";
+import { getWhatsAppNumber, getWhatsAppDisplay } from "../lib/whatsapp";
 import { toast } from "sonner";
 import { 
   CheckCircle2, 
@@ -214,7 +214,7 @@ export default function OrderSuccess() {
               )}
               <Button 
                 variant="outline"
-                onClick={() => window.open(`https://wa.me/${WHATSAPP_NUMBER}`, "_blank")}
+                onClick={() => window.open(`https://wa.me/${getWhatsAppNumber()}`, "_blank")}
                 className="w-full"
               >
                 Contact via WhatsApp
@@ -257,7 +257,7 @@ export default function OrderSuccess() {
             <div className="space-y-2">
               <Button 
                 variant="outline"
-                onClick={() => window.open(`https://wa.me/${WHATSAPP_NUMBER}`, "_blank")}
+                onClick={() => window.open(`https://wa.me/${getWhatsAppNumber()}`, "_blank")}
                 className="w-full"
               >
                 Contact via WhatsApp
@@ -543,7 +543,7 @@ export default function OrderSuccess() {
     return encodeURIComponent(message);
   };
   
-  const whatsappLink = `https://wa.me/${WHATSAPP_NUMBER}?text=${generateWhatsAppMessage()}`;
+  const whatsappLink = `https://wa.me/${getWhatsAppNumber()}?text=${generateWhatsAppMessage()}`;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -792,7 +792,7 @@ export default function OrderSuccess() {
               </div>
             )}
             <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">Tax (PPN 10%)</span>
+              <span className="text-muted-foreground">Tax (PPN{order.taxRate ? ` ${order.taxRate}%` : ''})</span>
               <span>{formatIDR(order.tax)}</span>
             </div>
             {order.deliveryMethod === 'delivery' && (
@@ -914,12 +914,12 @@ export default function OrderSuccess() {
         <p className="text-center text-xs text-muted-foreground max-w-md mx-auto">
           Need help? WhatsApp us at{" "}
           <a 
-            href={`https://wa.me/${WHATSAPP_NUMBER}`} 
+            href={`https://wa.me/${getWhatsAppNumber()}`} 
             className="text-primary font-semibold hover:underline"
             target="_blank"
             rel="noopener noreferrer"
           >
-            {WHATSAPP_DISPLAY}
+            {getWhatsAppDisplay()}
           </a>
         </p>
       </div>

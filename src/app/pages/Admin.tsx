@@ -27,6 +27,7 @@ import { AnalyticsAdmin } from "../components/AnalyticsAdmin";
 import { RestaurantSettingsAdmin } from "../components/RestaurantSettingsAdmin";
 import { SystemHealthAdmin } from "../components/SystemHealthAdmin";
 import { BusinessInsightsAdmin } from "../components/BusinessInsightsAdmin";
+import { PaymentGatewayAdmin } from "../components/PaymentGatewayAdmin";
 import { getShortOrderId } from "../lib/orderUtils";
 import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 
@@ -1116,6 +1117,7 @@ export default function Admin() {
               <TabsTrigger value="kids-menu">Kids</TabsTrigger>
               <TabsTrigger value="flash-sale">Flash</TabsTrigger>
               <TabsTrigger value="insights">Insights</TabsTrigger>
+              <TabsTrigger value="payments">Payments</TabsTrigger>
               <TabsTrigger value="settings">Settings</TabsTrigger>
               <TabsTrigger value="health">Health</TabsTrigger>
             </TabsList>
@@ -1434,7 +1436,7 @@ export default function Admin() {
                             </div>
                           )}
                           <div className="flex justify-between">
-                            <span className="text-muted-foreground">Tax (PPN 10%)</span>
+                            <span className="text-muted-foreground">Tax (PPN)</span>
                             <span>{formatIDR(order.tax || 0)}</span>
                           </div>
                           {order.deliveryMethod === 'delivery' && (
@@ -2006,6 +2008,17 @@ export default function Admin() {
           <TabsContent value="insights" className="space-y-4">
             {accessToken ? (
               <BusinessInsightsAdmin customToken={accessToken} />
+            ) : (
+              <Card className="p-8 text-center">
+                <p className="text-muted-foreground">Loading authentication...</p>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* Payment Gateway Tab */}
+          <TabsContent value="payments" className="space-y-4">
+            {accessToken ? (
+              <PaymentGatewayAdmin customToken={accessToken} />
             ) : (
               <Card className="p-8 text-center">
                 <p className="text-muted-foreground">Loading authentication...</p>

@@ -54,6 +54,7 @@ interface Order {
   promoCode?: string;
   promoDiscount?: number;
   promoVoucherTitle?: string;
+  taxRate?: number;
 }
 
 const statusConfig: Record<string, { icon: string; color: string; description: string }> = {
@@ -465,7 +466,7 @@ export default function TrackOrder() {
               </div>
             )}
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Tax (PPN 10%)</span>
+              <span className="text-muted-foreground">Tax (PPN{order.taxRate ? ` ${order.taxRate}%` : ''})</span>
               <span>Rp {(order.tax || 0).toLocaleString()}</span>
             </div>
             {order.deliveryMethod === 'delivery' && (

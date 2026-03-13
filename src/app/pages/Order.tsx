@@ -8,7 +8,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
 import { Textarea } from "../components/ui/textarea";
-import { ShoppingBag, Truck, MapPin, Phone, MessageSquare, ChevronRight, CreditCard, Wallet, Navigation, Search, MapPinned, Loader2, AlertCircle, CheckCircle2, Building, ChevronDown, Plus, Trash2, Bookmark, Home, Briefcase, Tag, Ticket, X, Gift } from "lucide-react";
+import { ShoppingBag, Truck, MapPin, Phone, MessageSquare, ChevronRight, CreditCard, Wallet, Navigation, Search, MapPinned, Loader2, AlertCircle, CheckCircle2, Building, ChevronDown, Plus, Trash2, Bookmark, Home, Briefcase, Tag, Ticket, X, Gift, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
@@ -65,6 +65,7 @@ export default function Order() {
   // Extract guest info from SAVED ref (not current location.state which can become stale)
   const guestInfo: GuestInfo | null = savedStateRef.current?.guestInfo || null;
 
+  const [orderStep, setOrderStep] = useState<1 | 2>(1);
   const [orderType, setOrderType] = useState<OrderType>("delivery");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("" as PaymentMethod);
   const [address, setAddress] = useState("");
@@ -99,6 +100,10 @@ export default function Order() {
 
   // Track lat/lng from GPS for saving
   const lastGpsCoords = useRef<{ lat: number; lng: number } | null>(null);
+
+  // GPS accuracy tracking for progressive location refinement
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+  const watchIdRef = useRef<number | null>(null);
 
   // Promo code state
   const [promoCode, setPromoCode] = useState("");
@@ -152,7 +157,28 @@ export default function Order() {
   const [claimingVoucherId, setClaimingVoucherId] = useState<string | null>(null);
   const [showUnclaimedSection, setShowUnclaimedSection] = useState(false);
 
+  // Tax rate state (admin-defined)
+  const [taxRate, setTaxRate] = useState<number>(11); // Default 11% PPN
+
   const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+
+  // Fetch tax rate from restaurant settings
+  useEffect(() => {
+    const fetchTaxRate = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/restaurant-status`, {
+          headers: { Authorization: `Bearer ${publicAnonKey}` },
+        });
+        const data = await res.json();
+        if (data.taxRate !== undefined) {
+          setTaxRate(data.taxRate);
+        }
+      } catch (error) {
+        console.error("Error fetching tax rate:", error);
+      }
+    };
+    fetchTaxRate();
+  }, []);
 
   // Fetch available promo codes for logged-in users
   const fetchAvailablePromos = async () => {
@@ -439,70 +465,137 @@ export default function Order() {
     }
   };
 
-  // Use GPS location
+  // Resolve GPS coordinates to address and calculate delivery fee
+  const resolveLocationAndFinish = async (latitude: number, longitude: number) => {
+    // Reverse geocode to get a real street address
+    let resolvedAddress = "";
+    try {
+      // Call our server reverse-geocode endpoint
+      const geoRes = await fetch(`${API_BASE}/reverse-geocode`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify({ lat: latitude, lng: longitude }),
+      });
+      const geoData = await geoRes.json();
+
+      if (geoData.found && geoData.address) {
+        resolvedAddress = geoData.address;
+      }
+    } catch (err) {
+      console.warn("Server reverse geocode failed, trying Nominatim directly");
+    }
+
+    // Fallback: call Nominatim directly from frontend if server failed
+    if (!resolvedAddress) {
+      try {
+        const directRes = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1&zoom=18`,
+          { headers: { "User-Agent": "TikkaNTalk-App/1.0" } }
+        );
+        const directData = await directRes.json();
+
+        if (directData && !directData.error && directData.display_name) {
+          resolvedAddress = directData.display_name;
+        }
+      } catch (err2) {
+        // Direct Nominatim also failed
+      }
+    }
+
+    // Set the resolved address or fallback to coordinates
+    if (resolvedAddress) {
+      setAddress(resolvedAddress);
+    } else {
+      const fallback = `GPS Location (${latitude.toFixed(6)}, ${longitude.toFixed(6)})`;
+      setAddress(fallback);
+    }
+    
+    setGettingLocation(false);
+    setGpsAccuracy(null);
+    await calculateDeliveryFee(latitude, longitude);
+    lastGpsCoords.current = { lat: latitude, lng: longitude };
+  };
+
+  // Use GPS location with progressive accuracy refinement via watchPosition
   const handleUseMyLocation = () => {
     if (!navigator.geolocation) {
       setErrors({ address: "Geolocation is not supported by your browser" });
       return;
     }
 
+    // Clean up any previous watch
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+
     setGettingLocation(true);
+    setGpsAccuracy(null);
     setDeliveryFeeResult(null);
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        // Reverse geocode to get a real street address
-        let resolvedAddress = "";
-        try {
-          // Call our server reverse-geocode endpoint
-          const geoRes = await fetch(`${API_BASE}/reverse-geocode`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${publicAnonKey}`,
-            },
-            body: JSON.stringify({ lat: latitude, lng: longitude }),
-          });
-          const geoData = await geoRes.json();
+    setErrors({});
 
-          if (geoData.found && geoData.address) {
-            resolvedAddress = geoData.address;
-          }
-        } catch (err) {
-          console.warn("Server reverse geocode failed, trying Nominatim directly");
-        }
+    const ACCURACY_THRESHOLD = 30; // meters — good enough for street-level delivery
+    const MAX_WAIT_MS = 15000; // max 15 seconds to get a good fix
+    const MIN_READINGS = 2; // at least 2 readings before accepting
 
-        // Fallback: call Nominatim directly from frontend if server failed
-        if (!resolvedAddress) {
-          try {
-            const directRes = await fetch(
-              `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1&zoom=18`,
-              { headers: { "User-Agent": "TikkaNTalk-App/1.0" } }
-            );
-            const directData = await directRes.json();
+    let bestPosition: GeolocationPosition | null = null;
+    let readingCount = 0;
 
-            if (directData && !directData.error && directData.display_name) {
-              resolvedAddress = directData.display_name;
-            }
-          } catch (err2) {
-            // Direct Nominatim also failed
-          }
-        }
+    const finalize = () => {
+      // Stop watching
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      clearTimeout(timeoutId);
 
-        // Set the resolved address or fallback to coordinates
-        if (resolvedAddress) {
-          setAddress(resolvedAddress);
-        } else {
-          const fallback = `GPS Location (${latitude.toFixed(6)}, ${longitude.toFixed(6)})`;
-          setAddress(fallback);
-        }
-        
+      if (bestPosition) {
+        const { latitude, longitude } = bestPosition.coords;
+        console.log(`📍 GPS finalized: ${latitude.toFixed(6)}, ${longitude.toFixed(6)} (accuracy: ${bestPosition.coords.accuracy.toFixed(0)}m after ${readingCount} readings)`);
+        resolveLocationAndFinish(latitude, longitude);
+      } else {
         setGettingLocation(false);
-        await calculateDeliveryFee(latitude, longitude);
-        lastGpsCoords.current = { lat: latitude, lng: longitude };
+        setGpsAccuracy(null);
+        setErrors({ address: "Could not get an accurate location. Please select your area below." });
+        setShowAreaSelector(true);
+      }
+    };
+
+    // Timeout fallback — use best reading we have after MAX_WAIT_MS
+    const timeoutId = setTimeout(() => {
+      console.log(`⏱️ GPS timeout after ${MAX_WAIT_MS / 1000}s, using best position (accuracy: ${bestPosition ? bestPosition.coords.accuracy.toFixed(0) + 'm' : 'none'})`);
+      finalize();
+    }, MAX_WAIT_MS);
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        readingCount++;
+        const accuracy = position.coords.accuracy;
+        console.log(`📡 GPS reading #${readingCount}: accuracy ${accuracy.toFixed(0)}m`);
+        setGpsAccuracy(Math.round(accuracy));
+
+        // Keep the most accurate reading
+        if (!bestPosition || accuracy < bestPosition.coords.accuracy) {
+          bestPosition = position;
+        }
+
+        // If we have a good enough reading and at least MIN_READINGS, use it immediately
+        if (accuracy <= ACCURACY_THRESHOLD && readingCount >= MIN_READINGS) {
+          console.log(`✅ GPS accuracy ${accuracy.toFixed(0)}m meets threshold of ${ACCURACY_THRESHOLD}m`);
+          finalize();
+        }
       },
       (error) => {
+        clearTimeout(timeoutId);
+        if (watchIdRef.current !== null) {
+          navigator.geolocation.clearWatch(watchIdRef.current);
+          watchIdRef.current = null;
+        }
         setGettingLocation(false);
+        setGpsAccuracy(null);
         const errorMessages: Record<number, string> = {
           1: "Location access denied",
           2: "Location unavailable",
@@ -516,9 +609,24 @@ export default function Order() {
         }
         setShowAreaSelector(true);
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      {
+        enableHighAccuracy: true,
+        timeout: MAX_WAIT_MS,
+        maximumAge: 0, // Never use cached positions
+      }
     );
+
+    watchIdRef.current = watchId;
   };
+
+  // Cleanup watchPosition on unmount
+  useEffect(() => {
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  }, []);
 
   // Geocode typed address
   const handleGeocodeAddress = async () => {
@@ -661,7 +769,7 @@ export default function Order() {
     promoDiscount = Math.min(promoDiscount, subtotal);
   }
   const discountedSubtotal = subtotal - promoDiscount;
-  const tax = Math.round(discountedSubtotal * 0.11); // 11% PPN on discounted amount
+  const tax = Math.round(discountedSubtotal * (taxRate / 100)); // Admin-defined PPN on discounted amount
   const rawDeliveryFee = (orderType === "delivery" && deliveryFeeResult?.available && deliveryFeeResult?.fee) ? deliveryFeeResult.fee : 0;
   const deliveryFee = promoApplied?.freeDelivery ? 0 : rawDeliveryFee;
   const estimatedTotal = discountedSubtotal + tax + deliveryFee;
@@ -671,11 +779,13 @@ export default function Order() {
     const code = (codeOverride || promoCode).trim().toUpperCase();
     if (!code) {
       setPromoError("Please enter a promo code");
+      setPromoCode("");
       return;
     }
     if (codeOverride) setPromoCode(code);
     if (!user || !accessToken) {
       setPromoError("Please sign in to use promo codes");
+      setPromoCode("");
       return;
     }
     setPromoLoading(true);
@@ -722,10 +832,12 @@ export default function Order() {
       } else {
         setPromoError(data.error || "Invalid promo code");
         setPromoApplied(null);
+        setPromoCode("");
       }
     } catch (error) {
       console.error("Failed to validate promo:", error);
       setPromoError("Failed to validate promo code");
+      setPromoCode("");
     } finally {
       setPromoLoading(false);
     }
@@ -759,6 +871,12 @@ export default function Order() {
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
+      // Scroll to the first error field
+      const firstErrorKey = Object.keys(newErrors)[0];
+      const errorEl = document.getElementById(`field-${firstErrorKey}`);
+      if (errorEl) {
+        errorEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
       return;
     }
 
@@ -773,11 +891,12 @@ export default function Order() {
         fromCart: true,
         cartItems: cartItems,
         guestInfo: guestInfo,
-        deliveryFee: deliveryFee,
+        deliveryFee: rawDeliveryFee,
         deliveryZone: deliveryFeeResult?.zone || null,
         deliveryDistance: deliveryFeeResult?.distance || null,
         promoApplied: promoApplied || null,
         promoDiscount,
+        taxRate,
       },
     });
   };
@@ -797,104 +916,152 @@ export default function Order() {
     .filter((d) => d.areas.length > 0);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Header showBack title="Order Details" />
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100/50">
+      <Header 
+        showBack 
+        title={orderStep === 1 ? "Order Details" : "Payment & Review"} 
+        onBack={orderStep === 2 ? () => { setOrderStep(1); window.scrollTo({ top: 0, behavior: "smooth" }); } : undefined}
+      />
 
       <main className="max-w-md mx-auto px-4 py-6 pb-32">
-        {/* Customer Info */}
-        <div className="bg-white rounded-xl shadow-sm p-4 mb-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-            Customer
-          </h2>
-          <div className="space-y-2">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white" style={{ backgroundColor: "#D91A60" }}>
-                {displayName.charAt(0).toUpperCase()}
-              </div>
-              <div>
-                <p className="font-medium text-gray-900">{displayName}</p>
-                {guestInfo && (
-                  <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">Guest</span>
-                )}
-              </div>
+        {/* Step Indicator */}
+        <div className="flex items-center justify-center gap-3 mb-6">
+          <div className="flex items-center gap-2">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all ${orderStep === 1 ? "text-white shadow-lg" : "text-white"}`}
+              style={{ backgroundColor: orderStep === 1 ? "#D91A60" : "#22C55E" }}>
+              {orderStep > 1 ? <CheckCircle2 className="w-4.5 h-4.5" /> : "1"}
             </div>
-            {displayPhone && (
-              <div className="flex items-center gap-2 text-sm text-gray-600 ml-11">
-                <Phone className="w-3.5 h-3.5" />
-                <span>{displayPhone}</span>
-              </div>
-            )}
+            <span className={`text-xs font-semibold ${orderStep === 1 ? "text-[#1E1B4B]" : "text-green-600"}`}>
+              {orderType === "delivery" ? "Delivery" : "Pickup"}
+            </span>
+          </div>
+          <div className={`w-12 h-0.5 rounded-full transition-all ${orderStep >= 2 ? "bg-[#D91A60]" : "bg-gray-200"}`} />
+          <div className="flex items-center gap-2">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all ${orderStep === 2 ? "text-white shadow-lg" : "bg-gray-200 text-gray-400"}`}
+              style={orderStep === 2 ? { backgroundColor: "#D91A60" } : {}}>
+              2
+            </div>
+            <span className={`text-xs font-semibold ${orderStep === 2 ? "text-[#1E1B4B]" : "text-gray-400"}`}>
+              Payment
+            </span>
           </div>
         </div>
 
-        {/* Order Type */}
-        <div className="bg-white rounded-xl shadow-sm p-4 mb-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-            Order Type
-          </h2>
-          <RadioGroup
-            value={orderType}
-            onValueChange={(val) => {
-              setOrderType(val as OrderType);
-              setErrors({});
-            }}
-            className="grid grid-cols-2 gap-3"
-          >
-            <label
-              htmlFor="delivery"
-              className={`relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 cursor-pointer transition-all ${
-                orderType === "delivery"
-                  ? "border-[#D91A60] bg-pink-50/60"
-                  : "border-gray-200 hover:border-gray-300"
-              }`}
-            >
-              <RadioGroupItem value="delivery" id="delivery" className="sr-only" />
-              <Truck
-                className="w-7 h-7"
-                style={{ color: orderType === "delivery" ? "#D91A60" : "#9CA3AF" }}
-              />
-              <span
-                className={`text-sm font-semibold ${
-                  orderType === "delivery" ? "text-[#D91A60]" : "text-gray-600"
-                }`}
-              >
-                Delivery
-              </span>
-              <span className="text-xs text-gray-400">To your address</span>
-            </label>
+        {/* ========== STEP 1: Delivery / Pickup Details ========== */}
+        {orderStep === 1 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-300">
+            {/* Customer Info */}
+            <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50/80 to-indigo-50/40 p-4 shadow-sm">
+              <h2 className="text-base font-bold text-[#1E1B4B] mb-3 flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center">
+                  <Phone className="w-4 h-4 text-indigo-600" />
+                </div>
+                Customer
+              </h2>
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-md" style={{ background: "linear-gradient(135deg, #D91A60 0%, #FF4081 100%)" }}>
+                    {displayName.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-[#1E1B4B]">{displayName}</p>
+                    {guestInfo && (
+                      <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">Guest</span>
+                    )}
+                  </div>
+                </div>
+                {displayPhone && (
+                  <div className="flex items-center gap-2 text-sm text-gray-600 ml-12">
+                    <Phone className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>{displayPhone}</span>
+                  </div>
+                )}
+              </div>
+            </div>
 
-            <label
-              htmlFor="pickup"
-              className={`relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 cursor-pointer transition-all ${
-                orderType === "pickup"
-                  ? "border-[#D91A60] bg-pink-50/60"
-                  : "border-gray-200 hover:border-gray-300"
-              }`}
-            >
-              <RadioGroupItem value="pickup" id="pickup" className="sr-only" />
-              <ShoppingBag
-                className="w-7 h-7"
-                style={{ color: orderType === "pickup" ? "#D91A60" : "#9CA3AF" }}
-              />
-              <span
-                className={`text-sm font-semibold ${
-                  orderType === "pickup" ? "text-[#D91A60]" : "text-gray-600"
-                }`}
+            {/* Order Type */}
+            <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50/80 to-indigo-50/40 p-4 shadow-sm">
+              <h2 className="text-base font-bold text-[#1E1B4B] mb-3 flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center">
+                  <Truck className="w-4 h-4 text-indigo-600" />
+                </div>
+                Order Type
+              </h2>
+              <RadioGroup
+                value={orderType}
+                onValueChange={(val) => {
+                  setOrderType(val as OrderType);
+                  setErrors({});
+                }}
+                className="grid grid-cols-2 gap-3"
               >
-                Pickup
-              </span>
-              <span className="text-xs text-gray-400">Come to store</span>
-            </label>
-          </RadioGroup>
-        </div>
+                <label
+                  htmlFor="delivery"
+                  className={`relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 cursor-pointer transition-all ${
+                    orderType === "delivery"
+                      ? "border-[#3B82F6] bg-blue-50/80 shadow-md"
+                      : "border-gray-200 bg-white hover:border-gray-300"
+                  }`}
+                >
+                  <RadioGroupItem value="delivery" id="delivery" className="sr-only" />
+                  {orderType === "delivery" && (
+                    <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-green-500 flex items-center justify-center shadow-sm">
+                      <CheckCircle2 className="w-4 h-4 text-white" />
+                    </div>
+                  )}
+                  <Truck
+                    className="w-7 h-7"
+                    style={{ color: orderType === "delivery" ? "#3B82F6" : "#9CA3AF" }}
+                  />
+                  <span
+                    className={`text-sm font-bold ${
+                      orderType === "delivery" ? "text-[#1E1B4B]" : "text-gray-500"
+                    }`}
+                  >
+                    Delivery
+                  </span>
+                  <span className="text-[10px] text-gray-400">To your address</span>
+                </label>
 
-        {/* Delivery Address (only for delivery) */}
-        {orderType === "delivery" && (
-          <div className="bg-white rounded-xl shadow-sm p-4 mb-4 animate-in fade-in slide-in-from-top-2 duration-200">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-              <MapPin className="w-4 h-4 inline-block mr-1 -mt-0.5" />
-              Delivery Address
-            </h2>
+                <label
+                  htmlFor="pickup"
+                  className={`relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 cursor-pointer transition-all ${
+                    orderType === "pickup"
+                      ? "border-[#3B82F6] bg-blue-50/80 shadow-md"
+                      : "border-gray-200 bg-white hover:border-gray-300"
+                  }`}
+                >
+                  <RadioGroupItem value="pickup" id="pickup" className="sr-only" />
+                  {orderType === "pickup" && (
+                    <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-green-500 flex items-center justify-center shadow-sm">
+                      <CheckCircle2 className="w-4 h-4 text-white" />
+                    </div>
+                  )}
+                  <ShoppingBag
+                    className="w-7 h-7"
+                    style={{ color: orderType === "pickup" ? "#3B82F6" : "#9CA3AF" }}
+                  />
+                  <span
+                    className={`text-sm font-bold ${
+                      orderType === "pickup" ? "text-[#1E1B4B]" : "text-gray-500"
+                    }`}
+                  >
+                    Pickup
+                  </span>
+                  <span className="text-[10px] text-gray-400">Come to store</span>
+                </label>
+              </RadioGroup>
+            </div>
+
+            {/* Delivery Address (only for delivery) */}
+            {orderType === "delivery" && (
+              <div id="field-address" className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50/80 to-indigo-50/40 p-4 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
+                <h2 className="text-base font-bold text-[#1E1B4B] mb-3 flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center">
+                    <MapPin className="w-4 h-4 text-indigo-600" />
+                  </div>
+                  Delivery Address
+                </h2>
 
             {/* Saved Addresses (logged-in users only) */}
             {isLoggedIn && (
@@ -1019,10 +1186,10 @@ export default function Order() {
                       setShowPlaceResults(false);
                       setPlaceSearchResults([]);
                     }}
-                    className={`w-full flex items-center justify-between h-10 px-3 rounded-lg border text-sm transition-colors ${
+                    className={`w-full flex items-center justify-between h-10 px-3 rounded-lg border-2 text-sm transition-colors ${
                       selectedArea
                         ? "border-[#D91A60] bg-pink-50/40 text-gray-900"
-                        : "border-gray-200 bg-gray-50 text-gray-400"
+                        : "border-amber-200 bg-amber-50/60 text-gray-400"
                     }`}
                   >
                     <div className="flex items-center gap-2 truncate">
@@ -1163,9 +1330,9 @@ export default function Order() {
 
               {/* OR divider */}
               <div className="flex items-center gap-2">
-                <div className="flex-1 border-t border-gray-200" />
-                <span className="text-[10px] text-gray-400 font-medium uppercase">or detect automatically</span>
-                <div className="flex-1 border-t border-gray-200" />
+                <div className="flex-1 border-t border-indigo-200/60" />
+                <span className="text-[10px] text-indigo-400 font-semibold uppercase">or detect automatically</span>
+                <div className="flex-1 border-t border-indigo-200/60" />
               </div>
 
               {/* GPS Button */}
@@ -1173,20 +1340,24 @@ export default function Order() {
                 type="button"
                 variant="outline"
                 size="sm"
-                className="w-full gap-1.5 text-xs h-9"
+                className="w-full gap-1.5 text-xs h-10 border-2 border-green-200 bg-green-50/60 text-green-700 font-semibold hover:bg-green-100 hover:border-green-300 transition-all"
                 onClick={handleUseMyLocation}
                 disabled={gettingLocation}
               >
                 {gettingLocation ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Navigation className="w-3.5 h-3.5" />
+                  <Navigation className="w-3.5 h-3.5 text-green-600" />
                 )}
-                {gettingLocation ? "Getting location..." : "Use My Current Location (GPS)"}
+                {gettingLocation
+                  ? gpsAccuracy
+                    ? `Refining location... (±${gpsAccuracy}m)`
+                    : "Acquiring GPS signal..."
+                  : "Use My Current Location (GPS)"}
               </Button>
 
               {/* Room / Unit Number */}
-              <div>
+              <div id="field-unitNumber">
                 <Label className="text-xs text-gray-500 mb-1 block">
                   <Building className="w-3 h-3 inline-block mr-1 -mt-0.5" />
                   Room / Unit / Floor Number
@@ -1199,7 +1370,7 @@ export default function Order() {
                     setUnitNumber(e.target.value);
                     if (errors.unitNumber) setErrors((prev: any) => ({ ...prev, unitNumber: undefined }));
                   }}
-                  className={`h-9 text-sm bg-gray-50 ${errors.unitNumber ? "border-red-400" : ""}`}
+                  className={`h-10 text-sm bg-amber-50/70 border-amber-200 focus:border-amber-400 ${errors.unitNumber ? "border-red-400" : ""}`}
                 />
                 {errors.unitNumber && (
                   <p className="text-[10px] text-red-500 mt-0.5">{errors.unitNumber}</p>
@@ -1214,7 +1385,7 @@ export default function Order() {
                   value={address}
                   readOnly
                   rows={2}
-                  className="resize-none bg-gray-100 text-gray-700 cursor-not-allowed"
+                  className="resize-none bg-amber-50/50 border-amber-200 text-gray-700 cursor-not-allowed"
                 />
               </div>
 
@@ -1407,93 +1578,143 @@ export default function Order() {
           </div>
         )}
 
-        {/* Special Instructions */}
-        <div className="bg-white rounded-xl shadow-sm p-4 mb-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-            <MessageSquare className="w-4 h-4 inline-block mr-1 -mt-0.5" />
-            Special Instructions
-          </h2>
-          <Textarea
-            placeholder="Any allergies, spice level preferences, or special requests..."
-            value={specialInstructions}
-            onChange={(e) => setSpecialInstructions(e.target.value)}
-            rows={3}
-            className="resize-none bg-gray-50"
-          />
-        </div>
-
-        {/* Payment Method */}
-        <div className="bg-white rounded-xl shadow-sm p-4 mb-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-            <CreditCard className="w-4 h-4 inline-block mr-1 -mt-0.5" />
-            Payment Method
-          </h2>
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              onClick={() => { setPaymentMethod("pay-now"); if (errors.paymentMethod) setErrors((prev) => ({ ...prev, paymentMethod: undefined })); }}
-              className={`relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 cursor-pointer transition-all ${
-                paymentMethod === "pay-now"
-                  ? "border-[#D91A60] bg-pink-50/60"
-                  : errors.paymentMethod ? "border-red-300 hover:border-red-400" : "border-gray-200 hover:border-gray-300"
-              }`}
-            >
-              <CreditCard
-                className="w-7 h-7"
-                style={{ color: paymentMethod === "pay-now" ? "#D91A60" : "#9CA3AF" }}
+            {/* Special Instructions */}
+            <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50/90 to-yellow-50/60 p-4 shadow-sm">
+              <h2 className="text-base font-bold text-[#92400E] mb-3 flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center">
+                  <MessageSquare className="w-4 h-4 text-amber-600" />
+                </div>
+                Special Instructions
+              </h2>
+              <Textarea
+                placeholder="Any allergies, spice level preferences, or special requests..."
+                value={specialInstructions}
+                onChange={(e) => setSpecialInstructions(e.target.value)}
+                rows={3}
+                className="resize-none bg-amber-50/70 border-amber-200 focus:border-amber-400 placeholder:text-amber-300"
               />
-              <span
-                className={`text-sm font-semibold ${
-                  paymentMethod === "pay-now" ? "text-[#D91A60]" : "text-gray-600"
-                }`}
-              >
-                Pay Now
-              </span>
-              <span className="text-[10px] text-gray-400 text-center leading-tight">GoPay, QRIS, Bank Transfer</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => { setPaymentMethod("pay-later"); if (errors.paymentMethod) setErrors((prev) => ({ ...prev, paymentMethod: undefined })); }}
-              className={`relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 cursor-pointer transition-all ${
-                paymentMethod === "pay-later"
-                  ? "border-[#D91A60] bg-pink-50/60"
-                  : errors.paymentMethod ? "border-red-300 hover:border-red-400" : "border-gray-200 hover:border-gray-300"
-              }`}
-            >
-              <Wallet
-                className="w-7 h-7"
-                style={{ color: paymentMethod === "pay-later" ? "#D91A60" : "#9CA3AF" }}
-              />
-              <span
-                className={`text-sm font-semibold ${
-                  paymentMethod === "pay-later" ? "text-[#D91A60]" : "text-gray-600"
-                }`}
-              >
-                {orderType === "delivery" ? "Pay on Delivery" : "Pay on Pickup"}
-              </span>
-              <span className="text-[10px] text-gray-400 text-center leading-tight">Cash / Bank Transfer on {orderType === "delivery" ? "delivery" : "pickup"}</span>
-            </button>
-          </div>
-          {paymentMethod === "pay-now" && (
-            <div className="mt-3 bg-blue-50 border border-blue-100 rounded-lg p-2.5">
-              <p className="text-[11px] text-blue-700">
-                <span className="font-semibold">Secure payment</span> via Midtrans — GoPay, QRIS, Bank Transfer, Credit Card & more. No manual confirmation needed!
-              </p>
             </div>
-          )}
-          {errors.paymentMethod && (
-            <p className="text-xs text-red-500 mt-2">{errors.paymentMethod}</p>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* Promo Code Section */}
-        {user && (
-          <div className="bg-white rounded-xl shadow-sm p-4 mb-4">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-2">
-              <Ticket className="w-4 h-4" />
-              Promo Code
-            </h2>
+        {/* ========== STEP 2: Payment & Review ========== */}
+        {orderStep === 2 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+            {/* Delivery/Pickup Summary Mini Card */}
+            <div className="rounded-xl border border-green-200 bg-green-50/60 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
+                    {orderType === "delivery" ? (
+                      <Truck className="w-4 h-4 text-green-600" />
+                    ) : (
+                      <ShoppingBag className="w-4 h-4 text-green-600" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-green-800">
+                      {orderType === "delivery" ? "Delivery" : "Pickup"}
+                    </p>
+                    {orderType === "delivery" && address && (
+                      <p className="text-[11px] text-green-700 line-clamp-1 max-w-[200px]">
+                        {unitNumber && `${unitNumber}, `}{selectedArea || address.slice(0, 40)}
+                      </p>
+                    )}
+                    {orderType === "pickup" && (
+                      <p className="text-[11px] text-green-700">Come to store</p>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setOrderStep(1); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  className="text-[11px] font-semibold px-2.5 py-1 rounded-full border border-green-300 text-green-700 hover:bg-green-100 transition-colors"
+                >
+                  Edit
+                </button>
+              </div>
+            </div>
+
+            {/* Payment Method */}
+            <div id="field-paymentMethod" className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50/80 to-indigo-50/40 p-4 shadow-sm">
+              <h2 className="text-base font-bold text-[#1E1B4B] mb-3 flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center">
+                  <CreditCard className="w-4 h-4 text-indigo-600" />
+                </div>
+                Payment Method
+              </h2>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setPaymentMethod("pay-now"); if (errors.paymentMethod) setErrors((prev) => ({ ...prev, paymentMethod: undefined })); }}
+                  className={`relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 cursor-pointer transition-all ${
+                    paymentMethod === "pay-now"
+                      ? "border-[#3B82F6] bg-blue-50/80 shadow-md"
+                      : errors.paymentMethod ? "border-red-300 hover:border-red-400" : "border-gray-200 bg-white hover:border-gray-300"
+                  }`}
+                >
+                  {paymentMethod === "pay-now" && (
+                    <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-green-500 flex items-center justify-center shadow-sm">
+                      <CheckCircle2 className="w-4 h-4 text-white" />
+                    </div>
+                  )}
+                  <CreditCard
+                    className="w-7 h-7"
+                    style={{ color: paymentMethod === "pay-now" ? "#3B82F6" : "#9CA3AF" }}
+                  />
+                  <span
+                    className={`text-sm font-bold ${
+                      paymentMethod === "pay-now" ? "text-[#1E1B4B]" : "text-gray-500"
+                    }`}
+                  >
+                    Pay Now
+                  </span>
+                  <span className="text-[10px] text-gray-400 text-center leading-tight">GoPay, QRIS, Bank Transfer</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => { setPaymentMethod("pay-later"); if (errors.paymentMethod) setErrors((prev) => ({ ...prev, paymentMethod: undefined })); }}
+                  className={`relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 cursor-pointer transition-all ${
+                    paymentMethod === "pay-later"
+                      ? "border-[#3B82F6] bg-blue-50/80 shadow-md"
+                      : errors.paymentMethod ? "border-red-300 hover:border-red-400" : "border-gray-200 bg-white hover:border-gray-300"
+                  }`}
+                >
+                  {paymentMethod === "pay-later" && (
+                    <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-green-500 flex items-center justify-center shadow-sm">
+                      <CheckCircle2 className="w-4 h-4 text-white" />
+                    </div>
+                  )}
+                  <Wallet
+                    className="w-7 h-7"
+                    style={{ color: paymentMethod === "pay-later" ? "#3B82F6" : "#9CA3AF" }}
+                  />
+                  <span
+                    className={`text-sm font-bold ${
+                      paymentMethod === "pay-later" ? "text-[#1E1B4B]" : "text-gray-500"
+                    }`}
+                  >
+                    {orderType === "delivery" ? "Pay on Delivery" : "Pay on Pickup"}
+                  </span>
+                  <span className="text-[10px] text-gray-400 text-center leading-tight">Cash / Bank Transfer on {orderType === "delivery" ? "delivery" : "pickup"}</span>
+                </button>
+              </div>
+
+              {errors.paymentMethod && (
+                <p className="text-xs text-red-500 mt-2">{errors.paymentMethod}</p>
+              )}
+            </div>
+
+            {/* Promo Code Section */}
+            {user && (
+              <div className="rounded-2xl border border-pink-100 bg-gradient-to-br from-pink-50/60 to-rose-50/40 p-4 shadow-sm">
+                <h2 className="text-base font-bold text-[#D91A60] mb-3 flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-pink-100 flex items-center justify-center">
+                    <Ticket className="w-4 h-4 text-[#D91A60]" />
+                  </div>
+                  Promo Code
+                </h2>
             {promoApplied ? (
               <div className="flex items-center gap-2 p-3 rounded-lg" style={{ backgroundColor: "#FFF0F4" }}>
                 <div className="flex-1">
@@ -1523,10 +1744,11 @@ export default function Order() {
                 </div>
                 <button
                   onClick={handleRemovePromo}
-                  className="flex items-center justify-center w-8 h-8 rounded-full bg-white hover:bg-gray-100 transition-colors border border-gray-200"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white hover:bg-red-50 transition-colors border border-red-200 text-red-500 hover:text-red-600 hover:border-red-300 shrink-0"
                   title="Remove promo"
                 >
-                  <X className="w-4 h-4 text-gray-500" />
+                  <X className="w-3.5 h-3.5" />
+                  <span className="text-[11px] font-semibold">Remove</span>
                 </button>
               </div>
             ) : (
@@ -1540,14 +1762,14 @@ export default function Order() {
                       setPromoError("");
                     }}
                     onKeyDown={(e) => e.key === "Enter" && handleApplyPromo()}
-                    className="flex-1 text-sm font-mono tracking-wider uppercase"
+                    className="flex-1 text-sm font-mono tracking-wider uppercase bg-pink-50/60 border-pink-200 focus:border-pink-400"
                     disabled={promoLoading}
                   />
                   <Button
                     onClick={() => handleApplyPromo()}
                     disabled={promoLoading || !promoCode.trim()}
-                    className="px-4 text-sm font-semibold text-white shrink-0"
-                    style={{ backgroundColor: "#D91A60" }}
+                    className="px-5 text-sm font-bold text-white shrink-0 rounded-lg"
+                    style={{ backgroundColor: "#10B981" }}
                   >
                     {promoLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Apply"}
                   </Button>
@@ -1728,90 +1950,139 @@ export default function Order() {
           </div>
         )}
 
-        {/* Order Summary */}
-        <div className="bg-white rounded-xl shadow-sm p-4 mb-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-            Order Summary
-          </h2>
-          <div className="space-y-2">
-            {cartItems.map((item) => {
-              const itemKey = (item as any).cartItemKey || `${item.id}-${(item as any).category || "menu"}`;
-              return (
-                <div key={itemKey} className="flex justify-between text-sm">
-                  <span className="text-gray-700">
-                    {item.quantity}x {item.title}
-                  </span>
-                  <span className="text-gray-900 font-medium tabular-nums">
-                    {formatIDR(item.price * item.quantity)}
-                  </span>
+            {/* Order Summary */}
+            <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50/90 to-yellow-50/60 p-4 shadow-sm">
+              <h2 className="text-base font-bold text-[#92400E] mb-3 flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center">
+                  <ShoppingBag className="w-4 h-4 text-amber-600" />
                 </div>
-              );
-            })}
-            <div className="border-t border-gray-100 pt-2 mt-2 space-y-1">
-              <div className="flex justify-between text-sm text-gray-500">
-                <span>Subtotal</span>
-                <span className="tabular-nums">{formatIDR(subtotal)}</span>
-              </div>
-              {promoDiscount > 0 && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-green-600 flex items-center gap-1">
-                    <Ticket className="w-3 h-3" />
-                    Promo Discount
-                  </span>
-                  <span className="tabular-nums font-medium text-green-600">
-                    -{formatIDR(promoDiscount)}
-                  </span>
-                </div>
-              )}
-              {promoApplied?.freeDelivery && orderType === "delivery" && rawDeliveryFee > 0 && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-green-600 flex items-center gap-1">
-                    <Truck className="w-3 h-3" />
-                    Free Delivery
-                  </span>
-                  <span className="tabular-nums font-medium text-green-600">
-                    -{formatIDR(rawDeliveryFee)}
-                  </span>
-                </div>
-              )}
-              <div className="flex justify-between text-sm text-gray-500">
-                <span>Tax (11% PPN)</span>
-                <span className="tabular-nums">{formatIDR(tax)}</span>
-              </div>
-              {orderType === "delivery" && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500">Delivery Fee</span>
-                  {deliveryFeeResult?.available ? (
-                    <span className={`tabular-nums font-medium ${promoApplied?.freeDelivery ? "line-through text-gray-400" : ""}`} style={promoApplied?.freeDelivery ? {} : { color: "#D91A60" }}>
-                      {promoApplied?.freeDelivery ? formatIDR(rawDeliveryFee) : formatIDR(deliveryFee)}
-                    </span>
-                  ) : (
-                    <span className="text-gray-400 italic text-xs">
-                      {deliveryFeeResult && !deliveryFeeResult.available
-                        ? "Not available"
-                        : "Detect location first"}
-                    </span>
+                Order Summary
+              </h2>
+              <div className="space-y-2">
+                {cartItems.map((item) => {
+                  const itemKey = (item as any).cartItemKey || `${item.id}-${(item as any).category || "menu"}`;
+                  return (
+                    <div key={itemKey} className="flex justify-between text-sm">
+                      <span className="text-[#1E1B4B] font-medium">
+                        {item.quantity}x {item.title}
+                      </span>
+                      <span className="text-[#1E1B4B] font-bold tabular-nums">
+                        {formatIDR(item.price * item.quantity)}
+                      </span>
+                    </div>
+                  );
+                })}
+                <div className="border-t border-amber-200/60 pt-2 mt-2 space-y-1">
+                  <div className="flex justify-between text-sm text-gray-500">
+                    <span>Subtotal</span>
+                    <span className="tabular-nums">{formatIDR(subtotal)}</span>
+                  </div>
+                  {promoDiscount > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-green-600 flex items-center gap-1">
+                        <Ticket className="w-3 h-3" />
+                        Promo Discount
+                      </span>
+                      <span className="tabular-nums font-medium text-green-600">
+                        -{formatIDR(promoDiscount)}
+                      </span>
+                    </div>
                   )}
+                  {promoApplied?.freeDelivery && orderType === "delivery" && rawDeliveryFee > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-green-600 flex items-center gap-1">
+                        <Truck className="w-3 h-3" />
+                        Free Delivery
+                      </span>
+                      <span className="tabular-nums font-medium text-green-600">
+                        -{formatIDR(rawDeliveryFee)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-sm text-gray-500">
+                    <span>Tax ({taxRate}% PPN)</span>
+                    <span className="tabular-nums">{formatIDR(tax)}</span>
+                  </div>
+                  {orderType === "delivery" && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Delivery Fee</span>
+                      {deliveryFeeResult?.available ? (
+                        <span className={`tabular-nums font-medium ${promoApplied?.freeDelivery ? "line-through text-gray-400" : ""}`} style={promoApplied?.freeDelivery ? {} : { color: "#D91A60" }}>
+                          {promoApplied?.freeDelivery ? formatIDR(rawDeliveryFee) : formatIDR(deliveryFee)}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 italic text-xs">
+                          {deliveryFeeResult && !deliveryFeeResult.available
+                            ? "Not available"
+                            : "Detect location first"}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex justify-between text-base font-bold pt-2 border-t border-amber-200/60">
+                    <span className="text-[#1E1B4B]">{orderType === "delivery" && !deliveryFeeResult?.available ? "Estimated Total" : "Total"}</span>
+                    <span className="tabular-nums" style={{ color: "#D91A60" }}>
+                      {formatIDR(estimatedTotal)}
+                    </span>
+                  </div>
                 </div>
-              )}
-              <div className="flex justify-between text-base font-bold pt-1 border-t border-gray-100">
-                <span>{orderType === "delivery" && !deliveryFeeResult?.available ? "Estimated Total" : "Total"}</span>
-                <span className="tabular-nums" style={{ color: "#D91A60" }}>
-                  {formatIDR(estimatedTotal)}
-                </span>
               </div>
             </div>
           </div>
-        </div>
+        )}
       </main>
 
       {/* Fixed Bottom CTA */}
-      <div className="sticky bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 z-40">
+      <div className="sticky bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-200 p-4 z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
         <div className="max-w-md mx-auto">
-          {orderType === "delivery" && deliveryFeeResult && !deliveryFeeResult.available ? (
+          {/* Mini cart summary on step 1 */}
+          {orderStep === 1 && (
+            <div className="flex items-center justify-between mb-2.5 px-1">
+              <span className="text-xs text-gray-500">{cartItems.reduce((sum, i) => sum + i.quantity, 0)} items</span>
+              <span className="text-sm font-bold" style={{ color: "#D91A60" }}>{formatIDR(subtotal)}</span>
+            </div>
+          )}
+          {orderStep === 1 ? (
+            <Button
+              onClick={() => {
+                // Validate step 1 before proceeding
+                if (orderType === "delivery") {
+                  const step1Errors: { address?: string; unitNumber?: string } = {};
+                  if (!address.trim() && !selectedArea) {
+                    step1Errors.address = "Please select a delivery area or use GPS";
+                  }
+                  if (!unitNumber.trim()) {
+                    step1Errors.unitNumber = "Room / Unit / Floor number is required";
+                  }
+                  if (deliveryFeeResult && !deliveryFeeResult.available) {
+                    step1Errors.address = "Delivery is not available to this location";
+                  }
+                  if (Object.keys(step1Errors).length > 0) {
+                    setErrors(step1Errors);
+                    toast.error("Please fill in all delivery details");
+                    // Scroll to the first error field
+                    const firstErrorKey = Object.keys(step1Errors)[0];
+                    const errorEl = document.getElementById(`field-${firstErrorKey}`);
+                    if (errorEl) {
+                      errorEl.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }
+                    return;
+                  }
+                }
+                setErrors({});
+                setOrderStep(2);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+              className="w-full h-12 text-base font-bold text-white rounded-full flex items-center justify-center gap-2 shadow-lg hover:shadow-xl active:scale-[0.98] transition-all"
+              style={{ background: "linear-gradient(135deg, #D91A60 0%, #FF4081 100%)" }}
+            >
+              Continue
+              <ChevronRight className="w-5 h-5" />
+            </Button>
+          ) : orderType === "delivery" && deliveryFeeResult && !deliveryFeeResult.available ? (
             <Button
               disabled
-              className="w-full h-12 text-base font-semibold rounded-xl flex items-center justify-center gap-2 bg-gray-300 text-gray-500 cursor-not-allowed"
+              className="w-full h-12 text-base font-semibold rounded-full flex items-center justify-center gap-2 bg-gray-300 text-gray-500 cursor-not-allowed"
             >
               <AlertCircle className="w-5 h-5" />
               Delivery not available to this location
@@ -1819,8 +2090,8 @@ export default function Order() {
           ) : (
             <Button
               onClick={handleProceed}
-              className="w-full h-12 text-base font-semibold text-white rounded-xl flex items-center justify-center gap-2"
-              style={{ backgroundColor: "#D91A60" }}
+              className="w-full h-12 text-base font-bold text-white rounded-full flex items-center justify-center gap-2 shadow-lg hover:shadow-xl active:scale-[0.98] transition-all"
+              style={{ background: "linear-gradient(135deg, #D91A60 0%, #FF4081 100%)" }}
             >
               {paymentMethod === "pay-now" ? "Proceed to Payment" : paymentMethod === "pay-later" ? "Confirm & Place Order" : "Continue"}
               <ChevronRight className="w-5 h-5" />

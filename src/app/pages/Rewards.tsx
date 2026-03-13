@@ -6,8 +6,7 @@ import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { Gift, ChevronLeft, Award, Ticket, Car, UtensilsCrossed, RefreshCw, Percent, Truck, Tag, Clock, CheckCircle, Crown, Copy } from "lucide-react";
 import { toast } from "sonner";
 import logoImage from "../lib/logo";
-import { WHATSAPP_NUMBER, WHATSAPP_DISPLAY } from "../lib/whatsapp";
-import { MessageCircle } from "lucide-react";
+import { getWhatsAppNumber, getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
 import { formatIDR } from "../lib/currency";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -926,12 +925,12 @@ export default function Rewards() {
       <div className="sticky bottom-0 left-0 right-0 z-50">
         <div className="max-w-md mx-auto">
           <button
-            onClick={() => window.open(`https://wa.me/${WHATSAPP_NUMBER}`, "_blank")}
+            onClick={() => window.open(`https://wa.me/${getWhatsAppNumber()}`, "_blank")}
             className="w-full py-4 flex items-center justify-center gap-3 font-bold text-lg text-white"
             style={{ backgroundColor: "#D91A60" }}
           >
             <MessageCircle className="w-6 h-6" />
-            {WHATSAPP_DISPLAY}
+            {getWhatsAppDisplay()}
           </button>
         </div>
       </div>

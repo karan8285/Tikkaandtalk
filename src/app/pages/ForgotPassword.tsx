@@ -2,7 +2,7 @@ import { useNavigate } from "react-router";
 import { MessageCircle, Lock } from "lucide-react";
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
-import { WHATSAPP_DISPLAY, getWhatsAppLink } from "../lib/whatsapp";
+import { getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
 
 // Forgot PIN - WhatsApp Contact Page
 export default function ForgotPassword() {
@@ -32,7 +32,7 @@ export default function ForgotPassword() {
                 <strong>Contact Support:</strong>
               </p>
               <p className="text-sm text-muted-foreground">
-                WhatsApp: {WHATSAPP_DISPLAY}
+                WhatsApp: {getWhatsAppDisplay()}
               </p>
             </div>
 

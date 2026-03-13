@@ -8,7 +8,7 @@ import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import logoImage from "../lib/logo";
 import { getShortOrderId } from "../lib/orderUtils";
-import { WHATSAPP_NUMBER } from "../lib/whatsapp";
+import { getWhatsAppNumber, getWhatsAppDisplay } from "../lib/whatsapp";
 import { loadSnapJs, openSnapPayment } from "../lib/midtrans";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -59,6 +59,7 @@ interface Order {
   promoCode?: string;
   promoDiscount?: number;
   promoVoucherTitle?: string;
+  taxRate?: number;
 }
 
 const statusConfig: Record<string, { icon: string; color: string; description: string }> = {
@@ -602,7 +603,7 @@ export default function OrderTracking() {
               </div>
             )}
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Tax (PPN 10%)</span>
+              <span className="text-muted-foreground">Tax (PPN{order.taxRate ? ` ${order.taxRate}%` : ''})</span>
               <span>Rp {(order.tax || 0).toLocaleString()}</span>
             </div>
             {order.deliveryMethod === 'delivery' && (

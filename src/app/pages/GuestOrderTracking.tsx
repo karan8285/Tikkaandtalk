@@ -5,7 +5,7 @@ import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
 import { GuestAccountCreationDialog } from "../components/GuestAccountCreationDialog";
 import { formatIDR } from "../lib/currency";
-import { WHATSAPP_NUMBER, WHATSAPP_DISPLAY, getWhatsAppLink } from "../lib/whatsapp";
+import { getWhatsAppNumber, getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
 import { toast } from "sonner";
 import {
   CheckCircle2,
@@ -293,7 +293,7 @@ export default function GuestOrderTracking() {
               <Button onClick={() => navigate("/login")} className="w-full bg-primary hover:bg-primary/90">
                 Log In to Track Orders
               </Button>
-              <Button variant="outline" onClick={() => window.open(`https://wa.me/${WHATSAPP_NUMBER}`, "_blank")} className="w-full">
+              <Button variant="outline" onClick={() => window.open(`https://wa.me/${getWhatsAppNumber()}`, "_blank")} className="w-full">
                 Contact via WhatsApp
               </Button>
               <Button variant="ghost" onClick={() => navigate("/")} className="w-full">
@@ -399,7 +399,7 @@ export default function GuestOrderTracking() {
       `[Your question here]`;
     return encodeURIComponent(message);
   };
-  const whatsappLink = `https://wa.me/${WHATSAPP_NUMBER}?text=${generateWhatsAppMessage()}`;
+  const whatsappLink = `https://wa.me/${getWhatsAppNumber()}?text=${generateWhatsAppMessage()}`;
 
   const contextualAction = getContextualAction();
 
@@ -740,7 +740,7 @@ export default function GuestOrderTracking() {
                   </div>
                 )}
                 <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Tax (PPN 10%)</span>
+                  <span className="text-muted-foreground">Tax (PPN{order.taxRate ? ` ${order.taxRate}%` : ''})</span>
                   <span>{formatIDR(order.tax)}</span>
                 </div>
                 {isDelivery && (
@@ -847,12 +847,12 @@ export default function GuestOrderTracking() {
         <p className="text-center text-xs text-muted-foreground max-w-md mx-auto">
           Need help? WhatsApp us at{" "}
           <a
-            href={`https://wa.me/${WHATSAPP_NUMBER}`}
+            href={`https://wa.me/${getWhatsAppNumber()}`}
             className="text-primary font-semibold hover:underline"
             target="_blank"
             rel="noopener noreferrer"
           >
-            {WHATSAPP_DISPLAY}
+            {getWhatsAppDisplay()}
           </a>
         </p>
       </div>

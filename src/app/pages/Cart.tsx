@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
@@ -6,6 +6,7 @@ import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
 import { ShoppingCart, Plus, Minus, Trash2 } from "lucide-react";
 import { formatIDR } from "../lib/currency";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 export default function Cart() {
   const navigate = useNavigate();
@@ -33,8 +34,28 @@ export default function Cart() {
     }
   };
 
+  const [taxRate, setTaxRate] = useState<number>(11);
+
+  useEffect(() => {
+    const fetchTaxRate = async () => {
+      try {
+        const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+        const res = await fetch(`${API_BASE}/restaurant-status`, {
+          headers: { Authorization: `Bearer ${publicAnonKey}` },
+        });
+        const data = await res.json();
+        if (data.taxRate !== undefined) {
+          setTaxRate(data.taxRate);
+        }
+      } catch (error) {
+        console.error("Error fetching tax rate:", error);
+      }
+    };
+    fetchTaxRate();
+  }, []);
+
   const deliveryFee = 0; // Will be calculated based on location
-  const tax = totalPrice * 0.10; // 10% PPN
+  const tax = totalPrice * (taxRate / 100);
   const finalTotal = totalPrice + deliveryFee + tax;
 
   return (
@@ -146,7 +167,7 @@ export default function Cart() {
                 </div>
                 <p className="text-[10px] text-amber-600 -mt-1">Delivery fee (if applicable) will be set by the restaurant</p>
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Tax (PPN 10%)</span>
+                  <span className="text-muted-foreground">Tax (PPN {taxRate}%)</span>
                   <span className="font-medium">
                     {formatIDR(tax)}
                   </span>

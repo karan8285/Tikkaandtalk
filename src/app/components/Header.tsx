@@ -9,9 +9,10 @@ interface HeaderProps {
   title?: string;
   showCart?: boolean;
   rightContent?: React.ReactNode;
+  onBack?: () => void;
 }
 
-export const Header = React.memo(function Header({ showBack = false, title, showCart = true, rightContent }: HeaderProps) {
+export const Header = React.memo(function Header({ showBack = false, title, showCart = true, rightContent, onBack }: HeaderProps) {
   const navigate = useNavigate();
   const { totalItems } = useCart();
 
@@ -21,7 +22,9 @@ export const Header = React.memo(function Header({ showBack = false, title, show
         {showBack && (
           <button
             onClick={() => {
-              if (window.history.state?.idx > 0) {
+              if (onBack) {
+                onBack();
+              } else if (window.history.state?.idx > 0) {
                 navigate(-1);
               } else {
                 navigate("/", { replace: true });

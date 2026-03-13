@@ -24,7 +24,7 @@ export interface JakartaArea {
 
 // Default delivery zones config
 export const DEFAULT_DELIVERY_CONFIG: DeliveryZonesConfig = {
-  restaurantLocation: { lat: -6.2088, lng: 106.8456 }, // Central Jakarta default
+  restaurantLocation: { lat: -6.2088, lng: 106.8456 }, // Default fallback — admin should configure via Delivery Zones in Restaurant Settings
   maxDistance: 15,
   zones: [
     { id: "1", name: "Nearby", minKm: 0, maxKm: 3, fee: 8000 },

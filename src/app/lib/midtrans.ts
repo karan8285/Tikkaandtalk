@@ -1,32 +1,62 @@
 /**
- * Midtrans Payment Gateway Configuration
- * ========================================
- * SINGLE FILE to change when switching Sandbox -> Production
- *
- * Sandbox credentials (current):
- *   Merchant ID:  M715908735
- *   Client Key:   Mid-client-IgWwU833OVs1H8zC
- *   Server Key:   Mid-server-ucmhuhMZRuj9q0eSzRJ8pR06
- *
- * Production: Replace clientKey below and flip isProduction to true.
- * Server key is read from MIDTRANS_SERVER_KEY env var (set in Supabase secrets).
+ * Midtrans Payment Gateway — Dynamic Configuration
+ * ==================================================
+ * All configuration is managed from the Admin Portal (Payment Gateway tab).
+ * The frontend fetches clientKey + mode from the server at runtime.
+ * Server key is NEVER exposed to the frontend.
  */
 
-// ===== CHANGE THESE WHEN GOING LIVE =====
-export const MIDTRANS_CONFIG = {
-  isProduction: false,
-  clientKey: "Mid-client-IgWwU833OVs1H8zC",
-  merchantId: "M715908735",
-} as const;
+import { projectId, publicAnonKey } from "/utils/supabase/info";
 
-// ===== Derived URLs (don't edit) =====
-export const SNAP_JS_URL = MIDTRANS_CONFIG.isProduction
-  ? "https://app.midtrans.com/snap/snap.js"
-  : "https://app.sandbox.midtrans.com/snap/snap.js";
+const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
-export const SNAP_API_URL = MIDTRANS_CONFIG.isProduction
-  ? "https://app.midtrans.com/snap/v1/transactions"
-  : "https://app.sandbox.midtrans.com/snap/v1/transactions";
+// ===== Cached config (fetched once from server) =====
+interface MidtransRuntimeConfig {
+  clientKey: string;
+  isProduction: boolean;
+  enabled: boolean;
+}
+
+let cachedConfig: MidtransRuntimeConfig | null = null;
+let configFetchPromise: Promise<MidtransRuntimeConfig> | null = null;
+
+/**
+ * Fetch Midtrans config from the server (cached after first call).
+ * Config is managed by admin via the Payment Gateway settings tab.
+ */
+export async function getMidtransConfig(): Promise<MidtransRuntimeConfig> {
+  if (cachedConfig) return cachedConfig;
+  if (configFetchPromise) return configFetchPromise;
+
+  configFetchPromise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/midtrans-config`, {
+        headers: { Authorization: `Bearer ${publicAnonKey}` },
+      });
+      if (!res.ok) throw new Error(`Config fetch failed: ${res.status}`);
+      const data = await res.json();
+      cachedConfig = {
+        clientKey: data.clientKey || "",
+        isProduction: data.isProduction ?? false,
+        enabled: data.enabled ?? true,
+      };
+      return cachedConfig;
+    } catch (error) {
+      configFetchPromise = null;
+      console.error("Failed to fetch Midtrans config:", error);
+      // Return a disabled config if server is unreachable
+      return { clientKey: "", isProduction: false, enabled: false };
+    }
+  })();
+
+  return configFetchPromise;
+}
+
+/** Clear cached config (call after admin saves new settings) */
+export function clearMidtransConfigCache() {
+  cachedConfig = null;
+  configFetchPromise = null;
+}
 
 // ===== Snap.js Loader =====
 let snapLoaded = false;
@@ -35,15 +65,30 @@ let snapLoadingPromise: Promise<void> | null = null;
 /**
  * Dynamically load the Midtrans Snap.js script.
  * Safe to call multiple times — only loads once.
+ * Fetches config from server to determine sandbox vs production URL.
  */
-export function loadSnapJs(): Promise<void> {
+export async function loadSnapJs(): Promise<void> {
   if (snapLoaded && (window as any).snap) {
-    return Promise.resolve();
+    return;
   }
 
   if (snapLoadingPromise) {
     return snapLoadingPromise;
   }
+
+  const config = await getMidtransConfig();
+
+  if (!config.enabled) {
+    throw new Error("Online payments are currently disabled by the restaurant.");
+  }
+
+  if (!config.clientKey) {
+    throw new Error("Payment gateway is not configured. Please contact the restaurant.");
+  }
+
+  const snapJsUrl = config.isProduction
+    ? "https://app.midtrans.com/snap/snap.js"
+    : "https://app.sandbox.midtrans.com/snap/snap.js";
 
   snapLoadingPromise = new Promise((resolve, reject) => {
     // Remove any existing snap script
@@ -52,8 +97,8 @@ export function loadSnapJs(): Promise<void> {
 
     const script = document.createElement("script");
     script.id = "midtrans-snap-js";
-    script.src = SNAP_JS_URL;
-    script.setAttribute("data-client-key", MIDTRANS_CONFIG.clientKey);
+    script.src = snapJsUrl;
+    script.setAttribute("data-client-key", config.clientKey);
     script.async = true;
 
     script.onload = () => {
