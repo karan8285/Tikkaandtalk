@@ -1,3 +1,5 @@
+import { useNavigate } from "react-router";
+import { Lock, MessageCircle } from "lucide-react";
 import { getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
 import { whatsAppPinResetMessage } from "../lib/config";
 import { Header } from "../components/Header";
@@ -5,6 +7,7 @@ import { Button } from "../components/ui/button";
 
 // Forgot PIN - WhatsApp Contact Page
 export default function ForgotPassword() {
+  const navigate = useNavigate();
   const handleWhatsAppClick = () => {
     window.open(getWhatsAppLink(whatsAppPinResetMessage()), "_blank");
   };

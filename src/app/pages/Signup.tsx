@@ -1,3 +1,11 @@
+import { useState, useEffect } from "react";
+import { useNavigate, useLocation, Link } from "react-router";
+import { useAuth } from "../lib/auth";
+import { ArrowLeft, AlertCircle } from "lucide-react";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { PinInput } from "../components/PinInput";
 import { getRestaurantLogo } from "../lib/useRestaurantLogo";
 import { CountryCodeSelect } from "../components/CountryCodeSelect";
 import { DEFAULT_COUNTRY_CODE, buildFullPhone } from "../lib/countryCodes";
