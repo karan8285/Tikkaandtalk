@@ -8,6 +8,7 @@ import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
 import { useRestaurantLogo, cacheRestaurantLogo, notifyLogoUpdate } from "../lib/useRestaurantLogo";
+import { cacheRestaurantMascot, notifyMascotUpdate } from "../lib/useRestaurantMascot";
 import { Badge } from "../components/ui/badge";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Mascot } from "../components/Mascot";
@@ -33,6 +34,7 @@ interface RestaurantStatus {
   whatsappDisplay?: string;
   restaurantAddress?: string;
   restaurantLogoUrl?: string;
+  mascotImageUrl?: string;
 }
 
 export default function Home() {
@@ -74,6 +76,9 @@ export default function Home() {
           // Cache logo URL in localStorage for instant display on next visit
           cacheRestaurantLogo(status.restaurantLogoUrl || null);
           notifyLogoUpdate();
+          // Cache mascot image URL
+          cacheRestaurantMascot(status.mascotImageUrl || null);
+          notifyMascotUpdate();
         } else {
           // Silently fail - restaurant is accepting orders by default
           setRestaurantStatus({ isOpen: true, acceptingOrders: true });

@@ -3,8 +3,8 @@ import { APP_CONFIG } from "../lib/config";
 import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
 import { useMascot } from "../lib/mascot-context";
+import { useRestaurantMascot } from "../lib/useRestaurantMascot";
 import { X } from "lucide-react";
-import defaultMascotImage from "figma:asset/368d19b64b9fd96f08e72da8cb3e1e0183c602ac.png";
 
 // ─── Page types the mascot understands ──────────────────────────
 
@@ -247,6 +247,7 @@ export function Mascot({
   const { user } = useAuth();
   const { totalItems } = useCart();
   const { isMascotVisible, hideMascot } = useMascot();
+  const dynamicMascotUrl = useRestaurantMascot();
   const [isVisible, setIsVisible] = useState(false);
   const [isDismissing, setIsDismissing] = useState(false);
 
@@ -285,8 +286,42 @@ export function Mascot({
   if (!isMascotVisible) return null;
 
   const brandColor = APP_CONFIG.brand.primaryColor;
-  const mascotSrc = APP_CONFIG.mascot.customImageUrl || defaultMascotImage;
+  // Priority: dynamic URL from admin settings > static config > emoji fallback
+  const mascotSrc = dynamicMascotUrl || APP_CONFIG.mascot.customImageUrl || "";
+  const hasMascotImage = !!mascotSrc;
   const animatingOut = isDismissing;
+
+  // Render mascot image or emoji fallback
+  const renderMascotImage = (imgSize: number) => {
+    if (!hasMascotImage) {
+      return (
+        <div
+          className="flex items-center justify-center rounded-full"
+          style={{
+            width: `${imgSize}px`,
+            height: `${imgSize}px`,
+            fontSize: `${imgSize * 0.6}px`,
+            background: `linear-gradient(135deg, ${brandColor}15, ${brandColor}30)`,
+            border: `2px solid ${brandColor}30`,
+          }}
+        >
+          👨‍🍳
+        </div>
+      );
+    }
+    return (
+      <img
+        src={mascotSrc}
+        alt={`${APP_CONFIG.restaurant.name} mascot`}
+        className="object-contain"
+        style={{
+          width: `${imgSize}px`,
+          height: `${imgSize}px`,
+          filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.12))",
+        }}
+      />
+    );
+  };
 
   // ── Floating variant (bottom-right bubble) ──
   if (variant === "floating") {
@@ -343,16 +378,7 @@ export function Mascot({
 
           {/* Mascot image */}
           <div className="flex justify-end mascot-float">
-            <img
-              src={mascotSrc}
-              alt={`${APP_CONFIG.restaurant.name} mascot`}
-              className="object-contain"
-              style={{
-                width: `${size}px`,
-                height: `${size}px`,
-                filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.12))",
-              }}
-            />
+            {renderMascotImage(size)}
           </div>
         </div>
 
@@ -422,14 +448,7 @@ export function Mascot({
 
         {/* Mascot Character */}
         <div className="flex-shrink-0 mascot-float" style={{ width: `${size}px`, height: `${size}px` }}>
-          <img
-            src={mascotSrc}
-            alt={`${APP_CONFIG.restaurant.name} mascot`}
-            className="w-full h-full object-contain"
-            style={{
-              filter: "drop-shadow(0 2px 8px rgba(0,0,0,0.12))",
-            }}
-          />
+          {renderMascotImage(size)}
         </div>
       </div>
 

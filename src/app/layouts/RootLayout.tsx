@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { Outlet, useLocation } from "react-router";
 import { AuthProvider } from "../lib/auth";
 import { CartProvider } from "../lib/cart";
@@ -10,6 +10,13 @@ import { GlobalMascot } from "../components/GlobalMascot";
 
 function PresenceTracker() {
   usePresence();
+  return null;
+}
+
+function DocumentTitle() {
+  useEffect(() => {
+    document.title = `${APP_CONFIG.restaurant.name} - ${APP_CONFIG.restaurant.tagline}`;
+  }, []);
   return null;
 }
 
@@ -28,82 +35,46 @@ function AdaptiveShell({ children }: { children: ReactNode }) {
   // On mobile or full-width routes, render full-screen
   if (isMobile || isFullWidth) {
     return (
-      <>
+      <div className="min-h-screen bg-background">
         {children}
-        <GlobalMascot variant="mobile" />
-      </>
+      </div>
     );
   }
 
-  // On tablet/desktop, show a phone-like frame centered on screen
+  // On desktop, wrap in a phone-sized frame for the mobile app experience
   return (
-    <div
-      className="min-h-screen flex items-start justify-center py-6 sm:py-8 lg:py-10"
-      style={{
-        background: APP_CONFIG.brand.desktopBg,
-      }}
-    >
-      {/* Branding text - desktop only */}
-      <div className="hidden lg:flex fixed left-12 top-1/2 -translate-y-1/2 flex-col items-start gap-3 opacity-60 pointer-events-none select-none">
-        <p className="text-2xl font-bold" style={{ color: APP_CONFIG.brand.primaryColor }}>
-          {APP_CONFIG.restaurant.name}
-        </p>
-        <p className="text-sm text-gray-500 max-w-[200px] leading-relaxed">
-          {APP_CONFIG.restaurant.tagline}
-        </p>
-        <div className="w-12 h-0.5 rounded-full mt-1" style={{ backgroundColor: APP_CONFIG.brand.primaryColor }} />
-        <p className="text-xs text-gray-400 mt-2">
-          Order online for pickup or delivery
-        </p>
-      </div>
-
-      {/* Phone frame */}
+    <div className="min-h-screen bg-gray-100 flex items-start justify-center py-8">
       <div
-        className="relative w-full bg-white overflow-hidden flex flex-col"
+        className="relative bg-background rounded-[2.5rem] shadow-2xl border-[8px] border-gray-800 overflow-hidden"
         style={{
-          maxWidth: "430px",
-          minHeight: "min(100vh - 3rem, 860px)",
-          maxHeight: "calc(100vh - 3rem)",
-          borderRadius: "2rem",
-          boxShadow:
-            "0 25px 50px -12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05)",
+          width: "390px",
+          minHeight: "844px",
+          maxHeight: "90vh",
         }}
       >
-        {/* Notch / status bar decoration */}
-        <div className="flex justify-center pt-2 pb-0 bg-transparent pointer-events-none">
-          <div
-            className="w-28 h-1 rounded-full"
-            style={{ backgroundColor: "#E0E0E0" }}
-          />
-        </div>
-
-        {/* Scrollable app content */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden phone-scroll" style={{ scrollbarWidth: "thin" }}>
+        {/* Notch */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[120px] h-[28px] bg-gray-800 rounded-b-2xl z-50" />
+        <div className="overflow-y-auto h-full" style={{ maxHeight: "90vh" }}>
           {children}
         </div>
-
-        {/* Floating mascot inside phone frame */}
-        <GlobalMascot variant="desktop" />
       </div>
     </div>
   );
 }
 
-function RootLayout() {
+export default function RootLayout() {
   return (
     <AuthProvider>
       <CartProvider>
         <MascotProvider>
+          <DocumentTitle />
           <PresenceTracker />
           <AdaptiveShell>
             <Outlet />
+            <GlobalMascot />
           </AdaptiveShell>
         </MascotProvider>
       </CartProvider>
     </AuthProvider>
   );
 }
-
-RootLayout.displayName = 'RootLayout';
-
-export default RootLayout;

@@ -1,4 +1,4 @@
-import { MessageCircle, Store, Info, MapPin, Image, Upload, Trash2, Loader2 } from "lucide-react";
+import { MessageCircle, Store, Info, MapPin, Image, Upload, Trash2, Loader2, SmilePlus } from "lucide-react";
 import { APP_CONFIG } from "../lib/config";
 import { useState, useEffect } from "react";
 import { Card } from "./ui/card";
@@ -22,6 +22,7 @@ interface RestaurantSettings {
   restaurantTagline: string;
   restaurantAddress: string;
   restaurantLogoUrl: string;
+  mascotImageUrl: string;
 }
 
 export function RestaurantSettingsAdmin({ customToken }: { customToken: string | null }) {
@@ -33,6 +34,12 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
   const [logoVersion, setLogoVersion] = useState(0);
   const [logoLoadError, setLogoLoadError] = useState(false);
   const [localPreview, setLocalPreview] = useState<string | null>(null);
+  // Mascot image upload state
+  const [mascotUploading, setMascotUploading] = useState(false);
+  const [mascotDragOver, setMascotDragOver] = useState(false);
+  const [mascotVersion, setMascotVersion] = useState(0);
+  const [mascotLoadError, setMascotLoadError] = useState(false);
+  const [mascotLocalPreview, setMascotLocalPreview] = useState<string | null>(null);
 
   useEffect(() => {
     fetchSettings();
@@ -67,6 +74,7 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
         restaurantTagline: data.restaurantTagline ?? "",
         restaurantAddress: data.restaurantAddress ?? "",
         restaurantLogoUrl: data.restaurantLogoUrl ?? "",
+        mascotImageUrl: data.mascotImageUrl ?? "",
       });
     } catch (error: any) {
       console.error("Error fetching settings:", error);
@@ -202,6 +210,115 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
     const file = e.target.files?.[0];
     if (file) handleLogoUpload(file);
     e.target.value = ""; // Reset so same file can be re-selected
+  };
+
+  // ─── Mascot Image Upload/Delete ───────────────────────────────
+  const handleMascotUpload = async (file: File) => {
+    if (!customToken) return;
+    
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp", "image/gif"];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error("Invalid file type. Please upload PNG, JPG, SVG, WebP, or GIF.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("File too large. Maximum size is 5MB.");
+      return;
+    }
+
+    setMascotUploading(true);
+    try {
+      const objectUrl = URL.createObjectURL(file);
+      setMascotLocalPreview(objectUrl);
+      setMascotLoadError(false);
+
+      const formData = new FormData();
+      formData.append("mascot", file);
+
+      const response = await fetch(`${API_BASE}/admin/upload-mascot`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": customToken,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: "Upload failed" }));
+        throw new Error(err.error || "Upload failed");
+      }
+
+      const data = await response.json();
+      console.log("Mascot upload response:", data);
+      if (settings && data.mascotUrl) {
+        setSettings({ ...settings, mascotImageUrl: data.mascotUrl });
+      }
+      setMascotLoadError(false);
+      setMascotVersion((v) => v + 1);
+      setMascotLocalPreview(null);
+      // Update localStorage cache so Mascot component picks it up immediately
+      try {
+        localStorage.setItem("tikka_mascot_url", data.mascotUrl);
+        window.dispatchEvent(new Event("restaurant-mascot-updated"));
+      } catch {}
+      toast.success("Mascot image uploaded successfully!");
+    } catch (error: any) {
+      console.error("Mascot upload error:", error);
+      toast.error(`Failed to upload mascot: ${error.message}`);
+      setMascotLocalPreview(null);
+    } finally {
+      setMascotUploading(false);
+    }
+  };
+
+  const handleMascotDelete = async () => {
+    if (!customToken) return;
+
+    setMascotUploading(true);
+    try {
+      const response = await fetch(`${API_BASE}/admin/delete-mascot`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": customToken,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete mascot");
+      }
+
+      if (settings) {
+        setSettings({ ...settings, mascotImageUrl: "" });
+      }
+      setMascotLocalPreview(null);
+      setMascotLoadError(false);
+      // Clear localStorage cache
+      try {
+        localStorage.removeItem("tikka_mascot_url");
+        window.dispatchEvent(new Event("restaurant-mascot-updated"));
+      } catch {}
+      toast.success("Mascot image removed. The default emoji will be used.");
+    } catch (error: any) {
+      console.error("Mascot delete error:", error);
+      toast.error(`Failed to delete mascot: ${error.message}`);
+    } finally {
+      setMascotUploading(false);
+    }
+  };
+
+  const handleMascotDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setMascotDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleMascotUpload(file);
+  };
+
+  const handleMascotFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleMascotUpload(file);
+    e.target.value = "";
   };
 
   if (loading) {
@@ -415,6 +532,134 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
               <Info className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
               <p className="text-xs text-blue-700">
                 No logo uploaded yet. The app will use the default built-in logo until you upload one.
+              </p>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* Mascot Image */}
+      <Card className="p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <SmilePlus className="w-5 h-5 text-amber-600" />
+          <h3 className="text-lg font-semibold">Mascot Image</h3>
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          Upload a custom mascot/chef character image. This appears as the friendly helper across all pages. Use a transparent PNG for best results.
+        </p>
+        <div className="space-y-4">
+          {/* Current mascot preview */}
+          {(settings.mascotImageUrl || mascotLocalPreview) && (
+            <div className="p-4 rounded-lg bg-amber-50/50 border border-amber-200">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs text-gray-600 font-medium">
+                  {mascotLocalPreview && mascotUploading ? "Uploading..." : "Current Mascot:"}
+                </p>
+                {!mascotUploading && settings.mascotImageUrl && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-red-500 hover:text-red-700 hover:bg-red-50 h-7 px-2"
+                    onClick={handleMascotDelete}
+                    disabled={mascotUploading}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-1" />
+                    Remove
+                  </Button>
+                )}
+              </div>
+              <div className="flex flex-col items-center justify-center p-3 rounded-md" style={{ backgroundColor: "#FFF8F0" }}>
+                {mascotLocalPreview ? (
+                  <img
+                    src={mascotLocalPreview}
+                    alt="Mascot preview"
+                    className="max-w-[150px] max-h-[150px] object-contain"
+                  />
+                ) : (
+                  <>
+                    <img
+                      src={`${settings.mascotImageUrl}${settings.mascotImageUrl.includes("?") ? "&" : "?"}v=${mascotVersion}`}
+                      alt="Mascot preview"
+                      className="max-w-[150px] max-h-[150px] object-contain"
+                      onLoad={() => setMascotLoadError(false)}
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                        setMascotLoadError(true);
+                        console.error("Mascot preview failed to load:", settings.mascotImageUrl);
+                      }}
+                    />
+                    {mascotLoadError && (
+                      <div className="flex flex-col items-center gap-1 py-2">
+                        <Info className="w-4 h-4 text-red-400" />
+                        <p className="text-xs text-red-500 text-center">
+                          Could not load mascot preview. Try uploading again.
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
+                {mascotUploading && mascotLocalPreview && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <Loader2 className="animate-spin h-3.5 w-3.5 text-amber-500" />
+                    <p className="text-xs text-amber-600">Saving to server...</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Upload area */}
+          <div
+            className={`relative flex flex-col items-center justify-center w-full border-2 border-dashed rounded-lg transition-colors cursor-pointer ${
+              mascotUploading ? "pointer-events-none opacity-60" : ""
+            } ${
+              mascotDragOver
+                ? "border-amber-500 bg-amber-50"
+                : "border-gray-300 hover:border-gray-400 bg-gray-50/50"
+            } ${settings.mascotImageUrl ? "py-4" : "py-8"}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setMascotDragOver(true);
+            }}
+            onDragLeave={() => setMascotDragOver(false)}
+            onDrop={handleMascotDrop}
+            onClick={() => !mascotUploading && document.getElementById("mascot-upload")?.click()}
+          >
+            {mascotUploading ? (
+              <div className="flex flex-col items-center gap-2">
+                <Loader2 className="animate-spin h-8 w-8 text-amber-500" />
+                <p className="text-sm text-amber-600 font-medium">Uploading...</p>
+              </div>
+            ) : (
+              <>
+                <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center mb-3">
+                  <Upload className="h-5 w-5 text-amber-600" />
+                </div>
+                <p className="text-sm font-medium text-gray-700">
+                  {settings.mascotImageUrl ? "Replace mascot image" : "Upload mascot image"}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Drag & drop or click to browse
+                </p>
+                <p className="text-[10px] text-gray-400 mt-2">
+                  PNG, JPG, SVG, WebP, GIF — max 5MB. Transparent PNG recommended.
+                </p>
+              </>
+            )}
+            <input
+              type="file"
+              id="mascot-upload"
+              className="hidden"
+              accept="image/png,image/jpeg,image/jpg,image/svg+xml,image/webp,image/gif"
+              onChange={handleMascotFileSelect}
+            />
+          </div>
+
+          {!settings.mascotImageUrl && (
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200">
+              <Info className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-700">
+                No mascot image uploaded yet. The app will show a chef emoji (👨‍🍳) as the default mascot until you upload a custom image.
               </p>
             </div>
           )}

@@ -449,6 +449,7 @@ initializeDefaultData();
 // ==================== LOGO STORAGE BUCKET ====================
 const LOGO_BUCKET = "make-e5e192fb-logos";
 const LOGO_FILE_PATH = "restaurant-logo";
+const MASCOT_FILE_PATH = "mascot-image";
 let logoBucketReady = false;
 
 async function ensureLogoBucket() {
@@ -5587,6 +5588,7 @@ app.get("/make-server-e5e192fb/admin/settings", async (c) => {
     if (settings.restaurantTagline === undefined) settings.restaurantTagline = "";
     if (settings.restaurantAddress === undefined) settings.restaurantAddress = "";
     if (settings.restaurantLogoUrl === undefined) settings.restaurantLogoUrl = "";
+    if (settings.mascotImageUrl === undefined) settings.mascotImageUrl = "";
 
     return c.json(settings);
   } catch (error) {
@@ -5787,6 +5789,163 @@ app.delete("/make-server-e5e192fb/admin/delete-logo", async (c) => {
   }
 });
 
+// ==================== MASCOT IMAGE UPLOAD & DELETE ====================
+
+// Upload mascot image (admin only) - accepts multipart form data
+app.post("/make-server-e5e192fb/admin/upload-mascot", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required - no token provided" }, 401);
+    }
+
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    const formData = await c.req.formData();
+    const file = formData.get("mascot") as File | null;
+    if (!file) {
+      return c.json({ error: "No file provided. Send a 'mascot' field in multipart form data." }, 400);
+    }
+
+    // Validate file type
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp", "image/gif"];
+    if (!allowedTypes.includes(file.type)) {
+      return c.json({ error: `Invalid file type: ${file.type}. Allowed: PNG, JPG, SVG, WebP, GIF.` }, 400);
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      return c.json({ error: "File too large. Maximum size is 5MB." }, 400);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    // Ensure bucket exists (reuse logo bucket)
+    if (!logoBucketReady) {
+      console.log("📦 Logo bucket not ready yet, creating inline for mascot...");
+      await ensureLogoBucket();
+      if (!logoBucketReady) {
+        return c.json({ error: "Storage bucket could not be created. Please try again in a moment." }, 500);
+      }
+    }
+
+    // Determine file extension from mime type
+    const extMap: Record<string, string> = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/jpg": "jpg",
+      "image/svg+xml": "svg",
+      "image/webp": "webp",
+      "image/gif": "gif",
+    };
+    const ext = extMap[file.type] || "png";
+    const filePath = `${MASCOT_FILE_PATH}.${ext}`;
+
+    // Delete any existing mascot files first (all extensions at once)
+    const removeFiles = ["png", "jpg", "svg", "webp", "gif"].map(e => `${MASCOT_FILE_PATH}.${e}`);
+    try {
+      await supabase.storage.from(LOGO_BUCKET).remove(removeFiles);
+      console.log("🗑️ Cleaned up old mascot files");
+    } catch (cleanupErr) {
+      console.log("⚠️ Cleanup of old mascot files failed (non-critical):", cleanupErr);
+    }
+
+    // Upload the new file
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    console.log(`📤 Uploading mascot: ${filePath}, size: ${uint8.length} bytes, type: ${file.type}`);
+
+    const { data, error } = await supabase.storage.from(LOGO_BUCKET).upload(filePath, uint8, {
+      contentType: file.type,
+      upsert: true,
+    });
+
+    if (error) {
+      console.error("❌ Mascot upload to storage failed:", JSON.stringify(error));
+      return c.json({ error: `Failed to upload mascot to storage: ${error.message}` }, 500);
+    }
+
+    console.log("✅ Mascot uploaded to storage:", data.path);
+
+    // Generate a signed URL with very long expiry (10 years)
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(LOGO_BUCKET)
+      .createSignedUrl(filePath, 315360000);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("❌ Failed to create signed URL for mascot:", signedUrlError);
+      return c.json({ error: "Mascot uploaded but failed to generate access URL. Please try again." }, 500);
+    }
+
+    const mascotUrl = signedUrlData.signedUrl;
+    console.log("✅ Mascot signed URL generated:", mascotUrl.substring(0, 100) + "...");
+
+    // Store mascot metadata in KV
+    await kv.set("restaurant_mascot_meta", {
+      path: filePath,
+      contentType: file.type,
+      uploadedAt: new Date().toISOString(),
+      size: file.size,
+      signedUrl: mascotUrl,
+    });
+
+    // Also update restaurant_settings with the signed mascot URL
+    const settings = await kvGetWithRetry("restaurant_settings") || {};
+    settings.mascotImageUrl = mascotUrl;
+    await kv.set("restaurant_settings", settings);
+
+    return c.json({ success: true, mascotUrl, size: file.size });
+  } catch (error) {
+    console.error("Upload mascot error:", error);
+    return c.json({ error: `Failed to upload mascot: ${error}` }, 500);
+  }
+});
+
+// Delete mascot image (admin only)
+app.delete("/make-server-e5e192fb/admin/delete-mascot", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required" }, 401);
+    }
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    // Delete all mascot files (all extensions at once)
+    const removeFiles = ["png", "jpg", "svg", "webp", "gif"].map(e => `${MASCOT_FILE_PATH}.${e}`);
+    try {
+      await supabase.storage.from(LOGO_BUCKET).remove(removeFiles);
+    } catch (_) { /* ignore */ }
+
+    // Clear mascot metadata
+    await kv.del("restaurant_mascot_meta");
+
+    // Clear mascot URL from settings
+    const settings = await kvGetWithRetry("restaurant_settings") || {};
+    settings.mascotImageUrl = "";
+    await kv.set("restaurant_settings", settings);
+
+    console.log("✅ Mascot image deleted from storage");
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("Delete mascot error:", error);
+    return c.json({ error: `Failed to delete mascot: ${error}` }, 500);
+  }
+});
+
 // Serve logo (public fallback — redirects to signed URL)
 app.get("/make-server-e5e192fb/logo", async (c) => {
   try {
@@ -5969,12 +6128,13 @@ app.get("/make-server-e5e192fb/restaurant-status", async (c) => {
     const restaurantTagline = settings?.restaurantTagline || "";
     const restaurantAddress = settings?.restaurantAddress || "";
     const restaurantLogoUrl = settings?.restaurantLogoUrl || "";
+    const mascotImageUrl = settings?.mascotImageUrl || "";
     
     // Fetch payment gateway enabled status
     const pgConfig = await kvGetWithRetry("payment_gateway_settings");
     const onlinePaymentsEnabled = pgConfig?.enabled ?? true;
 
-    const baseInfo = { taxRate, onlinePaymentsEnabled, whatsappNumber, whatsappDisplay, restaurantName, restaurantTagline, restaurantAddress, restaurantLogoUrl };
+    const baseInfo = { taxRate, onlinePaymentsEnabled, whatsappNumber, whatsappDisplay, restaurantName, restaurantTagline, restaurantAddress, restaurantLogoUrl, mascotImageUrl };
     
     if (!settings) {
       return c.json({ isOpen: true, acceptingOrders: true, ...baseInfo });
@@ -6003,7 +6163,7 @@ app.get("/make-server-e5e192fb/restaurant-status", async (c) => {
     return c.json({ isOpen: true, acceptingOrders: true, ...baseInfo });
   } catch (error) {
     console.error("Get restaurant status error:", error);
-    return c.json({ isOpen: true, acceptingOrders: true, taxRate: 11, onlinePaymentsEnabled: true, whatsappNumber: "", whatsappDisplay: "", restaurantName: "", restaurantTagline: "", restaurantAddress: "", restaurantLogoUrl: "" });
+    return c.json({ isOpen: true, acceptingOrders: true, taxRate: 11, onlinePaymentsEnabled: true, whatsappNumber: "", whatsappDisplay: "", restaurantName: "", restaurantTagline: "", restaurantAddress: "", restaurantLogoUrl: "", mascotImageUrl: "" });
   }
 });
 
