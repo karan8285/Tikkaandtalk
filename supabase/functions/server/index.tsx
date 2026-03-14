@@ -462,10 +462,15 @@ async function ensureLogoBucket() {
     if (!bucketExists) {
       const { error } = await supabase.storage.createBucket(LOGO_BUCKET, { public: false });
       if (error) {
-        console.error(`❌ Failed to create bucket ${LOGO_BUCKET}:`, error.message);
-        return;
+        if (error.message?.includes('already exists')) {
+          console.log(`✅ Logo storage bucket already exists: ${LOGO_BUCKET}`);
+        } else {
+          console.error(`❌ Failed to create bucket ${LOGO_BUCKET}:`, error.message);
+          return;
+        }
+      } else {
+        console.log(`✅ Created storage bucket: ${LOGO_BUCKET}`);
       }
-      console.log(`✅ Created storage bucket: ${LOGO_BUCKET}`);
     } else {
       console.log(`✅ Logo storage bucket already exists: ${LOGO_BUCKET}`);
     }
@@ -1339,6 +1344,9 @@ app.post("/make-server-e5e192fb/orders", async (c) => {
 // Get User Orders (requires auth)
 app.get("/make-server-e5e192fb/orders", async (c) => {
   try {
+    // Auto-activate any scheduled orders whose time has arrived
+    await activateScheduledOrders();
+
     const userId = c.req.query('userId');
     
     if (!userId) {
@@ -1970,38 +1978,272 @@ app.get("/make-server-e5e192fb/admin/users", async (c) => {
   }
 });
 
-// Admin: Get All Orders (requires auth + admin)
+// Helper: derive short order ID on server (e.g. TNT00000102 -> TNT-102)
+function getShortOrderIdServer(orderId: string): string {
+  if (!orderId) return "";
+  const prefix = SERVER_CONFIG.orderPrefix;
+  const re = new RegExp(`^${prefix}0*(\\d+)$`, "i");
+  const match = orderId.match(re);
+  if (match) return `${prefix}-${match[1]}`;
+  return orderId;
+}
+
+// Helper: Auto-activate scheduled orders whose scheduledAt time has passed
+async function activateScheduledOrders(): Promise<number> {
+  try {
+    const allOrders = await kv.getByPrefix("order:");
+    const now = new Date();
+    let activatedCount = 0;
+
+    for (const order of allOrders) {
+      if (order && order.status === "scheduled" && order.scheduledAt) {
+        const scheduledTime = new Date(order.scheduledAt);
+        if (scheduledTime <= now) {
+          const updatedOrder = {
+            ...order,
+            status: "pending",
+            updatedAt: now.toISOString(),
+            statusHistory: [
+              ...(order.statusHistory || []),
+              {
+                status: "pending",
+                timestamp: now.toISOString(),
+                label: "Scheduled order activated"
+              }
+            ],
+            auditLog: [
+              ...(order.auditLog || []),
+              {
+                timestamp: now.toISOString(),
+                action: "SCHEDULED_ACTIVATED",
+                performedBy: "system",
+                details: `Scheduled order auto-activated (was scheduled for ${scheduledTime.toISOString()})`
+              }
+            ]
+          };
+          await kv.set(`order:${order.id}`, updatedOrder);
+          activatedCount++;
+          console.log(`⏰ Activated scheduled order ${order.orderNumber || order.id} (was scheduled for ${order.scheduledAt})`);
+        }
+      }
+    }
+
+    if (activatedCount > 0) {
+      console.log(`✅ Activated ${activatedCount} scheduled order(s)`);
+    }
+    return activatedCount;
+  } catch (error) {
+    console.log(`⚠️ Error activating scheduled orders: ${error}`);
+    return 0;
+  }
+}
+
+// Admin: Get Orders with server-side filtering, pagination & stats
 app.get("/make-server-e5e192fb/admin/orders", async (c) => {
   try {
+    // Auto-activate any scheduled orders whose time has arrived
+    await activateScheduledOrders();
+
     const accessToken = getCustomToken(c);
-    
-    console.log(`🔍 Admin orders request - Token found: ${accessToken ? 'Yes' : 'No'}`);
-    
     if (!accessToken) {
-      console.log(`❌ No access token provided`);
       return c.json({ code: 401, message: "Invalid JWT" }, 401);
     }
 
-    // Use our custom JWT verification
-    console.log(`🔍 Validating custom JWT token...`);
     const adminAuth = await verifyAdminAccess(accessToken);
-    
     if (!adminAuth) {
-      console.log(`❌ Admin verification failed`);
       return c.json({ error: "Admin access required" }, 403);
     }
 
-    // Get all orders (exclude draft orders awaiting online payment)
-    console.log(`✅ Admin user ${adminAuth.userId} authorized, fetching all orders`);
+    // Parse query params
+    const page = Math.max(1, parseInt(c.req.query("page") || "1"));
+    const limit = Math.min(100, Math.max(1, parseInt(c.req.query("limit") || "10")));
+    const statusFilter = c.req.query("status") || "all";
+    const paymentFilter = c.req.query("payment") || "all";
+    const deliveryFilter = c.req.query("delivery") || "all";
+    const dateFilter = c.req.query("date") || "all";
+    const searchQuery = (c.req.query("search") || "").toLowerCase().trim();
+    const tabFilter = c.req.query("tab") || "all"; // "active" | "closed" | "all"
+
+    console.log(`Admin orders: page=${page} limit=${limit} status=${statusFilter} payment=${paymentFilter} delivery=${deliveryFilter} date=${dateFilter} tab=${tabFilter} search="${searchQuery}"`);
+
+    // Get all orders from KV (exclude drafts)
     const allOrders = await kv.getByPrefix("order:");
     const visibleOrders = allOrders.filter((entry: any) => {
       const order = entry.value || entry;
       return order.paymentStatus !== "awaiting_payment";
     });
-    return c.json({ orders: visibleOrders });
+
+    // Sort by createdAt desc
+    visibleOrders.sort((a: any, b: any) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    // Compute stats from ALL visible orders (before filtering)
+    const today = new Date();
+    const todayStr = today.toDateString();
+    let unpaidCount = 0, unpaidTotal = 0;
+    let partialCount = 0, partialTotal = 0;
+    let paidCount = 0, paidTotal = 0;
+    let todayCount = 0, todayRevenue = 0;
+    let activeCount = 0;
+    let closedCount = 0, cancelledCount = 0;
+    let scheduledCount = 0;
+
+    for (const order of visibleOrders) {
+      const eps = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+      if (eps === 'unpaid' && order.status !== 'cancelled') {
+        unpaidCount++;
+        unpaidTotal += order.total || 0;
+      } else if (eps === 'partial' && order.status !== 'cancelled') {
+        partialCount++;
+        partialTotal += (order.total || 0) - (order.paidAmount || 0);
+      } else if (eps === 'paid') {
+        paidCount++;
+        paidTotal += order.total || 0;
+      }
+      if (new Date(order.createdAt).toDateString() === todayStr) {
+        todayCount++;
+        todayRevenue += order.total || 0;
+      }
+      if (!["delivered", "closed", "cancelled"].includes(order.status)) {
+        activeCount++;
+      }
+      if (order.status === "closed") closedCount++;
+      if (order.status === "cancelled") cancelledCount++;
+      if (order.status === "scheduled") scheduledCount++;
+    }
+
+    // Preload user map for customer name search (only if searching)
+    let userMap: Record<string, any> = {};
+    if (searchQuery) {
+      try {
+        const allUsers = await kv.getByPrefix("user:");
+        for (const u of allUsers) {
+          if (u.id) userMap[u.id] = u;
+        }
+      } catch (e) {
+        console.log(`Warning: could not load users for search: ${e}`);
+      }
+    }
+
+    // Apply filters
+    const filtered = visibleOrders.filter((order: any) => {
+      // Tab filter (top-level split between active vs closed/cancelled)
+      if (tabFilter === "active") {
+        if (["closed", "cancelled"].includes(order.status)) return false;
+      } else if (tabFilter === "closed") {
+        if (!["closed", "cancelled"].includes(order.status)) return false;
+      }
+      // Status filter
+      if (statusFilter !== "all") {
+        if (statusFilter === "active_group") {
+          if (["delivered", "closed", "cancelled"].includes(order.status)) return false;
+        } else {
+          if (order.status !== statusFilter) return false;
+        }
+      }
+      // Payment filter
+      if (paymentFilter !== "all") {
+        const eps = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+        if (paymentFilter === "paid" && eps !== 'paid') return false;
+        if (paymentFilter === "partial" && eps !== 'partial') return false;
+        if (paymentFilter === "unpaid" && (eps !== 'unpaid' || order.status === 'cancelled')) return false;
+      }
+      // Delivery filter
+      if (deliveryFilter !== "all") {
+        if (order.deliveryMethod !== deliveryFilter) return false;
+      }
+      // Date filter
+      if (dateFilter === "today") {
+        if (new Date(order.createdAt).toDateString() !== todayStr) return false;
+      }
+      // Search
+      if (searchQuery) {
+        const shortId = getShortOrderIdServer(order.orderNumber || order.id).toLowerCase();
+        const orderNum = (order.orderNumber || "").toLowerCase();
+        const itemTitle = (order.itemTitle || "").toLowerCase();
+        const phone = order.phone || "";
+        const orderId = (order.id || "").toLowerCase();
+        const itemsMatch = order.items?.some((item: any) =>
+          item.title?.toLowerCase().includes(searchQuery)
+        );
+        const customerName = userMap[order.userId]?.name?.toLowerCase() || "";
+        if (
+          !shortId.includes(searchQuery) &&
+          !orderNum.includes(searchQuery) &&
+          !itemTitle.includes(searchQuery) &&
+          !phone.includes(searchQuery) &&
+          !orderId.includes(searchQuery) &&
+          !itemsMatch &&
+          !customerName.includes(searchQuery)
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // Paginate
+    const totalFiltered = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(totalFiltered / limit));
+    const safePage = Math.min(page, totalPages);
+    const startIdx = (safePage - 1) * limit;
+    const pageOrders = filtered.slice(startIdx, startIdx + limit);
+
+    return c.json({
+      orders: pageOrders,
+      page: safePage,
+      limit,
+      totalFiltered,
+      totalPages,
+      stats: {
+        totalOrders: visibleOrders.length,
+        unpaidCount,
+        unpaidTotal,
+        partialCount,
+        partialTotal,
+        paidCount,
+        paidTotal,
+        todayCount,
+        todayRevenue,
+        activeCount,
+        closedCount,
+        cancelledCount,
+        scheduledCount,
+      },
+    });
   } catch (error) {
     console.log(`Admin get orders error: ${error}`);
     return c.json({ error: "Failed to get orders" }, 500);
+  }
+});
+
+// Admin: Lightweight order count for polling
+app.get("/make-server-e5e192fb/admin/orders/count", async (c) => {
+  try {
+    // Auto-activate any scheduled orders whose time has arrived
+    await activateScheduledOrders();
+
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ code: 401, message: "Invalid JWT" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+
+    const allOrders = await kv.getByPrefix("order:");
+    const visibleOrders = allOrders.filter((entry: any) => {
+      const order = entry.value || entry;
+      return order.paymentStatus !== "awaiting_payment";
+    });
+    const count = visibleOrders.length;
+    const scheduledCount = visibleOrders.filter((entry: any) => {
+      const order = entry.value || entry;
+      return order.status === "scheduled";
+    }).length;
+
+    return c.json({ count, scheduledCount });
+  } catch (error) {
+    console.log(`Admin order count error: ${error}`);
+    return c.json({ error: "Failed to get order count" }, 500);
   }
 });
 
@@ -6807,8 +7049,11 @@ app.post("/make-server-e5e192fb/admin/create-custom-order", async (c) => {
       address: orderData.deliveryAddress || undefined,
       specialInstructions: orderData.specialInstructions || undefined,
       
+      // Scheduling
+      scheduledAt: orderData.scheduledAt || undefined,
+      
       // Status
-      status: "confirmed", // Start at confirmed as per requirement
+      status: orderData.scheduledAt ? "scheduled" : "confirmed",
       
       // Payment
       paymentReceived: orderData.paymentReceived || false,
@@ -6831,7 +7076,15 @@ app.post("/make-server-e5e192fb/admin/create-custom-order", async (c) => {
       adminNotes: orderData.adminNotes || undefined,
       
       // Audit trail
-      auditLog: [
+      auditLog: orderData.scheduledAt ? [
+        {
+          timestamp: now,
+          action: "ORDER_CREATED",
+          performedBy: adminAuth.userId,
+          adminName: adminUser?.name || "Admin",
+          details: `Scheduled order created by admin (scheduled for ${orderData.scheduledAt})`
+        }
+      ] : [
         {
           timestamp: now,
           action: "ORDER_CREATED",
@@ -6850,7 +7103,13 @@ app.post("/make-server-e5e192fb/admin/create-custom-order", async (c) => {
       ],
       
       // Status history
-      statusHistory: [
+      statusHistory: orderData.scheduledAt ? [
+        { 
+          status: "scheduled", 
+          timestamp: now, 
+          label: `Scheduled for ${new Date(orderData.scheduledAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` 
+        }
+      ] : [
         { 
           status: "pending", 
           timestamp: now, 
@@ -8045,6 +8304,663 @@ app.delete("/make-server-e5e192fb/user-addresses/:addressId", async (c) => {
   } catch (error) {
     console.log(`Error deleting address: ${error?.message}`);
     return c.json({ error: `Failed to delete address: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== CELEBRATIONS & PARTY PACKAGES ====================
+
+// ---- CELEBRATION CATEGORIES (Hub Page) ----
+
+const DEFAULT_CELEBRATION_CATEGORIES = [
+  {
+    id: 1,
+    title: "Birthday Party Menu",
+    subtitle: "Explore food options for kids and family celebrations",
+    buttonText: "View Menu",
+    image: "https://images.unsplash.com/photo-1756621716318-9eec89d42715?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxraWRzJTIwYmlydGhkYXklMjBwYXJ0eSUyMGNlbGVicmF0aW9uJTIwZm9vZHxlbnwxfHx8fDE3NzM0NzAwMTd8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
+    gradientStart: "#FF8C00",
+    gradientEnd: "#FF6B00",
+    enabled: true,
+    displayOrder: 1,
+  },
+  {
+    id: 2,
+    title: "Birthday Party Packages",
+    subtitle: "Complete party bundles with food, decor, and setup",
+    buttonText: "View Packages",
+    image: "https://images.unsplash.com/photo-1772683530277-60c2c9ede7ea?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxiaXJ0aGRheSUyMHBhcnR5JTIwZGVjb3JhdGlvbiUyMGJhbGxvb25zJTIwc2V0dXB8ZW58MXx8fHwxNzczNDcwMDE4fDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
+    gradientStart: "#E91E63",
+    gradientEnd: "#C2185B",
+    enabled: true,
+    displayOrder: 2,
+  },
+  {
+    id: 3,
+    title: "Catering Packages",
+    subtitle: "Ideal for gatherings, events and special occasions",
+    buttonText: "View Options",
+    image: "https://images.unsplash.com/photo-1718114243715-8252d5382319?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxJbmRpYW4lMjBjYXRlcmluZyUyMGJ1ZmZldCUyMGZvb2QlMjBzcHJlYWR8ZW58MXx8fHwxNzczNDcwMDE4fDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
+    gradientStart: "#4CAF50",
+    gradientEnd: "#388E3C",
+    enabled: true,
+    displayOrder: 3,
+  },
+  {
+    id: 4,
+    title: "Office Party / Custom Packages",
+    subtitle: "Flexible packages for teams, meetings, and custom needs",
+    buttonText: "View Details",
+    image: "https://images.unsplash.com/photo-1758520144651-47ef3d2b3acf?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxvZmZpY2UlMjBwYXJ0eSUyMGNlbGVicmF0aW9uJTIwZ3JvdXB8ZW58MXx8fHwxNzczNDcwMDI0fDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
+    gradientStart: "#1976D2",
+    gradientEnd: "#0D47A1",
+    enabled: true,
+    displayOrder: 4,
+  },
+];
+
+// Public: Get celebration categories
+app.get("/make-server-e5e192fb/celebration-categories", async (c) => {
+  try {
+    let data = await kv.get("celebration_categories");
+    if (!data) {
+      data = { items: DEFAULT_CELEBRATION_CATEGORIES };
+      await kv.set("celebration_categories", data);
+      console.log("Auto-seeded celebration categories with defaults");
+    }
+    const items = (data.items || []).filter((cat: any) => cat.enabled !== false);
+    items.sort((a: any, b: any) => (a.displayOrder || 0) - (b.displayOrder || 0));
+    return c.json({ items });
+  } catch (error) {
+    console.log(`Error fetching celebration categories: ${error?.message}`);
+    return c.json({ error: `Failed to fetch celebration categories: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Get all celebration categories (including disabled)
+app.get("/make-server-e5e192fb/admin/celebration-categories", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const key = await getJwtKey();
+    const payload = await verify(authHeader, key);
+    if (!payload?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    let data = await kv.get("celebration_categories");
+    if (!data) {
+      data = { items: DEFAULT_CELEBRATION_CATEGORIES };
+      await kv.set("celebration_categories", data);
+    }
+    const items = data.items || [];
+    items.sort((a: any, b: any) => (a.displayOrder || 0) - (b.displayOrder || 0));
+    return c.json({ items });
+  } catch (error) {
+    console.log(`Error fetching admin celebration categories: ${error?.message}`);
+    return c.json({ error: `Failed to fetch celebration categories: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Create celebration category
+app.post("/make-server-e5e192fb/admin/celebration-categories", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const key = await getJwtKey();
+    const payload = await verify(authHeader, key);
+    if (!payload?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const body = await c.req.json();
+    let data = await kv.get("celebration_categories");
+    if (!data) data = { items: [] };
+    const items = data.items || [];
+    const newId = items.length > 0 ? Math.max(...items.map((i: any) => i.id)) + 1 : 1;
+    const newItem = { ...body, id: newId };
+    items.push(newItem);
+    await kv.set("celebration_categories", { items });
+    console.log(`Created celebration category: ${newItem.title}`);
+    return c.json({ success: true, item: newItem });
+  } catch (error) {
+    console.log(`Error creating celebration category: ${error?.message}`);
+    return c.json({ error: `Failed to create celebration category: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Update celebration category
+app.put("/make-server-e5e192fb/admin/celebration-categories/:id", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const key = await getJwtKey();
+    const payload = await verify(authHeader, key);
+    if (!payload?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const id = parseInt(c.req.param("id"));
+    const body = await c.req.json();
+    let data = await kv.get("celebration_categories");
+    if (!data) return c.json({ error: "No categories found" }, 404);
+    const items = data.items || [];
+    const idx = items.findIndex((i: any) => i.id === id);
+    if (idx === -1) return c.json({ error: "Category not found" }, 404);
+    items[idx] = { ...items[idx], ...body, id };
+    await kv.set("celebration_categories", { items });
+    console.log(`Updated celebration category: ${items[idx].title}`);
+    return c.json({ success: true, item: items[idx] });
+  } catch (error) {
+    console.log(`Error updating celebration category: ${error?.message}`);
+    return c.json({ error: `Failed to update celebration category: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Delete celebration category
+app.delete("/make-server-e5e192fb/admin/celebration-categories/:id", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const key = await getJwtKey();
+    const payload = await verify(authHeader, key);
+    if (!payload?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const id = parseInt(c.req.param("id"));
+    let data = await kv.get("celebration_categories");
+    if (!data) return c.json({ error: "No categories found" }, 404);
+    const items = data.items || [];
+    const filtered = items.filter((i: any) => i.id !== id);
+    if (filtered.length === items.length) return c.json({ error: "Category not found" }, 404);
+    await kv.set("celebration_categories", { items: filtered });
+    console.log(`Deleted celebration category id: ${id}`);
+    return c.json({ success: true });
+  } catch (error) {
+    console.log(`Error deleting celebration category: ${error?.message}`);
+    return c.json({ error: `Failed to delete celebration category: ${error?.message}` }, 500);
+  }
+});
+
+// Public: Get celebrations hub settings
+app.get("/make-server-e5e192fb/celebrations-hub-settings", async (c) => {
+  try {
+    let settings = await kv.get("celebrations_hub_settings");
+    if (!settings) {
+      settings = {
+        pageTitle: "Choose Your",
+        pageTitleHighlight: "Party & Catering Package",
+        pageSubtitle: "Select an option for your next event",
+        enabled: true,
+      };
+      await kv.set("celebrations_hub_settings", settings);
+    }
+    return c.json(settings);
+  } catch (error) {
+    console.log(`Error fetching celebrations hub settings: ${error?.message}`);
+    return c.json({ error: `Failed to fetch settings: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Update celebrations hub settings
+app.put("/make-server-e5e192fb/admin/celebrations-hub-settings", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const key = await getJwtKey();
+    const payload = await verify(authHeader, key);
+    if (!payload?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const body = await c.req.json();
+    await kv.set("celebrations_hub_settings", body);
+    console.log("Updated celebrations hub settings");
+    return c.json({ success: true });
+  } catch (error) {
+    console.log(`Error updating celebrations hub settings: ${error?.message}`);
+    return c.json({ error: `Failed to update settings: ${error?.message}` }, 500);
+  }
+});
+
+// ---- PARTY PACKAGES (Per-Category) ----
+
+// Default party packages seed data — covers all 4 celebration categories
+const DEFAULT_PARTY_PACKAGES = [
+  // ── Category 1: Birthday Party Menu ──
+  {
+    id: 1,
+    categoryId: 1,
+    name: "Kids Finger Food Platter",
+    price: 1500000,
+    priceNote: "serves 20-25 kids",
+    description: "Fun-sized bites kids love — perfect for birthday tables",
+    features: [
+      { emoji: "🍗", text: "Mini chicken nuggets & fish fingers" },
+      { emoji: "🍕", text: "Mini pizza slices (cheese & veggie)" },
+      { emoji: "🍟", text: "French fries with ketchup dip" },
+      { emoji: "🧃", text: "Juice boxes for each child" },
+      { emoji: "🍫", text: "Chocolate fountain with fruits" },
+    ],
+    tierColor: "#FF8C00",
+    tierGradient: "linear-gradient(135deg, #FFE0B2 0%, #FF8C00 50%, #E65100 100%)",
+    enabled: true,
+    displayOrder: 1,
+  },
+  {
+    id: 2,
+    categoryId: 1,
+    name: "Family Feast Buffet",
+    price: 3500000,
+    priceNote: "serves 40-50 guests",
+    description: "A full Indian spread for the whole family to enjoy",
+    features: [
+      { emoji: "🍛", text: "Butter Chicken, Dal Makhani, Paneer Tikka" },
+      { emoji: "🍚", text: "Jeera Rice & Garlic Naan" },
+      { emoji: "🥗", text: "Fresh salad bar with raita" },
+      { emoji: "🍰", text: "Gulab Jamun & Ice Cream dessert station" },
+      { emoji: "🥤", text: "Soft drinks & lassi bar" },
+    ],
+    tierColor: "#FF6D00",
+    tierGradient: "linear-gradient(135deg, #FFCC80 0%, #FF6D00 50%, #BF360C 100%)",
+    enabled: true,
+    displayOrder: 2,
+  },
+  {
+    id: 3,
+    categoryId: 1,
+    name: "Premium Celebration Spread",
+    price: 6000000,
+    priceNote: "serves 60-80 guests",
+    description: "Grand menu for milestone birthdays & big celebrations",
+    features: [
+      { emoji: "🍢", text: "Live tandoor counter with kebabs & tikka" },
+      { emoji: "🍲", text: "5 main courses (veg & non-veg)" },
+      { emoji: "🧁", text: "Custom birthday cake (2 kg) included" },
+      { emoji: "🍹", text: "Welcome mocktails & refreshments" },
+      { emoji: "👨‍🍳", text: "Dedicated chef & service staff" },
+    ],
+    tierColor: "#E65100",
+    tierGradient: "linear-gradient(135deg, #FFB74D 0%, #E65100 50%, #BF360C 100%)",
+    enabled: true,
+    displayOrder: 3,
+  },
+
+  // ── Category 2: Birthday Party Packages ──
+  {
+    id: 4,
+    categoryId: 2,
+    name: "Package Silver",
+    price: 3500000,
+    priceNote: "before tax",
+    description: "Perfect starter package for intimate birthday celebrations",
+    features: [
+      { emoji: "🎈", text: "Standard balloon decoration (100 balloons)" },
+      { emoji: "🎂", text: "Basic birthday stage setup" },
+      { emoji: "🎤", text: "Karaoke system + microphone" },
+      { emoji: "👥", text: "Chairs for up to 50 kids" },
+      { emoji: "🎙️", text: "Professional MC to anchor" },
+    ],
+    tierColor: "#C0C0C0",
+    tierGradient: "linear-gradient(135deg, #E8E8E8 0%, #C0C0C0 50%, #A8A8A8 100%)",
+    enabled: true,
+    displayOrder: 1,
+  },
+  {
+    id: 5,
+    categoryId: 2,
+    name: "Package Gold",
+    price: 5500000,
+    priceNote: "before tax",
+    description: "Everything in Silver plus premium upgrades",
+    features: [
+      { emoji: "🎈", text: "Upgraded balloon decoration (200 balloons)" },
+      { emoji: "📍", text: "Welcome arch at entrance" },
+      { emoji: "🎭", text: "Exclusive birthday stage design" },
+      { emoji: "🤹", text: "Acrobat, magician + MC" },
+      { emoji: "🍰", text: "Kids buffet with great dessert corner" },
+    ],
+    tierColor: "#DAA520",
+    tierGradient: "linear-gradient(135deg, #FFD700 0%, #DAA520 50%, #B8860B 100%)",
+    enabled: true,
+    displayOrder: 2,
+  },
+  {
+    id: 6,
+    categoryId: 2,
+    name: "Package Diamond",
+    price: 8500000,
+    priceNote: "before tax",
+    description: "Everything in Silver + Gold, plus exclusive luxuries",
+    features: [
+      { emoji: "✨", text: "Exclusive decoration with entrance welcome gate" },
+      { emoji: "🪧", text: "Standee banners + 4 for display" },
+      { emoji: "💌", text: "Invitation cards for guests" },
+      { emoji: "🥤", text: "Welcome drinks served to parents" },
+      { emoji: "🎁", text: "Return gifts for kids" },
+    ],
+    tierColor: "#B9F2FF",
+    tierGradient: "linear-gradient(135deg, #E0F7FA 0%, #B9F2FF 50%, #81D4FA 100%)",
+    enabled: true,
+    displayOrder: 3,
+  },
+  {
+    id: 7,
+    categoryId: 2,
+    name: "Custom Birthday Package",
+    price: 0,
+    priceNote: "Contact us for pricing",
+    description: "Build your own birthday package — tell us your dream celebration!",
+    features: [
+      { emoji: "🎯", text: "Fully customizable to your needs" },
+      { emoji: "🎨", text: "Themed decoration of your choice" },
+      { emoji: "🍽️", text: "Custom catering menu selection" },
+      { emoji: "🎭", text: "Choose your own entertainment acts" },
+      { emoji: "📞", text: "Dedicated event coordinator" },
+    ],
+    tierColor: "#E91E63",
+    tierGradient: "linear-gradient(135deg, #FCE4EC 0%, #F48FB1 50%, #E91E63 100%)",
+    enabled: true,
+    displayOrder: 4,
+  },
+
+  // ── Category 3: Catering Packages ──
+  {
+    id: 8,
+    categoryId: 3,
+    name: "Starter Catering",
+    price: 2500000,
+    priceNote: "for 30-40 guests",
+    description: "Simple yet delicious catering for small gatherings",
+    features: [
+      { emoji: "🍛", text: "3 main course options (veg + non-veg)" },
+      { emoji: "🍚", text: "Steamed rice & fresh naan bread" },
+      { emoji: "🥗", text: "Garden salad & condiments" },
+      { emoji: "🍮", text: "1 dessert option" },
+      { emoji: "🚚", text: "Delivery & basic setup included" },
+    ],
+    tierColor: "#4CAF50",
+    tierGradient: "linear-gradient(135deg, #C8E6C9 0%, #4CAF50 50%, #2E7D32 100%)",
+    enabled: true,
+    displayOrder: 1,
+  },
+  {
+    id: 9,
+    categoryId: 3,
+    name: "Grand Catering",
+    price: 5000000,
+    priceNote: "for 60-80 guests",
+    description: "Full-service catering for weddings, receptions & large events",
+    features: [
+      { emoji: "🍢", text: "Live counter with tandoor kebabs & chaat" },
+      { emoji: "🍲", text: "6 main courses with regional specialties" },
+      { emoji: "🧁", text: "Dessert station (Gulab Jamun, Kheer, Pastries)" },
+      { emoji: "👨‍🍳", text: "Professional chef team on-site" },
+      { emoji: "🍽️", text: "Crockery, cutlery & serving staff included" },
+    ],
+    tierColor: "#2E7D32",
+    tierGradient: "linear-gradient(135deg, #A5D6A7 0%, #2E7D32 50%, #1B5E20 100%)",
+    enabled: true,
+    displayOrder: 2,
+  },
+  {
+    id: 10,
+    categoryId: 3,
+    name: "Premium Banquet Catering",
+    price: 9000000,
+    priceNote: "for 100+ guests",
+    description: "Luxury banquet experience with premium menu & service",
+    features: [
+      { emoji: "✨", text: "Welcome drinks & appetizer station" },
+      { emoji: "🥘", text: "8+ courses including chef's special" },
+      { emoji: "🍰", text: "Custom multi-tier cake & dessert table" },
+      { emoji: "🎪", text: "Full event setup with table decorations" },
+      { emoji: "👔", text: "Dedicated event manager & premium staff" },
+    ],
+    tierColor: "#1B5E20",
+    tierGradient: "linear-gradient(135deg, #81C784 0%, #388E3C 50%, #1B5E20 100%)",
+    enabled: true,
+    displayOrder: 3,
+  },
+
+  // ── Category 4: Office Party / Custom Packages ──
+  {
+    id: 11,
+    categoryId: 4,
+    name: "Team Lunch Package",
+    price: 1800000,
+    priceNote: "for 15-25 people",
+    description: "Quick team lunch with variety — great for office meetings",
+    features: [
+      { emoji: "🍱", text: "Individual meal boxes with 3 options" },
+      { emoji: "🥤", text: "Beverages included (water, juice, soft drinks)" },
+      { emoji: "🍪", text: "Cookies & brownies dessert box" },
+      { emoji: "📦", text: "Delivered to your office" },
+      { emoji: "⏰", text: "On-time delivery guaranteed" },
+    ],
+    tierColor: "#1976D2",
+    tierGradient: "linear-gradient(135deg, #BBDEFB 0%, #1976D2 50%, #0D47A1 100%)",
+    enabled: true,
+    displayOrder: 1,
+  },
+  {
+    id: 12,
+    categoryId: 4,
+    name: "Corporate Event Package",
+    price: 4500000,
+    priceNote: "for 30-50 people",
+    description: "Impress clients & colleagues with a premium spread",
+    features: [
+      { emoji: "🍽️", text: "Buffet setup with 5 main courses" },
+      { emoji: "☕", text: "Tea/coffee station with snacks" },
+      { emoji: "🎤", text: "PA system & microphone for speeches" },
+      { emoji: "🎊", text: "Basic corporate decoration" },
+      { emoji: "👨‍🍳", text: "Service staff for 3 hours" },
+    ],
+    tierColor: "#0D47A1",
+    tierGradient: "linear-gradient(135deg, #90CAF9 0%, #1565C0 50%, #0D47A1 100%)",
+    enabled: true,
+    displayOrder: 2,
+  },
+  {
+    id: 13,
+    categoryId: 4,
+    name: "Custom Event Package",
+    price: 0,
+    priceNote: "Contact us for pricing",
+    description: "Tell us what you need — we'll create the perfect package",
+    features: [
+      { emoji: "🎯", text: "Fully tailored to your event type" },
+      { emoji: "🏢", text: "Office parties, farewells, annual days" },
+      { emoji: "🍽️", text: "Choose your own menu & cuisine" },
+      { emoji: "🎨", text: "Custom theme & branding options" },
+      { emoji: "📞", text: "Dedicated coordinator assigned" },
+    ],
+    tierColor: "#283593",
+    tierGradient: "linear-gradient(135deg, #C5CAE9 0%, #3F51B5 50%, #1A237E 100%)",
+    enabled: true,
+    displayOrder: 3,
+  },
+];
+
+// Helper: ensures packages for all default categories exist in KV
+// Handles migration when new categories are added after initial seed
+async function ensureAllCategoryPackagesSeeded(existingItems: any[]): Promise<any[]> {
+  const defaultCategoryIds = [1, 2, 3, 4];
+  const existingCategoryIds = new Set(existingItems.map((p: any) => p.categoryId).filter(Boolean));
+  const missingCategoryIds = defaultCategoryIds.filter(id => !existingCategoryIds.has(id));
+
+  if (missingCategoryIds.length === 0) return existingItems;
+
+  const maxId = existingItems.length > 0 ? Math.max(...existingItems.map((p: any) => p.id)) : 0;
+  let nextId = maxId + 1;
+
+  const newItems = [...existingItems];
+  for (const catId of missingCategoryIds) {
+    const defaults = DEFAULT_PARTY_PACKAGES.filter((p: any) => p.categoryId === catId);
+    for (const def of defaults) {
+      newItems.push({ ...def, id: nextId++ });
+    }
+  }
+
+  await kv.set("party_packages", { items: newItems });
+  console.log(`Auto-seeded packages for missing categories: ${missingCategoryIds.join(", ")}`);
+  return newItems;
+}
+
+// Public: Get party packages (optionally filtered by categoryId)
+app.get("/make-server-e5e192fb/party-packages", async (c) => {
+  try {
+    let packages = await kv.get("party_packages");
+    if (!packages) {
+      await kv.set("party_packages", { items: DEFAULT_PARTY_PACKAGES });
+      packages = { items: DEFAULT_PARTY_PACKAGES };
+      console.log("Auto-seeded party packages with defaults");
+    } else {
+      // Migration: add packages for any new categories that don't have items yet
+      packages.items = await ensureAllCategoryPackagesSeeded(packages.items || []);
+    }
+    let items = (packages.items || []).filter((p: any) => p.enabled !== false);
+    const categoryId = c.req.query("categoryId");
+    if (categoryId) {
+      items = items.filter((p: any) => p.categoryId === parseInt(categoryId));
+    }
+    items.sort((a: any, b: any) => (a.displayOrder || 0) - (b.displayOrder || 0));
+    return c.json({ items });
+  } catch (error) {
+    console.log(`Error fetching party packages: ${error?.message}`);
+    return c.json({ error: `Failed to fetch party packages: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Get all party packages (including disabled)
+app.get("/make-server-e5e192fb/admin/party-packages", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const key = await getJwtKey();
+    const payload = await verify(authHeader, key);
+    if (!payload?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    let packages = await kv.get("party_packages");
+    if (!packages) {
+      await kv.set("party_packages", { items: DEFAULT_PARTY_PACKAGES });
+      packages = { items: DEFAULT_PARTY_PACKAGES };
+    } else {
+      // Migration: add packages for any new categories that don't have items yet
+      packages.items = await ensureAllCategoryPackagesSeeded(packages.items || []);
+    }
+    const items = packages.items || [];
+    items.sort((a: any, b: any) => (a.displayOrder || 0) - (b.displayOrder || 0));
+    return c.json({ items });
+  } catch (error) {
+    console.log(`Error fetching admin party packages: ${error?.message}`);
+    return c.json({ error: `Failed to fetch party packages: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Create party package
+app.post("/make-server-e5e192fb/admin/party-packages", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const key = await getJwtKey();
+    const payload = await verify(authHeader, key);
+    if (!payload?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const body = await c.req.json();
+    let packages = await kv.get("party_packages");
+    if (!packages) packages = { items: [] };
+    const items = packages.items || [];
+    const newId = items.length > 0 ? Math.max(...items.map((i: any) => i.id)) + 1 : 1;
+    const newItem = { ...body, id: newId };
+    items.push(newItem);
+    await kv.set("party_packages", { items });
+    console.log(`✅ Created party package: ${newItem.name}`);
+    return c.json({ success: true, item: newItem });
+  } catch (error) {
+    console.log(`Error creating party package: ${error?.message}`);
+    return c.json({ error: `Failed to create party package: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Update party package
+app.put("/make-server-e5e192fb/admin/party-packages/:id", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const key = await getJwtKey();
+    const payload = await verify(authHeader, key);
+    if (!payload?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const id = parseInt(c.req.param("id"));
+    const body = await c.req.json();
+    let packages = await kv.get("party_packages");
+    if (!packages) return c.json({ error: "No packages found" }, 404);
+    const items = packages.items || [];
+    const idx = items.findIndex((i: any) => i.id === id);
+    if (idx === -1) return c.json({ error: "Package not found" }, 404);
+    items[idx] = { ...items[idx], ...body, id };
+    await kv.set("party_packages", { items });
+    console.log(`✅ Updated party package: ${items[idx].name}`);
+    return c.json({ success: true, item: items[idx] });
+  } catch (error) {
+    console.log(`Error updating party package: ${error?.message}`);
+    return c.json({ error: `Failed to update party package: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Delete party package
+app.delete("/make-server-e5e192fb/admin/party-packages/:id", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const key = await getJwtKey();
+    const payload = await verify(authHeader, key);
+    if (!payload?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const id = parseInt(c.req.param("id"));
+    let packages = await kv.get("party_packages");
+    if (!packages) return c.json({ error: "No packages found" }, 404);
+    const items = packages.items || [];
+    const filtered = items.filter((i: any) => i.id !== id);
+    if (filtered.length === items.length) return c.json({ error: "Package not found" }, 404);
+    await kv.set("party_packages", { items: filtered });
+    console.log(`🗑️ Deleted party package id: ${id}`);
+    return c.json({ success: true });
+  } catch (error) {
+    console.log(`Error deleting party package: ${error?.message}`);
+    return c.json({ error: `Failed to delete party package: ${error?.message}` }, 500);
+  }
+});
+
+// Public: Get party packages page settings
+app.get("/make-server-e5e192fb/party-packages-settings", async (c) => {
+  try {
+    let settings = await kv.get("party_packages_settings");
+    if (!settings) {
+      settings = {
+        pageTitle: "Celebrate Your Special Moments",
+        pageSubtitle: "Customizable packages for every occasion",
+        bannerImage: "https://images.unsplash.com/photo-1761253298457-d98f628e1b1f?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxiaXJ0aGRheSUyMHBhcnR5JTIwY2VsZWJyYXRpb24lMjBiYWxsb29ucyUyMGNvbG9yZnVsfGVufDF8fHx8MTc3MzQ2ODg1MXww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
+        bookingWhatsAppMessage: "Hi! I'd like to book a party package.",
+        enabled: true,
+      };
+      await kv.set("party_packages_settings", settings);
+    }
+    return c.json(settings);
+  } catch (error) {
+    console.log(`Error fetching party packages settings: ${error?.message}`);
+    return c.json({ error: `Failed to fetch settings: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Update party packages page settings
+app.put("/make-server-e5e192fb/admin/party-packages-settings", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const key = await getJwtKey();
+    const payload = await verify(authHeader, key);
+    if (!payload?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const body = await c.req.json();
+    await kv.set("party_packages_settings", body);
+    console.log("✅ Updated party packages settings");
+    return c.json({ success: true });
+  } catch (error) {
+    console.log(`Error updating party packages settings: ${error?.message}`);
+    return c.json({ error: `Failed to update settings: ${error?.message}` }, 500);
   }
 });
 

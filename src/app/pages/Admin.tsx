@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 import { Header } from "../components/Header";
@@ -13,7 +13,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -28,6 +28,8 @@ import { RestaurantSettingsAdmin } from "../components/RestaurantSettingsAdmin";
 import { SystemHealthAdmin } from "../components/SystemHealthAdmin";
 import { BusinessInsightsAdmin } from "../components/BusinessInsightsAdmin";
 import { PaymentGatewayAdmin } from "../components/PaymentGatewayAdmin";
+import { PartyPackagesAdmin } from "../components/PartyPackagesAdmin";
+import { CelebrationCategoriesAdmin } from "../components/CelebrationCategoriesAdmin";
 import { getShortOrderId } from "../lib/orderUtils";
 import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG } from "../lib/config";
@@ -79,11 +81,13 @@ interface Order {
   promoCode?: string;
   promoDiscount?: number;
   promoVoucherTitle?: string;
+  scheduledAt?: string;
 }
 
-const ORDER_STATUSES = ["pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
+const ORDER_STATUSES = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
 
 const STATUS_COLORS: Record<string, string> = {
+  scheduled: "bg-blue-500",
   pending: "bg-orange-500",
   confirmed: "bg-teal-500",
   cooking: "bg-orange-600",
@@ -95,6 +99,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
+  scheduled: "Scheduled",
   pending: "Order Created",
   confirmed: "Confirmed",
   cooking: "Cooking",
@@ -109,7 +114,20 @@ export default function Admin() {
   const navigate = useNavigate();
   const { user, accessToken, loading: authLoading } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [paginatedOrders, setPaginatedOrders] = useState<Order[]>([]);
+  const [totalFiltered, setTotalFiltered] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [orderStats, setOrderStats] = useState({
+    totalOrders: 0,
+    unpaidCount: 0, unpaidTotal: 0,
+    partialCount: 0, partialTotal: 0,
+    paidCount: 0, paidTotal: 0,
+    todayCount: 0, todayRevenue: 0,
+    activeCount: 0,
+    closedCount: 0,
+    cancelledCount: 0,
+    scheduledCount: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
@@ -128,14 +146,23 @@ export default function Admin() {
   const [addPaymentMethod, setAddPaymentMethod] = useState("");
   const [addPaymentNote, setAddPaymentNote] = useState("");
 
-
-
+  // Order sub-tab: "active" vs "closed"
+  const [orderSubTab, setOrderSubTab] = useState<"active" | "closed">("active");
+  
   // Order filters
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [paymentFilter, setPaymentFilter] = useState<string>("all");
   const [deliveryFilter, setDeliveryFilter] = useState<string>("all");
   const [dateFilter, setDateFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [ordersPerPage, setOrdersPerPage] = useState(10);
+  
+  // Jump to page
+  const [jumpToPage, setJumpToPage] = useState("");
   
   // Bulk actions
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
@@ -160,65 +187,146 @@ export default function Admin() {
   const [confirmPin, setConfirmPin] = useState("");
   const [resettingPin, setResettingPin] = useState(false);
   
+  // Debounce search
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 400);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Refs for polling to access latest state
+  const previousOrderCountRef = useRef(0);
+  const isInitialLoadRef = useRef(true);
+  const notificationSoundRef = useRef<HTMLAudioElement | null>(null);
+
   // Initialize notification sound
   useEffect(() => {
-    // Create notification sound (using a browser notification sound or a simple beep)
     const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZRQ0PV6zn77BdGAg+ltryxHgpBSh+zPHcizsIGGS57OihUhELTKXh8bllHAU2jdXzzn0vBSF1xe/glEILElyx6OyrWBUIQ5zd8sFuJAU4ktjywXkqBSp/zfDajz0IGGm67+mgUBALTqnj8blnHAU8k9f0y3suBSh6yPDdjz0KFV+16em');
     audio.volume = 0.7;
+    notificationSoundRef.current = audio;
     setNotificationSound(audio);
   }, []);
-  
+
+  // Build order query params for server-side pagination
+  const buildOrderParams = useCallback((pageOverride?: number) => {
+    const params = new URLSearchParams({
+      page: (pageOverride || currentPage).toString(),
+      limit: ordersPerPage.toString(),
+      status: statusFilter,
+      payment: paymentFilter,
+      delivery: deliveryFilter,
+      date: dateFilter,
+      tab: orderSubTab,
+    });
+    if (debouncedSearch) params.set("search", debouncedSearch);
+    return params.toString();
+  }, [currentPage, ordersPerPage, statusFilter, paymentFilter, deliveryFilter, dateFilter, debouncedSearch, orderSubTab]);
+
+  // Fetch paginated orders from server
+  const fetchOrderPage = useCallback(async (isInitial = false, pageOverride?: number) => {
+    if (!accessToken) return;
+    try {
+      const params = buildOrderParams(pageOverride);
+      const response = await fetch(`${API_BASE}/admin/orders?${params}`, {
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": accessToken,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setPaginatedOrders(data.orders || []);
+        setTotalFiltered(data.totalFiltered);
+        setTotalPages(data.totalPages);
+        setCurrentPage(data.page);
+        if (data.stats) setOrderStats(data.stats);
+
+        const totalCount = data.stats?.totalOrders || 0;
+
+        if (isInitial) {
+          previousOrderCountRef.current = totalCount;
+          isInitialLoadRef.current = false;
+          setPreviousOrderCount(totalCount);
+          setIsInitialLoad(false);
+        }
+
+        return totalCount;
+      }
+    } catch (error) {
+      console.error("Error fetching orders:", error);
+    }
+  }, [accessToken, buildOrderParams]);
+
+  // Lightweight poll: check count, if changed refetch current page
+  const pollOrderCount = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      const response = await fetch(`${API_BASE}/admin/orders/count`, {
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": accessToken,
+        },
+      });
+      if (response.ok) {
+        const { count } = await response.json();
+        const prevCount = previousOrderCountRef.current;
+
+        if (count > prevCount && !isInitialLoadRef.current && prevCount > 0) {
+          const newOrdersCount = count - prevCount;
+          console.log(`New orders: ${newOrdersCount}`);
+          toast.success(`New orders received: ${newOrdersCount}`);
+          if (notificationSoundRef.current) {
+            notificationSoundRef.current.play().catch(() => {});
+          }
+        }
+
+        if (count !== prevCount) {
+          previousOrderCountRef.current = count;
+          setPreviousOrderCount(count);
+          // Refetch current page to show updated data
+          await fetchOrderPage(false);
+        }
+      }
+    } catch (error) {
+      console.error("Error polling order count:", error);
+    }
+  }, [accessToken, fetchOrderPage]);
+
+  // Ref to always have the latest pollOrderCount
+  const pollRef = useRef(pollOrderCount);
+  useEffect(() => { pollRef.current = pollOrderCount; }, [pollOrderCount]);
+
   useEffect(() => {
-    // Wait for auth to finish loading before making any decisions
-    if (authLoading) {
-      console.log("⏳ Auth still loading, waiting...");
-      return;
-    }
+    if (authLoading) return;
+    if (!user) { navigate("/login"); return; }
+    if (!user.isAdmin) { toast.error("Admin access required"); navigate("/"); return; }
 
-    // Now we can safely check if user is authenticated
-    if (!user) {
-      console.log("❌ No user found after auth loaded, redirecting to login");
-      navigate("/login");
-      return;
-    }
-
-    if (!user.isAdmin) {
-      console.log("❌ User is not admin, redirecting to home");
-      toast.error("Admin access required");
-      navigate("/");
-      return;
-    }
-
-    console.log("✅ Admin user authenticated, loading dashboard");
-    
     // Load initial data
     fetchAdminData();
     
-    // Start polling after a delay to ensure initial data is loaded
-    // This prevents the first poll from triggering notifications for existing orders
+    // Start lightweight polling after delay
     let intervalId: NodeJS.Timeout | null = null;
     const pollingTimeout = setTimeout(() => {
-      console.log("✅ Starting order polling (every 15 seconds)...");
-      intervalId = setInterval(fetchOrders, 15000);
-    }, 3000); // Wait 3 seconds for initial load to complete
+      intervalId = setInterval(() => pollRef.current(), 15000);
+    }, 3000);
     
-    // Cleanup
     return () => {
       clearTimeout(pollingTimeout);
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
+      if (intervalId) clearInterval(intervalId);
     };
   }, [user, authLoading, navigate]);
 
+  // Refetch orders when filters/pagination change
+  useEffect(() => {
+    if (!loading && accessToken) {
+      fetchOrderPage(false);
+    }
+  }, [currentPage, ordersPerPage, statusFilter, paymentFilter, deliveryFilter, dateFilter, debouncedSearch, orderSubTab]);
+
   const fetchAdminData = async () => {
     if (!accessToken) return;
-
     try {
       setLoading(true);
-      
-      console.log("🔍 Fetching admin data with token:", accessToken);
-      console.log("🔍 API Base:", API_BASE);
       
       const [usersResponse, ordersResponse] = await Promise.all([
         fetch(`${API_BASE}/admin/users`, {
@@ -227,7 +335,7 @@ export default function Admin() {
             "X-Custom-Auth": accessToken 
           },
         }),
-        fetch(`${API_BASE}/admin/orders`, {
+        fetch(`${API_BASE}/admin/orders?page=1&limit=${ordersPerPage}&status=all&payment=all&delivery=all&date=all&tab=active`, {
           headers: { 
             Authorization: `Bearer ${publicAnonKey}`,
             "X-Custom-Auth": accessToken 
@@ -235,12 +343,7 @@ export default function Admin() {
         }),
       ]);
 
-      console.log(`📊 Users response status: ${usersResponse.status}`);
-      console.log(`📊 Orders response status: ${ordersResponse.status}`);
-
-      // If unauthorized, clear localStorage and redirect to login
       if (usersResponse.status === 401 || ordersResponse.status === 401) {
-        console.log("❌ Unauthorized - clearing localStorage and redirecting to login");
         localStorage.removeItem("accessToken");
         localStorage.removeItem("user");
         toast.error("Session expired. Please log in again.");
@@ -253,26 +356,21 @@ export default function Admin() {
         const ordersData = await ordersResponse.json();
 
         setUsers(usersData.users || []);
-        const sortedOrders = (ordersData.orders || []).sort((a, b) => 
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        setOrders(sortedOrders);
+        setPaginatedOrders(ordersData.orders || []);
+        setTotalFiltered(ordersData.totalFiltered);
+        setTotalPages(ordersData.totalPages);
+        setCurrentPage(ordersData.page);
+        if (ordersData.stats) setOrderStats(ordersData.stats);
         
-        // Initialize previousOrderCount with existing orders (don't trigger notification on initial load)
-        setPreviousOrderCount(sortedOrders.length);
+        const totalCount = ordersData.stats?.totalOrders || 0;
+        previousOrderCountRef.current = totalCount;
+        isInitialLoadRef.current = false;
+        setPreviousOrderCount(totalCount);
         setIsInitialLoad(false);
-        
-        console.log(`📊 Initial order count: ${sortedOrders.length} orders`);
       } else {
-        const usersError = !usersResponse.ok ? await usersResponse.text() : null;
-        const ordersError = !ordersResponse.ok ? await ordersResponse.text() : null;
-        
-        if (usersError) console.error(`❌ Users error: ${usersError}`);
-        if (ordersError) console.error(`❌ Orders error: ${ordersError}`);
-        
         toast.error("Failed to load admin data");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to fetch admin data:", error);
       toast.error(`Failed to load admin data: ${error.message}`);
     } finally {
@@ -280,45 +378,13 @@ export default function Admin() {
     }
   };
 
+  // Convenience: refetch current page (used after order mutations and Refresh button)
   const fetchOrders = async () => {
+    setRefreshing(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/orders`, {
-        headers: {
-          Authorization: `Bearer ${publicAnonKey}`,
-          "X-Custom-Auth": accessToken || "",
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        
-        // Sort orders by most recent first
-        const sortedOrders = [...(data.orders || [])].sort((a: any, b: any) => 
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        
-        setOrders(sortedOrders);
-        
-        // Check if there are new orders (only if not initial load and we have a previous count)
-        if (sortedOrders.length > previousOrderCount && !isInitialLoad && previousOrderCount > 0) {
-          const newOrdersCount = sortedOrders.length - previousOrderCount;
-          
-          console.log(`🔔 NEW ORDERS DETECTED! Previous: ${previousOrderCount}, Current: ${sortedOrders.length}, New: ${newOrdersCount}`);
-          
-          toast.success(`New orders received: ${newOrdersCount}`);
-          
-          // Play notification sound if available
-          if (notificationSound) {
-            notificationSound.play().catch(error => {
-              console.error("Failed to play notification sound:", error);
-            });
-          }
-        }
-        
-        setPreviousOrderCount(sortedOrders.length);
-      }
-    } catch (error) {
-      console.error("Error fetching orders:", error);
+      await fetchOrderPage(false);
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -531,10 +597,14 @@ export default function Admin() {
 
   // Bulk action handlers
   const toggleSelectAll = () => {
-    if (selectedOrders.size === filteredOrders.length) {
-      setSelectedOrders(new Set());
+    const pageOrderIds = paginatedOrders.map(o => o.id);
+    const allPageSelected = pageOrderIds.every(id => selectedOrders.has(id));
+    if (allPageSelected) {
+      const newSet = new Set(selectedOrders);
+      pageOrderIds.forEach(id => newSet.delete(id));
+      setSelectedOrders(newSet);
     } else {
-      setSelectedOrders(new Set(filteredOrders.map(o => o.id)));
+      setSelectedOrders(new Set([...selectedOrders, ...pageOrderIds]));
     }
   };
 
@@ -560,7 +630,7 @@ export default function Admin() {
       
       // Filter out cancelled orders
       const ordersToUpdate = orderIds.filter(orderId => {
-        const order = orders.find(o => o.id === orderId);
+        const order = paginatedOrders.find(o => o.id === orderId);
         return order && order.status !== "cancelled";
       });
       
@@ -623,7 +693,7 @@ export default function Admin() {
       
       // Filter out cancelled orders
       const ordersToClose = orderIds.filter(orderId => {
-        const order = orders.find(o => o.id === orderId);
+        const order = paginatedOrders.find(o => o.id === orderId);
         return order && order.status !== "cancelled";
       });
       
@@ -816,17 +886,7 @@ export default function Admin() {
     }
   };
 
-  // Calculate statistics
-  const todayOrders = orders.filter(o => {
-    const orderDate = new Date(o.createdAt);
-    const today = new Date();
-    return orderDate.toDateString() === today.toDateString();
-  });
-
-  const todayRevenue = todayOrders.reduce((sum, order) => sum + (order.total || 0), 0);
-  const activeOrders = orders.filter(o => 
-    !["delivered", "cancelled"].includes(o.status)
-  );
+  // Stats from server (no more client-side computation)
   const newCustomersToday = users.filter(u => {
     const joinDate = new Date(u.createdAt);
     const today = new Date();
@@ -837,54 +897,6 @@ export default function Admin() {
     return users.find(u => u.id === userId);
   };
 
-  // Filter orders
-  const filteredOrders = orders.filter(order => {
-    const matchesStatus = statusFilter === "all" || 
-      (statusFilter === "active_group" ? !["delivered", "closed", "cancelled"].includes(order.status) : order.status === statusFilter);
-    
-    // Payment filter (support new paymentStatus + legacy)
-    const effectivePaymentStatus = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
-    const matchesPayment = paymentFilter === "all" || 
-      (paymentFilter === "paid" && effectivePaymentStatus === 'paid') ||
-      (paymentFilter === "partial" && effectivePaymentStatus === 'partial') ||
-      (paymentFilter === "unpaid" && effectivePaymentStatus === 'unpaid' && order.status !== "cancelled");
-    
-    // Delivery method filter
-    const matchesDelivery = deliveryFilter === "all" || order.deliveryMethod === deliveryFilter;
-    
-    // Date filter
-    const matchesDate = dateFilter === "all" || (() => {
-      const orderDate = new Date(order.createdAt);
-      const today = new Date();
-      return orderDate.toDateString() === today.toDateString();
-    })();
-    
-    // Enhanced search logic
-    const searchLower = searchQuery.toLowerCase();
-    const matchesSearch = searchQuery === "" || 
-      // Search short order ID (TNT-102)
-      getShortOrderId(order.orderNumber || order.id).toLowerCase().includes(searchLower) ||
-      // Search order number (TNT00000001)
-      order.orderNumber?.toLowerCase().includes(searchLower) ||
-      // Search legacy item title
-      order.itemTitle?.toLowerCase().includes(searchLower) ||
-      // Search through items array
-      (order.items && order.items.some(item => 
-        item.title?.toLowerCase().includes(searchLower)
-      )) ||
-      // Search phone number
-      order.phone?.includes(searchQuery) ||
-      // Search UUID (fallback)
-      order.id?.toLowerCase().includes(searchLower) ||
-      // Search customer name
-      (() => {
-        const customer = getCustomerByUserId(order.userId);
-        return customer?.name?.toLowerCase().includes(searchLower);
-      })();
-    
-    return matchesStatus && matchesPayment && matchesDelivery && matchesDate && matchesSearch;
-  });
-  
   const hasActiveFilters = statusFilter !== "all" || paymentFilter !== "all" || deliveryFilter !== "all" || dateFilter !== "all" || searchQuery !== "";
   
   const clearAllFilters = () => {
@@ -893,16 +905,14 @@ export default function Admin() {
     setDeliveryFilter("all");
     setDateFilter("all");
     setSearchQuery("");
+    setDebouncedSearch("");
+    setCurrentPage(1);
   };
-  
-  // Additional stats
-  const getEffectivePaymentStatus = (o: Order) => o.paymentStatus || (o.paymentReceived ? 'paid' : 'unpaid');
-  const unpaidOrders = orders.filter(o => getEffectivePaymentStatus(o) === 'unpaid' && o.status !== "cancelled");
-  const unpaidTotal = unpaidOrders.reduce((sum, o) => sum + (o.total || 0), 0);
-  const partialOrders = orders.filter(o => getEffectivePaymentStatus(o) === 'partial' && o.status !== "cancelled");
-  const partialTotal = partialOrders.reduce((sum, o) => sum + ((o.total || 0) - (o.paidAmount || 0)), 0);
-  const paidOrders = orders.filter(o => getEffectivePaymentStatus(o) === 'paid');
-  const paidTotal = paidOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+
+  // Reset to page 1 when filters change (server will refetch via the other useEffect)
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter, paymentFilter, deliveryFilter, dateFilter, debouncedSearch, orderSubTab]);
 
   const getTierInfo = (points: number) => {
     if (points >= 5000) return { name: "Diamond", color: "text-blue-600", bg: "bg-blue-100" };
@@ -944,7 +954,7 @@ export default function Admin() {
             className="p-4 cursor-pointer transition-all hover:shadow-md"
             style={{
               borderLeft: `4px solid ${BRAND}`,
-              backgroundColor: unpaidOrders.length > 0 ? '#FFF1F5' : undefined,
+              backgroundColor: orderStats.unpaidCount > 0 ? '#FFF1F5' : undefined,
               outline: paymentFilter === 'unpaid' ? `2px solid ${BRAND}` : 'none',
               outlineOffset: '-2px',
             }}
@@ -962,8 +972,8 @@ export default function Admin() {
               </div>
               <div className="min-w-0">
                 <p className="text-xs text-muted-foreground">Unpaid</p>
-                <p className="text-xl font-bold" style={{ color: unpaidOrders.length > 0 ? BRAND : undefined }}>{unpaidOrders.length}</p>
-                <p className="text-[10px] font-medium truncate" style={{ color: BRAND }}>{formatIDR(unpaidTotal)}</p>
+                <p className="text-xl font-bold" style={{ color: orderStats.unpaidCount > 0 ? BRAND : undefined }}>{orderStats.unpaidCount}</p>
+                <p className="text-[10px] font-medium truncate" style={{ color: BRAND }}>{formatIDR(orderStats.unpaidTotal)}</p>
               </div>
             </div>
           </Card>
@@ -973,7 +983,7 @@ export default function Admin() {
             className="p-4 cursor-pointer transition-all hover:shadow-md"
             style={{
               borderLeft: '4px solid #F59E0B',
-              backgroundColor: partialOrders.length > 0 ? '#FFFBEB' : undefined,
+              backgroundColor: orderStats.partialCount > 0 ? '#FFFBEB' : undefined,
               outline: paymentFilter === 'partial' ? '2px solid #F59E0B' : 'none',
               outlineOffset: '-2px',
             }}
@@ -991,8 +1001,8 @@ export default function Admin() {
               </div>
               <div className="min-w-0">
                 <p className="text-xs text-muted-foreground">Partial</p>
-                <p className="text-xl font-bold text-amber-600">{partialOrders.length}</p>
-                <p className="text-[10px] font-medium text-amber-600 truncate">{formatIDR(partialTotal)} due</p>
+                <p className="text-xl font-bold text-amber-600">{orderStats.partialCount}</p>
+                <p className="text-[10px] font-medium text-amber-600 truncate">{formatIDR(orderStats.partialTotal)} due</p>
               </div>
             </div>
           </Card>
@@ -1019,8 +1029,8 @@ export default function Admin() {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Today</p>
-                <p className="text-xl font-bold">{todayOrders.length}</p>
-                <p className="text-[10px] text-muted-foreground">{formatIDR(todayRevenue)}</p>
+                <p className="text-xl font-bold">{orderStats.todayCount}</p>
+                <p className="text-[10px] text-muted-foreground">{formatIDR(orderStats.todayRevenue)}</p>
               </div>
             </div>
           </Card>
@@ -1047,8 +1057,10 @@ export default function Admin() {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Active</p>
-                <p className="text-xl font-bold">{activeOrders.length}</p>
-                <p className="text-[10px] text-muted-foreground">In progress</p>
+                <p className="text-xl font-bold">{orderStats.activeCount}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {orderStats.scheduledCount > 0 ? `${orderStats.scheduledCount} scheduled` : "In progress"}
+                </p>
               </div>
             </div>
           </Card>
@@ -1075,8 +1087,8 @@ export default function Admin() {
               </div>
               <div className="min-w-0">
                 <p className="text-xs text-muted-foreground">Paid</p>
-                <p className="text-xl font-bold text-green-700">{paidOrders.length}</p>
-                <p className="text-[10px] font-medium text-green-600 truncate">{formatIDR(paidTotal)}</p>
+                <p className="text-xl font-bold text-green-700">{orderStats.paidCount}</p>
+                <p className="text-[10px] font-medium text-green-600 truncate">{formatIDR(orderStats.paidTotal)}</p>
               </div>
             </div>
           </Card>
@@ -1097,7 +1109,7 @@ export default function Admin() {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">All Orders</p>
-                <p className="text-xl font-bold">{orders.length}</p>
+                <p className="text-xl font-bold">{orderStats.totalOrders}</p>
                 <p className="text-[10px] text-muted-foreground">Total</p>
               </div>
             </div>
@@ -1118,6 +1130,7 @@ export default function Admin() {
               <TabsTrigger value="todays-special">Special</TabsTrigger>
               <TabsTrigger value="kids-menu">Kids</TabsTrigger>
               <TabsTrigger value="flash-sale">Flash</TabsTrigger>
+              <TabsTrigger value="party-packages">Parties</TabsTrigger>
               <TabsTrigger value="insights">Insights</TabsTrigger>
               <TabsTrigger value="payments">Payments</TabsTrigger>
               <TabsTrigger value="settings">Settings</TabsTrigger>
@@ -1127,6 +1140,66 @@ export default function Admin() {
 
           {/* Orders Tab */}
           <TabsContent value="orders" className="space-y-4">
+            {/* Active / Closed Sub-tabs */}
+            <div className="flex rounded-lg border overflow-hidden">
+              <button
+                onClick={() => {
+                  setOrderSubTab("active");
+                  setStatusFilter("all");
+                  setPaymentFilter("all");
+                  setDeliveryFilter("all");
+                  setDateFilter("all");
+                  setSearchQuery("");
+                  setDebouncedSearch("");
+                  setSelectedOrders(new Set());
+                }}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 text-sm font-semibold transition-all ${
+                  orderSubTab === "active"
+                    ? "text-white"
+                    : "bg-white text-gray-600 hover:bg-gray-50"
+                }`}
+                style={orderSubTab === "active" ? { backgroundColor: BRAND } : {}}
+              >
+                <ShoppingCart className="w-4 h-4" />
+                Active
+                {orderStats.activeCount > 0 && (
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
+                    orderSubTab === "active" ? "bg-white/25 text-white" : "bg-gray-200 text-gray-700"
+                  }`}>
+                    {orderStats.activeCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setOrderSubTab("closed");
+                  setStatusFilter("all");
+                  setPaymentFilter("all");
+                  setDeliveryFilter("all");
+                  setDateFilter("all");
+                  setSearchQuery("");
+                  setDebouncedSearch("");
+                  setSelectedOrders(new Set());
+                }}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 text-sm font-semibold transition-all ${
+                  orderSubTab === "closed"
+                    ? "text-white"
+                    : "bg-white text-gray-600 hover:bg-gray-50"
+                }`}
+                style={orderSubTab === "closed" ? { backgroundColor: "#6B7280" } : {}}
+              >
+                <Archive className="w-4 h-4" />
+                Closed
+                {(orderStats.closedCount + orderStats.cancelledCount) > 0 && (
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
+                    orderSubTab === "closed" ? "bg-white/25 text-white" : "bg-gray-200 text-gray-700"
+                  }`}>
+                    {orderStats.closedCount + orderStats.cancelledCount}
+                  </span>
+                )}
+              </button>
+            </div>
+
             {/* Search + Filter Row */}
             <div className="flex flex-col gap-3">
               <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
@@ -1137,24 +1210,28 @@ export default function Admin() {
                   className="max-w-md"
                 />
                 <div className="flex gap-2 w-full md:w-auto">
-                  <Button
-                    variant="default"
-                    size="sm"
-                    onClick={() => navigate("/admin/kitchen")}
-                    className="flex-1 md:flex-none bg-orange-600 hover:bg-orange-700"
-                  >
-                    <ChefHat className="w-4 h-4 mr-2" />
-                    Kitchen
-                  </Button>
-                  <Button
-                    variant="default"
-                    size="sm"
-                    onClick={() => navigate("/admin/create-custom-order")}
-                    className="flex-1 md:flex-none"
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Create Order
-                  </Button>
+                  {orderSubTab === "active" && (
+                    <>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => navigate("/admin/kitchen")}
+                        className="flex-1 md:flex-none bg-orange-600 hover:bg-orange-700"
+                      >
+                        <ChefHat className="w-4 h-4 mr-2" />
+                        Kitchen
+                      </Button>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => navigate("/admin/create-custom-order")}
+                        className="flex-1 md:flex-none"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Create Order
+                      </Button>
+                    </>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -1178,12 +1255,20 @@ export default function Admin() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="active_group">Active Orders</SelectItem>
-                    {ORDER_STATUSES.map(status => (
-                      <SelectItem key={status} value={status}>
-                        {STATUS_LABELS[status]}
-                      </SelectItem>
-                    ))}
+                    {orderSubTab === "active" ? (
+                      <>
+                        {ORDER_STATUSES.filter(s => !["closed", "cancelled"].includes(s)).map(status => (
+                          <SelectItem key={status} value={status}>
+                            {STATUS_LABELS[status]}
+                          </SelectItem>
+                        ))}
+                      </>
+                    ) : (
+                      <>
+                        <SelectItem value="closed">Closed</SelectItem>
+                        <SelectItem value="cancelled">Cancelled</SelectItem>
+                      </>
+                    )}
                   </SelectContent>
                 </Select>
 
@@ -1223,37 +1308,57 @@ export default function Admin() {
                 )}
               </div>
 
-              {/* Filter Results Counter */}
-              {hasActiveFilters && (
-                <div className="flex items-center justify-between rounded-lg px-3 py-2" style={{ backgroundColor: '#FFF1F5' }}>
-                  <p className="text-xs font-medium" style={{ color: BRAND }}>
-                    Showing {filteredOrders.length} of {orders.length} orders
-                  </p>
-                  <button
-                    onClick={clearAllFilters}
-                    className="text-xs font-semibold underline"
+              {/* Filter Results Counter & Per-Page Selector */}
+              <div className="flex items-center justify-between rounded-lg px-3 py-2" style={{ backgroundColor: orderSubTab === "closed" ? "#F3F4F6" : '#FFF1F5' }}>
+                <p className="text-xs font-medium" style={{ color: orderSubTab === "closed" ? "#6B7280" : BRAND }}>
+                  {totalFiltered === 0 
+                    ? (hasActiveFilters 
+                      ? `0 ${orderSubTab === "active" ? "active" : "closed"} orders match filters` 
+                      : orderSubTab === "active" ? "No active orders" : "No closed orders")
+                    : hasActiveFilters 
+                      ? `${(currentPage - 1) * ordersPerPage + 1}–${Math.min(currentPage * ordersPerPage, totalFiltered)} of ${totalFiltered} filtered`
+                      : `${(currentPage - 1) * ordersPerPage + 1}–${Math.min(currentPage * ordersPerPage, totalFiltered)} of ${totalFiltered} ${orderSubTab === "active" ? "active" : "closed"} orders`
+                  }
+                </p>
+                <div className="flex items-center gap-2">
+                  {hasActiveFilters && (
+                    <button
+                      onClick={clearAllFilters}
+                      className="text-xs font-semibold underline"
+                      style={{ color: BRAND }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <select
+                    value={ordersPerPage}
+                    onChange={(e) => { setOrdersPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                    className="text-xs border rounded px-1.5 py-1 bg-white"
                     style={{ color: BRAND }}
                   >
-                    Show All
-                  </button>
+                    <option value={5}>5/page</option>
+                    <option value={10}>10/page</option>
+                    <option value={20}>20/page</option>
+                    <option value={50}>50/page</option>
+                  </select>
                 </div>
-              )}
+              </div>
             </div>
 
-            {/* Bulk Actions Bar */}
-            {filteredOrders.length > 0 && (
+            {/* Bulk Actions Bar — active tab only */}
+            {orderSubTab === "active" && totalFiltered > 0 && (
               <Card className="p-4">
                 <div className="flex flex-col md:flex-row items-start md:items-center gap-3 justify-between">
                   <div className="flex items-center gap-3">
                     <Checkbox
-                      checked={selectedOrders.size === filteredOrders.length && filteredOrders.length > 0}
+                      checked={paginatedOrders.length > 0 && paginatedOrders.every(o => selectedOrders.has(o.id))}
                       onCheckedChange={toggleSelectAll}
                       id="select-all"
                     />
                     <Label htmlFor="select-all" className="cursor-pointer">
                       {selectedOrders.size > 0 
                         ? `${selectedOrders.size} order(s) selected` 
-                        : "Select all"}
+                        : `Select page (${paginatedOrders.length})`}
                     </Label>
                   </div>
 
@@ -1284,10 +1389,16 @@ export default function Admin() {
               </Card>
             )}
 
-            {filteredOrders.length === 0 ? (
+            {totalFiltered === 0 ? (
               <Card className="p-8 text-center">
-                <Package className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
-                <p className="text-muted-foreground">No orders found</p>
+                {orderSubTab === "active" ? (
+                  <ShoppingCart className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
+                ) : (
+                  <Archive className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
+                )}
+                <p className="text-muted-foreground">
+                  {orderSubTab === "active" ? "No active orders" : "No closed or cancelled orders"}
+                </p>
                 {hasActiveFilters && (
                   <Button
                     variant="outline"
@@ -1301,12 +1412,14 @@ export default function Admin() {
               </Card>
             ) : (
               <div className="space-y-4">
-                {filteredOrders.map((order) => {
+                {paginatedOrders.map((order) => {
                   const customer = getCustomerByUserId(order.userId);
                   const effectivePS = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
                   const isPaid = effectivePS === 'paid';
                   const isPartial = effectivePS === 'partial';
-                  const borderColor = isPaid ? '#00AA99' : isPartial ? '#F59E0B' : BRAND;
+                  const borderColor = order.status === 'cancelled' ? '#EF4444' 
+                    : order.status === 'closed' ? '#9CA3AF' 
+                    : isPaid ? '#00AA99' : isPartial ? '#F59E0B' : BRAND;
                   
                   return (
                     <Card 
@@ -1318,11 +1431,13 @@ export default function Admin() {
                         {/* Order Header */}
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
                           <div className="flex items-center gap-3 flex-1">
-                            <Checkbox
-                              checked={selectedOrders.has(order.id)}
-                              onCheckedChange={() => toggleSelectOrder(order.id)}
-                              id={`order-${order.id}`}
-                            />
+                            {orderSubTab === "active" && (
+                              <Checkbox
+                                checked={selectedOrders.has(order.id)}
+                                onCheckedChange={() => toggleSelectOrder(order.id)}
+                                id={`order-${order.id}`}
+                              />
+                            )}
                             <div>
                               <div className="flex items-center gap-2 flex-wrap">
                                 <h3 className="font-bold text-lg">{getShortOrderId(order.orderNumber || order.id)}</h3>
@@ -1376,6 +1491,14 @@ export default function Admin() {
                                 {new Date(order.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })}
                                 {customer && <span className="ml-2 font-medium text-foreground">{customer.name}</span>}
                               </p>
+                              {order.status === "scheduled" && order.scheduledAt && (
+                                <div className="flex items-center gap-1.5 mt-1.5 px-2 py-1 bg-blue-50 border border-blue-200 rounded-md w-fit">
+                                  <Clock className="h-3.5 w-3.5 text-blue-600" />
+                                  <span className="text-xs font-medium text-blue-700">
+                                    Scheduled for {new Date(order.scheduledAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </div>
                           <div className="text-left md:text-right">
@@ -1495,8 +1618,8 @@ export default function Admin() {
                           </div>
                         )}
 
-                        {/* Status Update and Payment */}
-                        {!["cancelled"].includes(order.status) && (
+                        {/* Status Update and Payment — hidden on closed sub-tab */}
+                        {orderSubTab === "active" && !["cancelled"].includes(order.status) && (
                           <div className="pt-2 border-t space-y-3">
                             <div>
                               <Label className="text-sm mb-2 block">Update Status:</Label>
@@ -1786,11 +1909,160 @@ export default function Admin() {
                             )}
                           </div>
                         )}
+
+                        {/* Closed tab: simplified read-only footer */}
+                        {orderSubTab === "closed" && (
+                          <div className="pt-2 border-t space-y-2">
+                            {/* Points Info */}
+                            {order.pointsAwarded && order.pointsEarned && (
+                              <div className="text-xs font-semibold text-green-700 bg-green-100 px-3 py-2 rounded border border-green-300">
+                                ✅ {order.pointsEarned} points awarded to customer
+                              </div>
+                            )}
+                            {order.status === 'closed' && !order.pointsAwarded && effectivePS === 'paid' && (
+                              <div className="text-xs font-semibold text-amber-700 bg-amber-100 px-3 py-2 rounded border border-amber-300">
+                                ⚠️ Points pending! Should award {Math.floor(order.total / 1000)} points
+                              </div>
+                            )}
+                            {order.status === 'closed' && !order.pointsAwarded && effectivePS !== 'paid' && (
+                              <div className="text-xs text-orange-600 bg-orange-50 px-3 py-2 rounded border border-orange-200">
+                                💡 Payment not received — {Math.floor(order.total / 1000)} points not awarded
+                              </div>
+                            )}
+                            {/* Closed/Cancelled timestamp */}
+                            <div className={`text-xs px-3 py-2 rounded ${
+                              order.status === 'cancelled' ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-500'
+                            }`}>
+                              {order.status === 'cancelled' ? '❌ Cancelled' : '✔️ Closed'} on{' '}
+                              {new Date(order.updatedAt || order.createdAt).toLocaleString("en-US", { 
+                                month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" 
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </Card>
                   );
                 })}
               </div>
+            )}
+
+            {/* Pagination Controls */}
+            {totalFiltered > 0 && totalPages > 1 && (
+              <Card className="p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground hidden sm:block">
+                    Page {currentPage} of {totalPages}
+                  </p>
+                  <div className="flex items-center gap-1 mx-auto sm:mx-0">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      onClick={() => setCurrentPage(1)}
+                      disabled={currentPage === 1}
+                    >
+                      <ChevronsLeft className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </Button>
+
+                    {(() => {
+                      const pages: number[] = [];
+                      const maxVisible = 5;
+                      let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+                      const end = Math.min(totalPages, start + maxVisible - 1);
+                      if (end - start + 1 < maxVisible) {
+                        start = Math.max(1, end - maxVisible + 1);
+                      }
+                      for (let i = start; i <= end; i++) pages.push(i);
+                      return pages.map(page => (
+                        <Button
+                          key={page}
+                          variant={page === currentPage ? "default" : "outline"}
+                          size="sm"
+                          className="h-8 w-8 p-0 text-xs"
+                          style={page === currentPage ? { backgroundColor: BRAND } : {}}
+                          onClick={() => setCurrentPage(page)}
+                        >
+                          {page}
+                        </Button>
+                      ));
+                    })()}
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      onClick={() => setCurrentPage(totalPages)}
+                      disabled={currentPage === totalPages}
+                    >
+                      <ChevronsRight className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground sm:hidden">
+                    {currentPage}/{totalPages}
+                  </p>
+                </div>
+                {/* Jump to Page */}
+                {totalPages > 5 && (
+                  <div className="flex items-center justify-center gap-2 mt-2 pt-2 border-t">
+                    <span className="text-xs text-muted-foreground">Go to page:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={totalPages}
+                      value={jumpToPage}
+                      onChange={(e) => setJumpToPage(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const page = parseInt(jumpToPage);
+                          if (page >= 1 && page <= totalPages) {
+                            setCurrentPage(page);
+                            setJumpToPage("");
+                          } else {
+                            toast.error(`Page must be between 1 and ${totalPages}`);
+                          }
+                        }
+                      }}
+                      placeholder={`1–${totalPages}`}
+                      className="w-20 h-8 text-xs text-center border rounded px-2"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs px-3"
+                      onClick={() => {
+                        const page = parseInt(jumpToPage);
+                        if (page >= 1 && page <= totalPages) {
+                          setCurrentPage(page);
+                          setJumpToPage("");
+                        } else {
+                          toast.error(`Page must be between 1 and ${totalPages}`);
+                        }
+                      }}
+                    >
+                      Go
+                    </Button>
+                  </div>
+                )}
+              </Card>
             )}
           </TabsContent>
 
@@ -1805,8 +2077,6 @@ export default function Admin() {
               <div className="space-y-4">
                 {users.filter(u => !u.isAdmin).map((customer) => {
                   const tier = getTierInfo(customer.points);
-                  const customerOrders = orders.filter(o => o.userId === customer.id);
-                  const totalSpent = customerOrders.reduce((sum, order) => sum + (order.total || 0), 0);
                   
                   return (
                     <Card key={customer.id} className={`p-5 ${customer.blocked ? "border-red-300 bg-red-50/50" : ""}`}>
@@ -1837,8 +2107,7 @@ export default function Admin() {
                           </div>
 
                           <div className="flex gap-4 text-sm">
-                            <span>Orders: <strong>{customerOrders.length}</strong></span>
-                            <span>Total Spent: <strong>{formatIDR(totalSpent)}</strong></span>
+                            <span>Points: <strong>{customer.points}</strong></span>
                           </div>
 
                           <p className="text-xs text-muted-foreground">
@@ -1955,6 +2224,22 @@ export default function Admin() {
           <TabsContent value="flash-sale" className="space-y-4">
             {accessToken ? (
               <FlashSaleAdmin customToken={accessToken} />
+            ) : (
+              <Card className="p-8 text-center">
+                <p className="text-muted-foreground">Loading authentication...</p>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* Party Packages Tab */}
+          <TabsContent value="party-packages" className="space-y-6">
+            {accessToken ? (
+              <>
+                <CelebrationCategoriesAdmin customToken={accessToken} />
+                <div className="border-t pt-4">
+                  <PartyPackagesAdmin customToken={accessToken} />
+                </div>
+              </>
             ) : (
               <Card className="p-8 text-center">
                 <p className="text-muted-foreground">Loading authentication...</p>

@@ -15,7 +15,8 @@ export type MascotPage =
   | "rewards"
   | "orderHistory"
   | "orderTracking"
-  | "profile";
+  | "profile"
+  | "celebrations";
 
 export type MascotVariant = "inline" | "floating";
 
@@ -179,6 +180,17 @@ function getMascotMessage(ctx: MascotContext): { greeting: string; message: stri
       };
     }
 
+    // ── Celebrations / Party Packages ──
+    case "celebrations": {
+      const partyMsgs = [
+        { message: "Planning a party? We'll make it unforgettable!", emoji: "🎉" },
+        { message: "Let us handle the food & fun for your special day!", emoji: "🥳" },
+        { message: "From birthdays to corporate events — we've got you!", emoji: "🎊" },
+      ];
+      const partyMsg = partyMsgs[Math.floor(Date.now() / 60000) % partyMsgs.length];
+      return { greeting: shortGreeting, ...partyMsg };
+    }
+
     default:
       return { greeting, message: APP_CONFIG.mascot.defaultMessage, emoji: "🍛" };
   }
@@ -195,6 +207,7 @@ function getMascotSize(page: MascotPage): number {
     case "orderHistory": return 70;
     case "orderTracking": return 70;
     case "profile": return 75;
+    case "celebrations": return 90;
     default: return 75;
   }
 }
@@ -203,6 +216,7 @@ function getVariantForPage(page: MascotPage): MascotVariant {
   switch (page) {
     case "home":
     case "cart":
+    case "celebrations":
       return "inline";
     default:
       return "floating";

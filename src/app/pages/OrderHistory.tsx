@@ -7,7 +7,7 @@ import { Button } from "../components/ui/button";
 import { Header } from "../components/Header";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { toast } from "sonner";
-import { ShoppingBag, ChevronDown, ChevronUp, MapPin, Package, RotateCw, Ticket } from "lucide-react";
+import { ShoppingBag, ChevronDown, ChevronUp, MapPin, Package, RotateCw, Ticket, Clock } from "lucide-react";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
 
@@ -56,6 +56,7 @@ interface Order {
   cancellationReason?: string; // Admin's reason for cancellation
   orderNumber?: string; // New field for order number
   createdByAdmin?: boolean; // Admin created order flag
+  scheduledAt?: string; // Scheduled order time
   promoCode?: string;
   promoDiscount?: number;
   promoVoucherTitle?: string;
@@ -63,6 +64,7 @@ interface Order {
 }
 
 const statusConfig: Record<string, { color: string; bgColor: string; label: string }> = {
+  scheduled: { color: '#3B82F6', bgColor: '#EFF6FF', label: 'Scheduled' },
   pending: { color: '#FFA500', bgColor: '#FFF3E0', label: 'Pending' },
   confirmed: { color: '#00AA99', bgColor: '#E0F7F5', label: 'Confirmed' },
   cooking: { color: BRAND, bgColor: '#FCE4EC', label: 'Cooking' },
@@ -727,8 +729,28 @@ export default function OrderHistory() {
                         </span>
                       </div>
 
+                      {/* Scheduled order banner */}
+                      {order.status === "scheduled" && order.scheduledAt && (
+                        <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+                          <Clock className="h-4 w-4 text-blue-600 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-blue-800">Scheduled Order</p>
+                            <p className="text-[11px] text-blue-600">
+                              Will be active on{" "}
+                              {new Date(order.scheduledAt).toLocaleString("en-US", {
+                                weekday: "short",
+                                month: "short",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Track button for active orders */}
-                      {isActive && (
+                      {isActive && order.status !== "scheduled" && (
                         <button
                           onClick={() => handleViewTracking(order.id)}
                           className="w-full mb-2 py-1.5 text-xs font-semibold rounded-lg border transition-colors"
@@ -837,9 +859,9 @@ export default function OrderHistory() {
                             <div className="flex justify-between">
                               <span className="text-muted-foreground">Delivery Fee:</span>
                               <span>
-                                {order.deliveryFee === 0 
-                                  ? "To be calculated" 
-                                  : `Rp ${order.deliveryFee.toLocaleString()}`
+                                {order.deliveryFee != null && order.deliveryFee >= 0 && (order.deliveryFee > 0 || order.createdByAdmin)
+                                  ? (order.deliveryFee === 0 ? <span className="text-green-600 font-medium">Free</span> : `Rp ${order.deliveryFee.toLocaleString()}`)
+                                  : <span className="text-amber-600 italic text-xs">To be calculated</span>
                                 }
                               </span>
                             </div>

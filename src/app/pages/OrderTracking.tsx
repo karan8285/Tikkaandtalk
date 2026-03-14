@@ -65,9 +65,15 @@ interface Order {
   promoDiscount?: number;
   promoVoucherTitle?: string;
   taxRate?: number;
+  scheduledAt?: string;
 }
 
 const statusConfig: Record<string, { icon: string; color: string; description: string }> = {
+  scheduled: {
+    icon: '📅',
+    color: '#3B82F6',
+    description: 'Order scheduled for future activation'
+  },
   pending: { 
     icon: '⏱️', 
     color: '#FFA500', 
@@ -335,6 +341,15 @@ export default function OrderTracking() {
 
   const getAllStatuses = () => {
     if (!order) return [];
+    
+    // If order is scheduled, show scheduled step first
+    if (order.status === 'scheduled') {
+      return [
+        { key: 'scheduled', label: 'Scheduled' },
+        { key: 'pending', label: 'Order Created' },
+        { key: 'confirmed', label: 'Confirmed' },
+      ];
+    }
     
     // If order is cancelled, only show Order Created and Cancelled
     if (order.status === 'cancelled') {
@@ -615,8 +630,14 @@ export default function OrderTracking() {
             {order.deliveryMethod === 'delivery' && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Delivery Fee</span>
-                <span className={(order.deliveryFee || 0) > 0 ? "" : "text-amber-600 italic text-xs"}>
-                  {(order.deliveryFee || 0) > 0 ? `Rp ${order.deliveryFee.toLocaleString()}` : "To be Calculated"}
+                <span className={
+                  order.deliveryFee != null && order.deliveryFee >= 0 && (order.deliveryFee > 0 || order.createdByAdmin)
+                    ? (order.deliveryFee === 0 ? "text-green-600 font-medium" : "")
+                    : "text-amber-600 italic text-xs"
+                }>
+                  {order.deliveryFee != null && order.deliveryFee >= 0 && (order.deliveryFee > 0 || order.createdByAdmin)
+                    ? (order.deliveryFee === 0 ? "Free" : `Rp ${order.deliveryFee.toLocaleString()}`)
+                    : "To be Calculated"}
                 </span>
               </div>
             )}

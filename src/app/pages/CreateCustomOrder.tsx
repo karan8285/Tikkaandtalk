@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { ArrowLeft, Search, Plus, Minus, ShoppingCart, Trash2, Package, Clock, AlertCircle, Users } from "lucide-react";
+import { ArrowLeft, Search, Plus, Minus, ShoppingCart, Trash2, Package, Clock, AlertCircle, Users, CalendarClock } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 
@@ -85,6 +85,11 @@ export default function CreateCustomOrder() {
   const [paymentReceived, setPaymentReceived] = useState(false);
   const [adminNotes, setAdminNotes] = useState("");
   const [deliveryFee, setDeliveryFee] = useState("");
+  
+  // Scheduling
+  const [isScheduled, setIsScheduled] = useState(false);
+  const [scheduledDate, setScheduledDate] = useState("");
+  const [scheduledTime, setScheduledTime] = useState("");
   
   // UI States
   const [creating, setCreating] = useState(false);
@@ -339,7 +344,25 @@ export default function CreateCustomOrder() {
         return;
       }
       
+      // Validate scheduling
+      if (isScheduled) {
+        if (!scheduledDate || !scheduledTime) {
+          toast.error("Please select both date and time for scheduled order");
+          return;
+        }
+        const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
+        if (scheduledDateTime <= new Date()) {
+          toast.error("Scheduled time must be in the future");
+          return;
+        }
+      }
+      
       setCreating(true);
+      
+      // Build scheduledAt ISO string if scheduling
+      const scheduledAt = isScheduled && scheduledDate && scheduledTime
+        ? new Date(`${scheduledDate}T${scheduledTime}`).toISOString()
+        : undefined;
       
       const orderData = {
         userId: selectedCustomer.id,
@@ -362,6 +385,7 @@ export default function CreateCustomOrder() {
         tax: tax,
         deliveryFee: Number(deliveryFee),
         total: total,
+        scheduledAt: scheduledAt,
       };
       
       const response = await fetch(`${API_BASE}/admin/create-custom-order`, {
@@ -391,6 +415,9 @@ export default function CreateCustomOrder() {
       setSpecialInstructions("");
       setAdminNotes("");
       setPaymentReceived(false);
+      setIsScheduled(false);
+      setScheduledDate("");
+      setScheduledTime("");
       setSearchQuery("");
       setConfirmDialog(false);
       
@@ -654,6 +681,77 @@ export default function CreateCustomOrder() {
                     />
                   </button>
                 </div>
+
+                {/* Schedule Order */}
+                <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
+                  <div>
+                    <Label className="font-medium flex items-center gap-1.5">
+                      <CalendarClock className="h-4 w-4 text-blue-600" />
+                      Schedule Order
+                    </Label>
+                    <p className="text-xs text-gray-600 mt-1">
+                      Set a future date & time for this order
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setIsScheduled(!isScheduled);
+                      if (isScheduled) {
+                        setScheduledDate("");
+                        setScheduledTime("");
+                      }
+                    }}
+                    className={`relative w-12 h-6 rounded-full transition-colors ${
+                      isScheduled ? "bg-blue-500" : "bg-gray-300"
+                    }`}
+                  >
+                    <div
+                      className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${
+                        isScheduled ? "translate-x-6" : ""
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {isScheduled && (
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
+                    <div>
+                      <Label className="mb-1.5 block text-sm font-medium">Date *</Label>
+                      <Input
+                        type="date"
+                        value={scheduledDate}
+                        onChange={(e) => setScheduledDate(e.target.value)}
+                        min={new Date().toISOString().split("T")[0]}
+                      />
+                    </div>
+                    <div>
+                      <Label className="mb-1.5 block text-sm font-medium">Time *</Label>
+                      <Input
+                        type="time"
+                        value={scheduledTime}
+                        onChange={(e) => setScheduledTime(e.target.value)}
+                      />
+                    </div>
+                    {scheduledDate && scheduledTime && (
+                      <div className="flex items-center gap-2 p-2 bg-white border border-blue-200 rounded-lg">
+                        <Clock className="h-4 w-4 text-blue-600 shrink-0" />
+                        <p className="text-sm text-blue-800">
+                          Order will activate on{" "}
+                          <span className="font-semibold">
+                            {new Date(`${scheduledDate}T${scheduledTime}`).toLocaleString("en-US", {
+                              weekday: "short",
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </Card>
 
@@ -742,9 +840,9 @@ export default function CreateCustomOrder() {
                 <Button
                   className="w-full mt-4"
                   onClick={() => setConfirmDialog(true)}
-                  disabled={!selectedCustomer || cart.length === 0 || creating}
+                  disabled={!selectedCustomer || cart.length === 0 || creating || (isScheduled && (!scheduledDate || !scheduledTime))}
                 >
-                  {creating ? "Creating..." : "Create Order"}
+                  {creating ? "Creating..." : isScheduled ? "Schedule Order" : "Create Order"}
                 </Button>
               </Card>
             )}
@@ -973,9 +1071,9 @@ export default function CreateCustomOrder() {
                   <Button
                     className="w-full mt-6"
                     onClick={() => setConfirmDialog(true)}
-                    disabled={!selectedCustomer || cart.length === 0 || creating}
+                    disabled={!selectedCustomer || cart.length === 0 || creating || (isScheduled && (!scheduledDate || !scheduledTime))}
                   >
-                    {creating ? "Creating..." : "Create Order"}
+                    {creating ? "Creating..." : isScheduled ? "Schedule Order" : "Create Order"}
                   </Button>
                   
                   {!selectedCustomer && (
@@ -1040,6 +1138,26 @@ export default function CreateCustomOrder() {
               </Badge>
             </div>
 
+            {isScheduled && scheduledDate && scheduledTime && (
+              <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <CalendarClock className="h-5 w-5 text-blue-600 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-blue-800">Scheduled Order</p>
+                  <p className="text-xs text-blue-600">
+                    Will activate on{" "}
+                    {new Date(`${scheduledDate}T${scheduledTime}`).toLocaleString("en-US", {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="border-t pt-4">
               <div className="space-y-1 mb-2">
                 <div className="flex justify-between text-sm text-gray-600">
@@ -1078,7 +1196,7 @@ export default function CreateCustomOrder() {
               Cancel
             </Button>
             <Button onClick={handleCreateOrder} disabled={creating}>
-              {creating ? "Creating..." : "Confirm & Create"}
+              {creating ? "Creating..." : isScheduled ? "Confirm & Schedule" : "Confirm & Create"}
             </Button>
           </DialogFooter>
         </DialogContent>

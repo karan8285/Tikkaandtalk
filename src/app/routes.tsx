@@ -31,6 +31,8 @@ const KitchenDisplay = React.lazy(() => import("./pages/KitchenDisplay"));
 const ForgotPassword = React.lazy(() => import("./pages/ForgotPassword"));
 const TrackOrder = React.lazy(() => import("./pages/TrackOrder"));
 const GuestOrderTracking = React.lazy(() => import("./pages/GuestOrderTracking"));
+const CelebrationsHub = React.lazy(() => import("./pages/CelebrationsHub"));
+const PartyPackages = React.lazy(() => import("./pages/PartyPackages"));
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -197,6 +199,18 @@ export const router = createBrowserRouter(
         {
           path: "guest-order-tracking",
           element: <Lazy><GuestOrderTracking /></Lazy>,
+        },
+        {
+          path: "celebrations",
+          element: <Lazy><CelebrationsHub /></Lazy>,
+        },
+        {
+          path: "celebrations/:categoryId",
+          element: <Lazy><PartyPackages /></Lazy>,
+        },
+        {
+          path: "party-packages",
+          element: <Lazy><PartyPackages /></Lazy>,
         },
         // Catch-all route for 404s - redirect to home
         {

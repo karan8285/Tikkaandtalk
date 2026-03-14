@@ -1,5 +1,5 @@
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { ChefHat, Baby, Zap, UtensilsCrossed, ShoppingCart, Gift, AlertCircle, MessageCircle, Package } from "lucide-react";
+import { ChefHat, Baby, Zap, UtensilsCrossed, ShoppingCart, Gift, AlertCircle, MessageCircle, Package, PartyPopper } from "lucide-react";
 import { setWhatsAppConfig, getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
 import { ActiveOrderBar } from "../components/ActiveOrderBar";
 import { APP_CONFIG, LOGO_ALT, whatsAppOrderMessage } from "../lib/config";
@@ -241,6 +241,13 @@ export default function Home() {
       icon: UtensilsCrossed,
       color: APP_CONFIG.brand.primaryColor,
       route: "/regular-menu"
+    },
+    {
+      id: 5,
+      title: "Celebrations",
+      icon: PartyPopper,
+      color: APP_CONFIG.brand.primaryColor,
+      route: "/party-packages"
     }
   ];
 
@@ -386,11 +393,10 @@ export default function Home() {
       ) : (
         <>
           {/* Menu Categories Grid */}
-          <div className="px-4 sm:px-5 pb-4 sm:pb-5">
+          <div className="px-4 sm:px-5 pb-3 sm:pb-4">
             <div className="grid grid-cols-2 gap-3 sm:gap-4 max-w-lg mx-auto">
-              {menuCategories.map((category) => {
+              {menuCategories.filter(c => c.route !== "/party-packages").map((category) => {
                 const IconComponent = category.icon;
-                const countKey = category.route.replace("/", "").replace("-", "") as keyof MenuCounts;
                 let count = 0;
                 
                 // Map route to correct count
@@ -430,6 +436,44 @@ export default function Home() {
                   </button>
                 );
               })}
+            </div>
+          </div>
+
+          {/* Celebrations Banner - Full Width Featured */}
+          <div className="px-4 sm:px-5 pb-4 sm:pb-5">
+            <div className="max-w-lg mx-auto">
+              <button
+                onClick={() => navigate("/celebrations")}
+                className="relative w-full rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-200 active:scale-[0.98]"
+                style={{
+                  background: `linear-gradient(135deg, ${APP_CONFIG.brand.gradientStart}15, ${APP_CONFIG.brand.gradientEnd}20)`,
+                  border: `1px solid ${APP_CONFIG.brand.primaryColor}20`,
+                }}
+              >
+                <div className="flex items-center gap-3 p-4 sm:p-5">
+                  <div
+                    className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: `${APP_CONFIG.brand.primaryColor}12` }}
+                  >
+                    <PartyPopper
+                      className="w-7 h-7 sm:w-8 sm:h-8"
+                      strokeWidth={2}
+                      style={{ color: APP_CONFIG.brand.primaryColor }}
+                    />
+                  </div>
+                  <div className="text-left flex-1">
+                    <span className="text-sm sm:text-base font-bold block" style={{ color: "#4A4A4A" }}>
+                      Celebrations & Events
+                    </span>
+                    <span className="text-xs sm:text-sm text-gray-500">
+                      Birthday parties, catering & custom packages
+                    </span>
+                  </div>
+                  <svg className="w-5 h-5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </div>
+              </button>
             </div>
           </div>
 
