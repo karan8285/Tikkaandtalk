@@ -3,7 +3,10 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
+import { APP_CONFIG } from "../lib/config";
 import { toast } from "sonner";
+
+const BRAND = APP_CONFIG.brand.primaryColor;
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -297,7 +300,7 @@ export default function RegularMenu() {
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: "#FFF0F4" }}>
-                  <Heart className="w-4 h-4 fill-current" style={{ color: "#D91A60" }} />
+                  <Heart className="w-4 h-4 fill-current" style={{ color: BRAND }} />
                 </div>
                 <h2 className="font-bold text-base">Your Favorites</h2>
                 <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
@@ -366,14 +369,14 @@ export default function RegularMenu() {
                       {item.name}
                     </h4>
                     <p className="text-[10px] text-gray-400 mb-1">{item.category}</p>
-                    <p className="font-bold text-xs mb-2" style={{ color: "#D91A60" }}>
+                    <p className="font-bold text-xs mb-2" style={{ color: BRAND }}>
                       {formatIDR(item.price)}
                     </p>
                     <Button
                       size="sm"
                       onClick={() => handleAddToCart(item, 1)}
                       className="w-full h-7 text-[11px] font-semibold text-white"
-                      style={{ backgroundColor: "#D91A60" }}
+                      style={{ backgroundColor: BRAND }}
                     >
                       <Plus className="w-3 h-3 mr-1" />
                       Add to Cart

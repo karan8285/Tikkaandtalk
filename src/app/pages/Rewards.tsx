@@ -1,15 +1,16 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
+import { APP_CONFIG } from "../lib/config";
 import { Button } from "../components/ui/button";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Gift, ChevronLeft, Award, Ticket, Car, UtensilsCrossed, RefreshCw, Percent, Truck, Tag, Clock, CheckCircle, Crown, Copy } from "lucide-react";
+import { Gift, ChevronLeft, Award, Ticket, Car, UtensilsCrossed, RefreshCw, Percent, Truck, Tag, Clock, CheckCircle, Crown, Copy, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
-import logoImage from "../lib/logo";
+import { getRestaurantLogo } from "../lib/useRestaurantLogo";
 import { getWhatsAppNumber, getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
 import { formatIDR } from "../lib/currency";
 
-const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+const BRAND = APP_CONFIG.brand.primaryColor;
 
 interface Voucher {
   id: string;
@@ -50,6 +51,7 @@ interface UserVoucher {
 }
 
 export default function Rewards() {
+  const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
   const navigate = useNavigate();
   const { user, loading, accessToken, refreshProfile } = useAuth();
   const [loadingData, setLoadingData] = useState(true);
@@ -249,7 +251,7 @@ export default function Rewards() {
             <button
               onClick={() => navigate(-1)}
               className="flex items-center gap-2 text-lg font-medium"
-              style={{ color: "#D91A60" }}
+              style={{ color: BRAND }}
             >
               <ChevronLeft className="w-5 h-5" />
               Back
@@ -261,7 +263,7 @@ export default function Rewards() {
               onClick={handleRefreshPoints}
               disabled={refreshingPoints}
               className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-white/50 transition-colors"
-              style={{ color: "#D91A60" }}
+              style={{ color: BRAND }}
               title="Refresh points"
             >
               <RefreshCw className={`w-5 h-5 ${refreshingPoints ? "animate-spin" : ""}`} />
@@ -270,7 +272,7 @@ export default function Rewards() {
           
           {/* Logo */}
           <div className="flex justify-center mb-6">
-            <img src={logoImage} alt="Logo" className="h-24" />
+            <img src={getRestaurantLogo()} alt="Logo" className="h-24" />
           </div>
         </div>
       </header>
@@ -280,7 +282,7 @@ export default function Rewards() {
         <div className="bg-white rounded-2xl shadow-lg p-6 relative">
           {refreshingPoints && (
             <div className="absolute top-2 right-2">
-              <RefreshCw className="w-4 h-4 animate-spin" style={{ color: "#D91A60" }} />
+              <RefreshCw className="w-4 h-4 animate-spin" style={{ color: BRAND }} />
             </div>
           )}
           <div className="flex items-start gap-4">
@@ -318,7 +320,7 @@ export default function Rewards() {
                       className="absolute top-0 left-0 h-full transition-all duration-500"
                       style={{
                         width: `${progressPercentage}%`,
-                        backgroundColor: "#D91A60",
+                        backgroundColor: BRAND,
                       }}
                     />
                   </div>
@@ -338,7 +340,7 @@ export default function Rewards() {
             <span className="text-sm font-medium" style={{ color: "#666666" }}>
               Total Loyalty Points
             </span>
-            <span className="text-2xl font-bold" style={{ color: "#D91A60" }}>
+            <span className="text-2xl font-bold" style={{ color: BRAND }}>
               {user.points?.toLocaleString() || 0}
             </span>
           </div>
@@ -400,7 +402,7 @@ export default function Rewards() {
                         <div
                           className="px-4 py-1.5 text-center"
                           style={{
-                            backgroundColor: isFullyUsed ? "#9CA3AF" : "#D91A60",
+                            backgroundColor: isFullyUsed ? "#9CA3AF" : BRAND,
                           }}
                         >
                           <span className="text-white text-xs font-bold tracking-wider">
@@ -414,7 +416,7 @@ export default function Rewards() {
                           {/* Icon */}
                           <div
                             className="w-14 h-14 rounded-full flex items-center justify-center flex-shrink-0"
-                            style={{ backgroundColor: isFullyUsed ? "#E5E7EB" : "#D91A60" }}
+                            style={{ backgroundColor: isFullyUsed ? "#E5E7EB" : BRAND }}
                           >
                             <div className="text-white scale-75">
                               {getIconComponent(v.icon)}
@@ -446,7 +448,7 @@ export default function Rewards() {
                             )}
                             
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="flex items-center gap-1 text-xs" style={{ color: "#D91A60" }}>
+                              <span className="flex items-center gap-1 text-xs" style={{ color: BRAND }}>
                                 <Clock className="w-3 h-3" />
                                 Expires {v.expiryDate}
                               </span>
@@ -497,7 +499,7 @@ export default function Rewards() {
                               onClick={() => handleClaimVoucher(userVoucher.id)}
                               disabled={claiming === userVoucher.id}
                               className="w-full rounded-full font-bold text-sm"
-                              style={{ backgroundColor: "#D91A60", color: "#FFFFFF" }}
+                              style={{ backgroundColor: BRAND, color: "#FFFFFF" }}
                             >
                               {claiming === userVoucher.id ? "Claiming..." : "CLAIM VOUCHER"}
                             </Button>
@@ -511,9 +513,9 @@ export default function Rewards() {
                             <div className="flex items-center gap-2">
                               <div
                                 className="flex-1 bg-gray-50 border-2 border-dashed rounded-lg py-2 px-3 text-center"
-                                style={{ borderColor: "#D91A60" }}
+                                style={{ borderColor: BRAND }}
                               >
-                                <span className="text-base font-bold tracking-widest" style={{ color: "#D91A60" }}>
+                                <span className="text-base font-bold tracking-widest" style={{ color: BRAND }}>
                                   {userVoucher.promoCode}
                                 </span>
                               </div>
@@ -815,7 +817,7 @@ export default function Rewards() {
                         )}
                       </p>
                       {benefit.expiryDate && (
-                        <p className="text-xs" style={{ color: "#D91A60" }}>
+                        <p className="text-xs" style={{ color: BRAND }}>
                           Expires by {benefit.expiryDate}
                         </p>
                       )}
@@ -860,7 +862,7 @@ export default function Rewards() {
                         )}
                       </p>
                       {benefit.expiryDate && (
-                        <p className="text-xs" style={{ color: "#D91A60" }}>
+                        <p className="text-xs" style={{ color: BRAND }}>
                           Expires by {benefit.expiryDate}
                         </p>
                       )}
@@ -905,7 +907,7 @@ export default function Rewards() {
                         )}
                       </p>
                       {benefit.expiryDate && (
-                        <p className="text-xs" style={{ color: "#D91A60" }}>
+                        <p className="text-xs" style={{ color: BRAND }}>
                           Expires by {benefit.expiryDate}
                         </p>
                       )}
@@ -927,7 +929,7 @@ export default function Rewards() {
           <button
             onClick={() => window.open(`https://wa.me/${getWhatsAppNumber()}`, "_blank")}
             className="w-full py-4 flex items-center justify-center gap-3 font-bold text-lg text-white"
-            style={{ backgroundColor: "#D91A60" }}
+            style={{ backgroundColor: BRAND }}
           >
             <MessageCircle className="w-6 h-6" />
             {getWhatsAppDisplay()}

@@ -1,17 +1,22 @@
-import { useEffect, useState, useCallback } from "react";
-import { useParams, useNavigate } from "react-router";
+import { useState, useEffect } from "react";
+import { useNavigate, useParams } from "react-router";
 import { useAuth } from "../lib/auth";
+import { APP_CONFIG, LOGO_ALT } from "../lib/config";
+import { Button } from "../components/ui/button";
 import { Header } from "../components/Header";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Clock, MapPin, Phone, RefreshCw, Package, CheckCircle2, ChefHat, Truck, PartyPopper, XCircle, DollarSign, AlertCircle, CreditCard, Loader2, Ticket } from "lucide-react";
-import { Button } from "../components/ui/button";
 import { toast } from "sonner";
-import logoImage from "../lib/logo";
+import {
+  RefreshCw, MapPin, Phone, Clock, CheckCircle2,
+  Package, CreditCard, Ticket, DollarSign, AlertCircle, Loader2,
+} from "lucide-react";
+import { formatIDR } from "../lib/currency";
+import { getRestaurantLogo } from "../lib/useRestaurantLogo";
 import { getShortOrderId } from "../lib/orderUtils";
 import { getWhatsAppNumber, getWhatsAppDisplay } from "../lib/whatsapp";
 import { loadSnapJs, openSnapPayment } from "../lib/midtrans";
 
-const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+const BRAND = APP_CONFIG.brand.primaryColor;
 
 interface OrderItem {
   id: string;
@@ -75,7 +80,7 @@ const statusConfig: Record<string, { icon: string; color: string; description: s
   },
   cooking: { 
     icon: '🍳', 
-    color: '#D91A60', 
+    color: BRAND, 
     description: 'Preparing your food'
   },
   ready: { 
@@ -85,7 +90,7 @@ const statusConfig: Record<string, { icon: string; color: string; description: s
   },
   out_for_delivery: { 
     icon: '🚗', 
-    color: '#D91A60', 
+    color: BRAND, 
     description: 'On the way to you'
   },
   delivered: { 
@@ -111,6 +116,7 @@ const statusConfig: Record<string, { icon: string; color: string; description: s
 };
 
 export default function OrderTracking() {
+  const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
   const { orderId } = useParams();
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
@@ -310,14 +316,14 @@ export default function OrderTracking() {
     if (order.status === 'closed' && effectivePS !== 'paid') {
       return {
         message: `⏳ ${pointsAmount} points pending full payment`,
-        color: "#D91A60"
+        color: BRAND
       };
     }
     
     if (order.status === 'delivered') {
       return {
         message: `⏳ You will earn ${pointsAmount} points once fully paid`,
-        color: "#D91A60"
+        color: BRAND
       };
     }
     
@@ -453,18 +459,18 @@ export default function OrderTracking() {
         <div className="text-center mb-6">
           <div className="flex justify-center mb-2">
             <img 
-              src={logoImage} 
-              alt="Tikka N Talk - An Indian Kitchen" 
+              src={getRestaurantLogo()} 
+              alt={LOGO_ALT} 
               className="w-40 h-auto"
               style={{ 
-                filter: "drop-shadow(0 2px 8px rgba(217, 26, 96, 0.15))",
+                filter: `drop-shadow(0 2px 8px ${APP_CONFIG.brand.primaryShadow})`,
                 objectFit: "contain"
               }}
             />
           </div>
           <div className="mt-3 text-sm">
             <h2 className="text-2xl font-extrabold text-gray-900 mb-1">{getShortOrderId(order.orderNumber || order.id)}</h2>
-            <span className="font-semibold">Your Order ID:</span> {order.orderNumber || `TNT${order.id.substring(0, 8).toUpperCase()}`}
+            <span className="font-semibold">Your Order ID:</span> {order.orderNumber || `${APP_CONFIG.orders.prefix}${order.id.substring(0, 8).toUpperCase()}`}
             {order.createdByAdmin && (
               <div className="mt-2">
                 <span className="inline-block text-xs px-3 py-1 rounded-full bg-purple-100 text-purple-800 font-medium">
@@ -530,7 +536,7 @@ export default function OrderTracking() {
                       onClick={() => setShowPayConfirm(true)}
                       disabled={payingNow}
                       className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 rounded-full text-[11px] font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-60"
-                      style={{ backgroundColor: '#D91A60' }}
+                      style={{ backgroundColor: BRAND }}
                     >
                       {payingNow ? (
                         <Loader2 className="w-3 h-3 animate-spin" />
@@ -549,7 +555,7 @@ export default function OrderTracking() {
         {/* Order Details Card */}
         <div className="bg-white rounded-xl shadow-md p-5 mb-4">
           <h3 className="font-semibold mb-3 flex items-center gap-2">
-            <Package className="w-5 h-5" style={{ color: '#D91A60' }} />
+            <Package className="w-5 h-5" style={{ color: BRAND }} />
             Order Details
           </h3>
           
@@ -614,7 +620,7 @@ export default function OrderTracking() {
                 </span>
               </div>
             )}
-            <div className="flex justify-between pt-1.5 border-t font-bold text-lg" style={{ color: '#D91A60' }}>
+            <div className="flex justify-between pt-1.5 border-t font-bold text-lg" style={{ color: BRAND }}>
               <span>Total</span>
               <span>Rp {order.total.toLocaleString()}</span>
             </div>
@@ -647,7 +653,7 @@ export default function OrderTracking() {
         {/* Order Tracking Timeline */}
         <div className="bg-white rounded-xl shadow-md p-5 mb-4">
           <h3 className="font-semibold mb-4 flex items-center gap-2">
-            <Clock className="w-5 h-5" style={{ color: '#D91A60' }} />
+            <Clock className="w-5 h-5" style={{ color: BRAND }} />
             Order Tracking
           </h3>
 
@@ -749,8 +755,8 @@ export default function OrderTracking() {
             >
               {/* Header */}
               <div className="px-5 pt-5 pb-3 text-center">
-                <div className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center" style={{ backgroundColor: '#D91A6015' }}>
-                  <CreditCard className="w-7 h-7" style={{ color: '#D91A60' }} />
+                <div className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center" style={{ backgroundColor: `${BRAND}15` }}>
+                  <CreditCard className="w-7 h-7" style={{ color: BRAND }} />
                 </div>
                 <h3 className="text-lg font-bold text-gray-900">Confirm Payment</h3>
                 <p className="text-sm text-gray-500 mt-1">
@@ -759,7 +765,7 @@ export default function OrderTracking() {
               </div>
 
               {/* Payment Details */}
-              <div className="mx-5 mb-4 rounded-xl p-3.5" style={{ backgroundColor: '#FFF0F5', border: '1px solid #D91A6020' }}>
+              <div className="mx-5 mb-4 rounded-xl p-3.5" style={{ backgroundColor: '#FFF0F5', border: `1px solid ${BRAND}20` }}>
                 <div className="space-y-2">
                   {ps === 'partial' && (
                     <>
@@ -778,7 +784,7 @@ export default function OrderTracking() {
                     <span className="text-sm font-semibold text-gray-700">
                       {ps === 'partial' ? 'Remaining Amount' : 'Amount to Pay'}
                     </span>
-                    <span className="text-lg font-bold" style={{ color: '#D91A60' }}>
+                    <span className="text-lg font-bold" style={{ color: BRAND }}>
                       Rp {payAmount.toLocaleString()}
                     </span>
                   </div>
@@ -804,7 +810,7 @@ export default function OrderTracking() {
                   onClick={handleMidtransPayNow}
                   disabled={payingNow}
                   className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-60 flex items-center justify-center gap-1.5"
-                  style={{ backgroundColor: '#D91A60' }}
+                  style={{ backgroundColor: BRAND }}
                 >
                   {payingNow ? (
                     <Loader2 className="w-4 h-4 animate-spin" />

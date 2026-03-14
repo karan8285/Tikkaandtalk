@@ -10,6 +10,7 @@ import "slick-carousel/slick/slick.css";
 import "slick-carousel/slick/slick-theme.css";
 import { motion } from "motion/react";
 import { toast } from "sonner";
+import { APP_CONFIG } from "../lib/config";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -54,7 +55,7 @@ export default function FlashSale() {
       }
       .slick-dots li.slick-active button:before {
         opacity: 1;
-        color: #D91A60;
+        color: ${APP_CONFIG.brand.primaryColor};
       }
       .slick-slide img {
         display: block;

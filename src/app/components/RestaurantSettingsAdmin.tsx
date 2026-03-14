@@ -1,3 +1,5 @@
+import { MessageCircle, Store, Info, MapPin, Image, Upload, Trash2, Loader2 } from "lucide-react";
+import { APP_CONFIG } from "../lib/config";
 import { useState, useEffect } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
@@ -7,7 +9,6 @@ import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { toast } from "sonner";
 import { DeliveryZonesAdmin } from "./DeliveryZonesAdmin";
 import { Input } from "./ui/input";
-import { MessageCircle, Store, Info, MapPin, Image, Upload, Trash2, Loader2 } from "lucide-react";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -267,7 +268,7 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
               id="restaurant-name"
               value={settings.restaurantName}
               onChange={(e) => setSettings({ ...settings, restaurantName: e.target.value })}
-              placeholder="e.g., Tikka N Talk"
+              placeholder={`e.g., ${APP_CONFIG.restaurant.name}`}
               className="mt-1"
             />
           </div>
@@ -277,7 +278,7 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
               id="restaurant-tagline"
               value={settings.restaurantTagline}
               onChange={(e) => setSettings({ ...settings, restaurantTagline: e.target.value })}
-              placeholder="e.g., AN INDIAN KITCHEN"
+              placeholder={`e.g., ${APP_CONFIG.restaurant.tagline}`}
               className="mt-1"
             />
           </div>
@@ -285,7 +286,7 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
             <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200">
               <Info className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
               <p className="text-xs text-blue-700">
-                When empty, the app uses the default name "Tikka N Talk". Set your restaurant name here to customize it across all pages.
+                When empty, the app uses the default name "{APP_CONFIG.restaurant.name}". Set your restaurant name here to customize it across all pages.
               </p>
             </div>
           )}

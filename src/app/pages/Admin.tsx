@@ -30,8 +30,10 @@ import { BusinessInsightsAdmin } from "../components/BusinessInsightsAdmin";
 import { PaymentGatewayAdmin } from "../components/PaymentGatewayAdmin";
 import { getShortOrderId } from "../lib/orderUtils";
 import { formatPhoneForWhatsApp } from "../lib/whatsapp";
+import { APP_CONFIG } from "../lib/config";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+const BRAND = APP_CONFIG.brand.primaryColor;
 
 interface User {
   id: string;
@@ -941,9 +943,9 @@ export default function Admin() {
           <Card 
             className="p-4 cursor-pointer transition-all hover:shadow-md"
             style={{
-              borderLeft: '4px solid #D91A60',
+              borderLeft: `4px solid ${BRAND}`,
               backgroundColor: unpaidOrders.length > 0 ? '#FFF1F5' : undefined,
-              outline: paymentFilter === 'unpaid' ? '2px solid #D91A60' : 'none',
+              outline: paymentFilter === 'unpaid' ? `2px solid ${BRAND}` : 'none',
               outlineOffset: '-2px',
             }}
             onClick={() => {
@@ -956,12 +958,12 @@ export default function Admin() {
           >
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgba(217,26,96,0.1)' }}>
-                <AlertCircle className="w-5 h-5" style={{ color: '#D91A60' }} />
+                <AlertCircle className="w-5 h-5" style={{ color: BRAND }} />
               </div>
               <div className="min-w-0">
                 <p className="text-xs text-muted-foreground">Unpaid</p>
-                <p className="text-xl font-bold" style={{ color: unpaidOrders.length > 0 ? '#D91A60' : undefined }}>{unpaidOrders.length}</p>
-                <p className="text-[10px] font-medium truncate" style={{ color: '#D91A60' }}>{formatIDR(unpaidTotal)}</p>
+                <p className="text-xl font-bold" style={{ color: unpaidOrders.length > 0 ? BRAND : undefined }}>{unpaidOrders.length}</p>
+                <p className="text-[10px] font-medium truncate" style={{ color: BRAND }}>{formatIDR(unpaidTotal)}</p>
               </div>
             </div>
           </Card>
@@ -999,8 +1001,8 @@ export default function Admin() {
           <Card 
             className="p-4 cursor-pointer transition-all hover:shadow-md"
             style={{
-              borderLeft: '4px solid #D91A60',
-              outline: dateFilter === 'today' ? '2px solid #D91A60' : 'none',
+              borderLeft: `4px solid ${BRAND}`,
+              outline: dateFilter === 'today' ? `2px solid ${BRAND}` : 'none',
               outlineOffset: '-2px',
             }}
             onClick={() => {
@@ -1224,13 +1226,13 @@ export default function Admin() {
               {/* Filter Results Counter */}
               {hasActiveFilters && (
                 <div className="flex items-center justify-between rounded-lg px-3 py-2" style={{ backgroundColor: '#FFF1F5' }}>
-                  <p className="text-xs font-medium" style={{ color: '#D91A60' }}>
+                  <p className="text-xs font-medium" style={{ color: BRAND }}>
                     Showing {filteredOrders.length} of {orders.length} orders
                   </p>
                   <button
                     onClick={clearAllFilters}
                     className="text-xs font-semibold underline"
-                    style={{ color: '#D91A60' }}
+                    style={{ color: BRAND }}
                   >
                     Show All
                   </button>
@@ -1304,7 +1306,7 @@ export default function Admin() {
                   const effectivePS = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
                   const isPaid = effectivePS === 'paid';
                   const isPartial = effectivePS === 'partial';
-                  const borderColor = isPaid ? '#00AA99' : isPartial ? '#F59E0B' : '#D91A60';
+                  const borderColor = isPaid ? '#00AA99' : isPartial ? '#F59E0B' : BRAND;
                   
                   return (
                     <Card 
@@ -1344,7 +1346,7 @@ export default function Admin() {
                                   className="inline-flex items-center px-2 py-0.5 text-[11px] font-semibold rounded-full"
                                   style={{ 
                                     backgroundColor: isPaid ? '#E0F7F5' : '#FCE4EC',
-                                    color: isPaid ? '#00AA99' : '#D91A60'
+                                    color: isPaid ? '#00AA99' : BRAND
                                   }}
                                 >
                                   {isPaid ? '✅ Paid' : '⏳ Not Paid'}
@@ -1377,7 +1379,7 @@ export default function Admin() {
                             </div>
                           </div>
                           <div className="text-left md:text-right">
-                            <p className="font-semibold" style={{ color: isPaid ? '#1F2937' : '#D91A60' }}>{formatIDR(order.total)}</p>
+                            <p className="font-semibold" style={{ color: isPaid ? '#1F2937' : BRAND }}>{formatIDR(order.total)}</p>
                             {customer?.phone && (
                               <p className="text-xs text-muted-foreground">{customer.phone}</p>
                             )}
@@ -1449,7 +1451,7 @@ export default function Admin() {
                           )}
                           <div className="flex justify-between pt-1.5 mt-1 border-t border-gray-200 font-semibold">
                             <span>Total</span>
-                            <span style={{ color: isPaid ? '#1F2937' : '#D91A60' }}>{formatIDR(order.total)}</span>
+                            <span style={{ color: isPaid ? '#1F2937' : BRAND }}>{formatIDR(order.total)}</span>
                           </div>
                         </div>
 

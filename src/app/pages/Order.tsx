@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation } from "react-router";
 import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
+import { APP_CONFIG } from "../lib/config";
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -14,6 +15,8 @@ import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { JAKARTA_AREAS, getAreasByDistrict } from "../lib/delivery";
 import type { DeliveryZone } from "../lib/delivery";
+
+const BRAND = APP_CONFIG.brand.primaryColor;
 
 type OrderType = "pickup" | "delivery";
 
@@ -493,7 +496,7 @@ export default function Order() {
       try {
         const directRes = await fetch(
           `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1&zoom=18`,
-          { headers: { "User-Agent": "TikkaNTalk-App/1.0" } }
+          { headers: { "User-Agent": "RestaurantLoyaltyApp/1.0" } }
         );
         const directData = await directRes.json();
 
@@ -928,17 +931,17 @@ export default function Order() {
         <div className="flex items-center justify-center gap-3 mb-6">
           <div className="flex items-center gap-2">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all ${orderStep === 1 ? "text-white shadow-lg" : "text-white"}`}
-              style={{ backgroundColor: orderStep === 1 ? "#D91A60" : "#22C55E" }}>
+              style={{ backgroundColor: orderStep === 1 ? BRAND : "#22C55E" }}>
               {orderStep > 1 ? <CheckCircle2 className="w-4.5 h-4.5" /> : "1"}
             </div>
             <span className={`text-xs font-semibold ${orderStep === 1 ? "text-[#1E1B4B]" : "text-green-600"}`}>
               {orderType === "delivery" ? "Delivery" : "Pickup"}
             </span>
           </div>
-          <div className={`w-12 h-0.5 rounded-full transition-all ${orderStep >= 2 ? "bg-[#D91A60]" : "bg-gray-200"}`} />
+          <div className={`w-12 h-0.5 rounded-full transition-all ${orderStep >= 2 ? "" : "bg-gray-200"}`} style={orderStep >= 2 ? { backgroundColor: BRAND } : {}} />
           <div className="flex items-center gap-2">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all ${orderStep === 2 ? "text-white shadow-lg" : "bg-gray-200 text-gray-400"}`}
-              style={orderStep === 2 ? { backgroundColor: "#D91A60" } : {}}>
+              style={orderStep === 2 ? { backgroundColor: BRAND } : {}}>
               2
             </div>
             <span className={`text-xs font-semibold ${orderStep === 2 ? "text-[#1E1B4B]" : "text-gray-400"}`}>
@@ -960,7 +963,7 @@ export default function Order() {
               </h2>
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-md" style={{ background: "linear-gradient(135deg, #D91A60 0%, #FF4081 100%)" }}>
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-md" style={{ background: `linear-gradient(135deg, ${BRAND} 0%, #FF4081 100%)` }}>
                     {displayName.charAt(0).toUpperCase()}
                   </div>
                   <div>
@@ -1085,9 +1088,10 @@ export default function Order() {
                           key={addr.id}
                           className={`relative rounded-lg border-2 transition-all ${
                             isSelected
-                              ? "border-[#D91A60] bg-pink-50/50"
+                              ? "bg-pink-50/50"
                               : "border-gray-200 hover:border-gray-300"
                           }`}
+                          style={isSelected ? { borderColor: BRAND } : {}}
                         >
                           <button
                             type="button"
@@ -1097,12 +1101,13 @@ export default function Order() {
                             <div className="flex items-center gap-2 mb-1">
                               <LabelIcon
                                 className="w-3.5 h-3.5 shrink-0"
-                                style={{ color: isSelected ? "#D91A60" : "#6B7280" }}
+                                style={{ color: isSelected ? BRAND : "#6B7280" }}
                               />
                               <span
                                 className={`text-xs font-semibold uppercase tracking-wide ${
-                                  isSelected ? "text-[#D91A60]" : "text-gray-500"
+                                  isSelected ? "" : "text-gray-500"
                                 }`}
+                                style={isSelected ? { color: BRAND } : {}}
                               >
                                 {addr.label}
                               </span>
@@ -1137,7 +1142,7 @@ export default function Order() {
                           {/* Selected indicator */}
                           {isSelected && (
                             <div className="absolute top-3 right-10">
-                              <CheckCircle2 className="w-4 h-4" style={{ color: "#D91A60" }} />
+                              <CheckCircle2 className="w-4 h-4" style={{ color: BRAND }} />
                             </div>
                           )}
                         </div>
@@ -1149,7 +1154,9 @@ export default function Order() {
                       <button
                         type="button"
                         onClick={handleStartAddNew}
-                        className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-lg border-2 border-dashed border-gray-300 text-xs font-medium text-gray-500 hover:border-[#D91A60] hover:text-[#D91A60] transition-colors"
+                        className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-lg border-2 border-dashed border-gray-300 text-xs font-medium text-gray-500 transition-colors"
+                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = BRAND; e.currentTarget.style.color = BRAND; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#D1D5DB'; e.currentTarget.style.color = '#6B7280'; }}
                       >
                         <Plus className="w-3.5 h-3.5" />
                         Add New Address
@@ -1188,12 +1195,13 @@ export default function Order() {
                     }}
                     className={`w-full flex items-center justify-between h-10 px-3 rounded-lg border-2 text-sm transition-colors ${
                       selectedArea
-                        ? "border-[#D91A60] bg-pink-50/40 text-gray-900"
+                        ? "bg-pink-50/40 text-gray-900"
                         : "border-amber-200 bg-amber-50/60 text-gray-400"
                     }`}
+                    style={selectedArea ? { borderColor: BRAND } : {}}
                   >
                     <div className="flex items-center gap-2 truncate">
-                      <MapPinned className="w-4 h-4 shrink-0" style={{ color: selectedArea ? "#D91A60" : "#9CA3AF" }} />
+                      <MapPinned className="w-4 h-4 shrink-0" style={{ color: selectedArea ? BRAND : "#9CA3AF" }} />
                       <span className={selectedArea ? "font-medium text-sm" : "text-sm"}>
                         {selectedArea || "Search or select location..."}
                       </span>
@@ -1289,8 +1297,9 @@ export default function Order() {
                                   type="button"
                                   onClick={() => handleSelectArea(areaKey)}
                                   className={`w-full text-left px-3 py-2.5 text-sm hover:bg-pink-50 transition-colors flex items-center justify-between ${
-                                    selectedArea === areaKey ? "bg-pink-50 text-[#D91A60] font-medium" : "text-gray-700"
+                                    selectedArea === areaKey ? "bg-pink-50 font-medium" : "text-gray-700"
                                   }`}
+                                  style={selectedArea === areaKey ? { color: BRAND } : {}}
                                 >
                                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                     <span className="truncate">{area.name}</span>
@@ -1310,7 +1319,7 @@ export default function Order() {
                                     )}
                                   </div>
                                   {selectedArea === areaKey && (
-                                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: "#D91A60" }} />
+                                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" style={{ color: BRAND }} />
                                   )}
                                 </button>
                               );
@@ -1425,7 +1434,7 @@ export default function Order() {
                         {" "}&middot;{" "}
                         Distance: <span className="font-medium">{deliveryFeeResult.distance?.toFixed(1)} km</span>
                       </p>
-                      <p className="text-sm font-bold mt-1" style={{ color: "#D91A60" }}>
+                      <p className="text-sm font-bold mt-1" style={{ color: BRAND }}>
                         Delivery Fee: {formatIDR(deliveryFeeResult.fee || 0)}
                       </p>
                     </div>
@@ -1472,7 +1481,7 @@ export default function Order() {
                       type="button"
                       onClick={() => setSaveNewAddress(true)}
                       className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white shadow-md hover:shadow-lg active:scale-[0.98] transition-all duration-200"
-                      style={{ background: "linear-gradient(135deg, #D91A60 0%, #FF4081 100%)" }}
+                      style={{ background: `linear-gradient(135deg, ${BRAND} 0%, #FF4081 100%)` }}
                     >
                       <Bookmark className="w-4.5 h-4.5" />
                       Save This Address for Future Orders
@@ -1488,9 +1497,10 @@ export default function Order() {
                             onClick={() => setNewAddressLabel(value)}
                             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
                               newAddressLabel === value
-                                ? "border-[#D91A60] bg-pink-50 text-[#D91A60]"
+                                ? "bg-pink-50"
                                 : "border-gray-200 text-gray-500 hover:border-gray-300"
                             }`}
+                            style={newAddressLabel === value ? { borderColor: BRAND, color: BRAND } : {}}
                           >
                             <Icon className="w-3 h-3" />
                             {value}
@@ -1502,7 +1512,7 @@ export default function Order() {
                           type="button"
                           size="sm"
                           className="flex-1 h-8 text-xs text-white"
-                          style={{ backgroundColor: "#D91A60" }}
+                          style={{ backgroundColor: BRAND }}
                           onClick={handleSaveNewAddress}
                           disabled={savingAddress}
                         >
@@ -1550,7 +1560,7 @@ export default function Order() {
                           {" "}&middot;{" "}
                           Distance: <span className="font-medium">{deliveryFeeResult.distance?.toFixed(1)} km</span>
                         </p>
-                        <p className="text-sm font-bold mt-1" style={{ color: "#D91A60" }}>
+                        <p className="text-sm font-bold mt-1" style={{ color: BRAND }}>
                           Delivery Fee: {formatIDR(deliveryFeeResult.fee || 0)}
                         </p>
                       </div>
@@ -1709,9 +1719,9 @@ export default function Order() {
             {/* Promo Code Section */}
             {user && (
               <div className="rounded-2xl border border-pink-100 bg-gradient-to-br from-pink-50/60 to-rose-50/40 p-4 shadow-sm">
-                <h2 className="text-base font-bold text-[#D91A60] mb-3 flex items-center gap-2">
+                <h2 className="text-base font-bold mb-3 flex items-center gap-2" style={{ color: BRAND }}>
                   <div className="w-7 h-7 rounded-lg bg-pink-100 flex items-center justify-center">
-                    <Ticket className="w-4 h-4 text-[#D91A60]" />
+                    <Ticket className="w-4 h-4" style={{ color: BRAND }} />
                   </div>
                   Promo Code
                 </h2>
@@ -1719,7 +1729,7 @@ export default function Order() {
               <div className="flex items-center gap-2 p-3 rounded-lg" style={{ backgroundColor: "#FFF0F4" }}>
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-sm tracking-wider" style={{ color: "#D91A60" }}>
+                    <span className="font-bold text-sm tracking-wider" style={{ color: BRAND }}>
                       {promoApplied.code}
                     </span>
                     <CheckCircle2 className="w-4 h-4 text-green-500" />
@@ -1812,19 +1822,19 @@ export default function Order() {
                             className={`w-full flex items-center gap-3 p-2.5 rounded-lg border-2 text-left transition-all ${
                               !meetsMinOrder
                                 ? "border-gray-200 opacity-50 cursor-not-allowed"
-                                : "border-gray-200 hover:border-[#D91A60] hover:bg-pink-50 active:scale-[0.98]"
+                                : "border-gray-200 hover:bg-pink-50 active:scale-[0.98]"
                             }`}
                           >
                             <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: "#FFF0F4" }}>
-                              <Ticket className="w-5 h-5" style={{ color: "#D91A60" }} />
+                              <Ticket className="w-5 h-5" style={{ color: BRAND }} />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold tracking-wider" style={{ color: "#D91A60" }}>
+                                <span className="text-xs font-bold tracking-wider" style={{ color: BRAND }}>
                                   {promo.promoCode}
                                 </span>
                                 {getDiscountLabel() && (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ backgroundColor: "#D91A60" }}>
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ backgroundColor: BRAND }}>
                                     {getDiscountLabel()}
                                   </span>
                                 )}
@@ -1868,7 +1878,7 @@ export default function Order() {
                       className="w-full flex items-center justify-between text-xs font-semibold text-gray-500 mb-2"
                     >
                       <span className="flex items-center gap-1.5">
-                        <Gift className="w-3.5 h-3.5" style={{ color: "#D91A60" }} />
+                        <Gift className="w-3.5 h-3.5" style={{ color: BRAND }} />
                         Vouchers to Claim ({unclaimedVouchers.length})
                       </span>
                       <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showUnclaimedSection ? "rotate-180" : ""}`} />
@@ -1891,13 +1901,13 @@ export default function Order() {
                               className="flex items-center gap-3 p-2.5 rounded-lg border-2 border-dashed border-gray-200 bg-gray-50/50"
                             >
                               <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-gradient-to-br from-pink-100 to-pink-50">
-                                <Gift className="w-5 h-5" style={{ color: "#D91A60" }} />
+                                <Gift className="w-5 h-5" style={{ color: BRAND }} />
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
                                   <p className="text-[11px] font-semibold text-gray-800 truncate">{v.title}</p>
                                   {getLabel() && (
-                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 border" style={{ borderColor: "#D91A60", color: "#D91A60" }}>
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 border" style={{ borderColor: BRAND, color: BRAND }}>
                                       {getLabel()}
                                     </span>
                                   )}
@@ -1934,7 +1944,7 @@ export default function Order() {
                                 onClick={() => handleClaimVoucher(uv.id)}
                                 disabled={isClaiming}
                                 className="shrink-0 text-[11px] font-bold rounded-full px-3 py-1 h-auto text-white"
-                                style={{ backgroundColor: "#D91A60" }}
+                                style={{ backgroundColor: BRAND }}
                               >
                                 {isClaiming ? <Loader2 className="w-3 h-3 animate-spin" /> : "Claim"}
                               </Button>
@@ -2007,7 +2017,7 @@ export default function Order() {
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-500">Delivery Fee</span>
                       {deliveryFeeResult?.available ? (
-                        <span className={`tabular-nums font-medium ${promoApplied?.freeDelivery ? "line-through text-gray-400" : ""}`} style={promoApplied?.freeDelivery ? {} : { color: "#D91A60" }}>
+                        <span className={`tabular-nums font-medium ${promoApplied?.freeDelivery ? "line-through text-gray-400" : ""}`} style={promoApplied?.freeDelivery ? {} : { color: BRAND }}>
                           {promoApplied?.freeDelivery ? formatIDR(rawDeliveryFee) : formatIDR(deliveryFee)}
                         </span>
                       ) : (
@@ -2021,7 +2031,7 @@ export default function Order() {
                   )}
                   <div className="flex justify-between text-base font-bold pt-2 border-t border-amber-200/60">
                     <span className="text-[#1E1B4B]">{orderType === "delivery" && !deliveryFeeResult?.available ? "Estimated Total" : "Total"}</span>
-                    <span className="tabular-nums" style={{ color: "#D91A60" }}>
+                    <span className="tabular-nums" style={{ color: BRAND }}>
                       {formatIDR(estimatedTotal)}
                     </span>
                   </div>
@@ -2039,7 +2049,7 @@ export default function Order() {
           {orderStep === 1 && (
             <div className="flex items-center justify-between mb-2.5 px-1">
               <span className="text-xs text-gray-500">{cartItems.reduce((sum, i) => sum + i.quantity, 0)} items</span>
-              <span className="text-sm font-bold" style={{ color: "#D91A60" }}>{formatIDR(subtotal)}</span>
+              <span className="text-sm font-bold" style={{ color: BRAND }}>{formatIDR(subtotal)}</span>
             </div>
           )}
           {orderStep === 1 ? (
@@ -2074,7 +2084,7 @@ export default function Order() {
                 window.scrollTo({ top: 0, behavior: "smooth" });
               }}
               className="w-full h-12 text-base font-bold text-white rounded-full flex items-center justify-center gap-2 shadow-lg hover:shadow-xl active:scale-[0.98] transition-all"
-              style={{ background: "linear-gradient(135deg, #D91A60 0%, #FF4081 100%)" }}
+              style={{ background: `linear-gradient(135deg, ${BRAND} 0%, #FF4081 100%)` }}
             >
               Continue
               <ChevronRight className="w-5 h-5" />
@@ -2091,7 +2101,7 @@ export default function Order() {
             <Button
               onClick={handleProceed}
               className="w-full h-12 text-base font-bold text-white rounded-full flex items-center justify-center gap-2 shadow-lg hover:shadow-xl active:scale-[0.98] transition-all"
-              style={{ background: "linear-gradient(135deg, #D91A60 0%, #FF4081 100%)" }}
+              style={{ background: `linear-gradient(135deg, ${BRAND} 0%, #FF4081 100%)` }}
             >
               {paymentMethod === "pay-now" ? "Proceed to Payment" : paymentMethod === "pay-later" ? "Confirm & Place Order" : "Continue"}
               <ChevronRight className="w-5 h-5" />

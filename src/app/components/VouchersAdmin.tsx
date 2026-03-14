@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { APP_CONFIG } from "../lib/config";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -462,7 +463,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
 
   const getTargetColor = (voucher: Voucher) => {
     if (voucher.targetType === "tier" && voucher.targetTier) return TIER_COLORS[voucher.targetTier] || "#9CA3AF";
-    if (voucher.targetType === "specific") return "#D91A60";
+    if (voucher.targetType === "specific") return BRAND;
     return "#6B7280";
   };
 
@@ -490,6 +491,8 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
     );
   }
 
+  const BRAND = APP_CONFIG.brand.primaryColor;
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -499,7 +502,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
             Create and manage vouchers with targeting
           </p>
         </div>
-        <Button onClick={() => openEditDialog()} style={{ backgroundColor: "#D91A60" }}>
+        <Button onClick={() => openEditDialog()} style={{ backgroundColor: BRAND }}>
           <Plus className="w-4 h-4 mr-2" />
           Add Voucher
         </Button>
@@ -523,7 +526,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
                   <div className="flex items-center gap-3">
                     <div
                       className="w-12 h-12 rounded-full flex items-center justify-center"
-                      style={{ backgroundColor: "#D91A60", color: "#FFFFFF" }}
+                      style={{ backgroundColor: BRAND, color: "#FFFFFF" }}
                     >
                       {getIconComponent(voucher.icon)}
                     </div>
@@ -536,7 +539,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
                         {getDiscountLabel(voucher) && (
                           <Badge
                             className="text-xs text-white"
-                            style={{ backgroundColor: "#D91A60" }}
+                            style={{ backgroundColor: BRAND }}
                           >
                             {getDiscountLabel(voucher)}
                           </Badge>
@@ -599,7 +602,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
                 <div className="text-sm space-y-1">
                   <p>
                     <span className="font-medium">Expires:</span>{" "}
-                    <span style={{ color: "#D91A60" }}>{voucher.expiryDate}</span>
+                    <span style={{ color: BRAND }}>{voucher.expiryDate}</span>
                   </p>
                   {voucher.conditions && (
                     <p className="text-xs text-muted-foreground">{voucher.conditions}</p>
@@ -788,7 +791,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
                       key={cat}
                       variant="outline"
                       className="text-xs cursor-pointer hover:bg-red-50"
-                      style={{ borderColor: "#D91A60", color: "#D91A60" }}
+                      style={{ borderColor: BRAND, color: BRAND }}
                       onClick={() => setApplicableCategories(applicableCategories.filter(c => c !== cat))}
                     >
                       {cat} <X className="w-3 h-3 ml-1" />
@@ -859,11 +862,12 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
                   type="button"
                   onClick={() => setTargetType("all")}
                   className={`p-3 rounded-lg border-2 text-center transition-all ${
-                    targetType === "all" ? "border-[#D91A60] bg-pink-50" : "border-gray-200 hover:border-gray-300"
+                    targetType === "all" ? "bg-pink-50" : "border-gray-200 hover:border-gray-300"
                   }`}
+                  style={targetType === "all" ? { borderColor: BRAND } : {}}
                 >
-                  <Users className="w-5 h-5 mx-auto mb-1" style={{ color: targetType === "all" ? "#D91A60" : "#6B7280" }} />
-                  <p className="text-xs font-semibold" style={{ color: targetType === "all" ? "#D91A60" : "#374151" }}>
+                  <Users className="w-5 h-5 mx-auto mb-1" style={{ color: targetType === "all" ? BRAND : "#6B7280" }} />
+                  <p className="text-xs font-semibold" style={{ color: targetType === "all" ? BRAND : "#374151" }}>
                     All Customers
                   </p>
                 </button>
@@ -871,11 +875,12 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
                   type="button"
                   onClick={() => setTargetType("tier")}
                   className={`p-3 rounded-lg border-2 text-center transition-all ${
-                    targetType === "tier" ? "border-[#D91A60] bg-pink-50" : "border-gray-200 hover:border-gray-300"
+                    targetType === "tier" ? "bg-pink-50" : "border-gray-200 hover:border-gray-300"
                   }`}
+                  style={targetType === "tier" ? { borderColor: BRAND } : {}}
                 >
-                  <Crown className="w-5 h-5 mx-auto mb-1" style={{ color: targetType === "tier" ? "#D91A60" : "#6B7280" }} />
-                  <p className="text-xs font-semibold" style={{ color: targetType === "tier" ? "#D91A60" : "#374151" }}>
+                  <Crown className="w-5 h-5 mx-auto mb-1" style={{ color: targetType === "tier" ? BRAND : "#6B7280" }} />
+                  <p className="text-xs font-semibold" style={{ color: targetType === "tier" ? BRAND : "#374151" }}>
                     By Tier
                   </p>
                 </button>
@@ -883,11 +888,12 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
                   type="button"
                   onClick={() => { setTargetType("specific"); fetchUsers(); }}
                   className={`p-3 rounded-lg border-2 text-center transition-all ${
-                    targetType === "specific" ? "border-[#D91A60] bg-pink-50" : "border-gray-200 hover:border-gray-300"
+                    targetType === "specific" ? "bg-pink-50" : "border-gray-200 hover:border-gray-300"
                   }`}
+                  style={targetType === "specific" ? { borderColor: BRAND } : {}}
                 >
-                  <UserPlus className="w-5 h-5 mx-auto mb-1" style={{ color: targetType === "specific" ? "#D91A60" : "#6B7280" }} />
-                  <p className="text-xs font-semibold" style={{ color: targetType === "specific" ? "#D91A60" : "#374151" }}>
+                  <UserPlus className="w-5 h-5 mx-auto mb-1" style={{ color: targetType === "specific" ? BRAND : "#6B7280" }} />
+                  <p className="text-xs font-semibold" style={{ color: targetType === "specific" ? BRAND : "#374151" }}>
                     Specific Users
                   </p>
                 </button>
@@ -933,7 +939,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
                             key={phone}
                             variant="outline"
                             className="py-1 px-2 flex items-center gap-1"
-                            style={{ borderColor: "#D91A60", color: "#D91A60" }}
+                            style={{ borderColor: BRAND, color: BRAND }}
                           >
                             {user ? `${user.name} (${phone})` : phone}
                             <button type="button" onClick={() => removeTargetPhone(phone)}>
@@ -1014,7 +1020,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
             <Button variant="outline" onClick={() => setEditDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSave} disabled={saving} style={{ backgroundColor: "#D91A60" }}>
+            <Button onClick={handleSave} disabled={saving} style={{ backgroundColor: BRAND }}>
               {saving ? "Saving..." : "Save Voucher"}
             </Button>
           </DialogFooter>
@@ -1059,20 +1065,22 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
                 type="button"
                 onClick={() => setAssignMode("phone")}
                 className={`p-3 rounded-lg border-2 text-center transition-all ${
-                  assignMode === "phone" ? "border-[#D91A60] bg-pink-50" : "border-gray-200"
+                  assignMode === "phone" ? "bg-pink-50" : "border-gray-200"
                 }`}
+                style={assignMode === "phone" ? { borderColor: BRAND } : {}}
               >
-                <UserPlus className="w-5 h-5 mx-auto mb-1" style={{ color: assignMode === "phone" ? "#D91A60" : "#6B7280" }} />
+                <UserPlus className="w-5 h-5 mx-auto mb-1" style={{ color: assignMode === "phone" ? BRAND : "#6B7280" }} />
                 <p className="text-xs font-semibold">By Phone</p>
               </button>
               <button
                 type="button"
                 onClick={() => setAssignMode("tier")}
                 className={`p-3 rounded-lg border-2 text-center transition-all ${
-                  assignMode === "tier" ? "border-[#D91A60] bg-pink-50" : "border-gray-200"
+                  assignMode === "tier" ? "bg-pink-50" : "border-gray-200"
                 }`}
+                style={assignMode === "tier" ? { borderColor: BRAND } : {}}
               >
-                <Crown className="w-5 h-5 mx-auto mb-1" style={{ color: assignMode === "tier" ? "#D91A60" : "#6B7280" }} />
+                <Crown className="w-5 h-5 mx-auto mb-1" style={{ color: assignMode === "tier" ? BRAND : "#6B7280" }} />
                 <p className="text-xs font-semibold">By Tier</p>
               </button>
             </div>
@@ -1126,7 +1134,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
             <Button variant="outline" onClick={() => setAssignDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={handleAssignVoucher} disabled={assigning} style={{ backgroundColor: "#D91A60" }}>
+            <Button onClick={handleAssignVoucher} disabled={assigning} style={{ backgroundColor: BRAND }}>
               {assigning ? "Assigning..." : assignMode === "tier" ? `Assign to ${assignTier}` : "Assign"}
             </Button>
           </DialogFooter>

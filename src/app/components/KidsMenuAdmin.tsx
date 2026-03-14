@@ -1,16 +1,6 @@
-import { useState, useEffect } from "react";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
-import { Textarea } from "./ui/textarea";
-import { Card } from "./ui/card";
-import { Badge } from "./ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
-import { Switch } from "./ui/switch";
-import { Baby, Plus, Pencil, Trash2, Image as ImageIcon } from "lucide-react";
-import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { APP_CONFIG } from "../lib/config";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -226,10 +216,10 @@ export function KidsMenuAdmin({ customToken }: Props) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Baby className="w-5 h-5 text-[#D91A60]" />
+          <Baby className="w-5 h-5" style={{ color: APP_CONFIG.brand.primaryColor }} />
           <h2 className="text-xl font-semibold">Kids Menu Management</h2>
         </div>
-        <Button onClick={openCreateDialog} className="bg-[#D91A60] hover:bg-[#D91A60]/90">
+        <Button onClick={openCreateDialog} className="bg-primary hover:bg-primary/90">
           <Plus className="w-4 h-4 mr-2" />
           Add Item
         </Button>
@@ -290,7 +280,7 @@ export function KidsMenuAdmin({ customToken }: Props) {
                       <span className="text-sm text-gray-500 line-through">
                         {formatIDR(item.originalPrice)}
                       </span>
-                      <span className="ml-2 text-lg font-bold text-[#D91A60]">
+                      <span className="ml-2 text-lg font-bold" style={{ color: APP_CONFIG.brand.primaryColor }}>
                         {formatIDR(item.finalPrice)}
                       </span>
                       <span className="ml-2 text-sm text-green-600">
@@ -445,7 +435,7 @@ export function KidsMenuAdmin({ customToken }: Props) {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSave} disabled={saving} className="bg-[#D91A60] hover:bg-[#D91A60]/90">
+            <Button onClick={handleSave} disabled={saving} className="bg-primary hover:bg-primary/90">
               {saving ? "Saving..." : editingItem ? "Update" : "Create"}
             </Button>
           </DialogFooter>

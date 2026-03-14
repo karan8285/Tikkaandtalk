@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useRef, useMemo } from "react";
 import { useAuth } from "./auth";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { APP_CONFIG } from "./config";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -32,7 +33,7 @@ interface CartContextType {
 
 // Persist context across HMR reloads — when Vite hot-reloads this module,
 // createContext() would create a NEW object, breaking existing consumers.
-const CART_CTX_KEY = "__TIKKA_CART_CTX__";
+const CART_CTX_KEY = APP_CONFIG.keys.cartContextKey;
 const CartContext = ((globalThis as any)[CART_CTX_KEY] ??=
   createContext<CartContextType | undefined>(undefined)) as React.Context<CartContextType | undefined>;
 

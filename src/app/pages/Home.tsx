@@ -1,14 +1,17 @@
-import { ChefHat, Baby, Zap, UtensilsCrossed, MessageCircle, Package, Gift, ShoppingCart, AlertCircle } from "lucide-react";
-import { getWhatsAppLink, setWhatsAppConfig, getWhatsAppDisplay, getWhatsAppNumber } from "../lib/whatsapp";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { ChefHat, Baby, Zap, UtensilsCrossed, ShoppingCart, Gift, AlertCircle, MessageCircle, Package } from "lucide-react";
+import { setWhatsAppConfig, getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
+import { ActiveOrderBar } from "../components/ActiveOrderBar";
+import { APP_CONFIG, LOGO_ALT, whatsAppOrderMessage } from "../lib/config";
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
-import logoImage from "../lib/logo";
+import { useRestaurantLogo, cacheRestaurantLogo, notifyLogoUpdate } from "../lib/useRestaurantLogo";
 import { Badge } from "../components/ui/badge";
 import { Alert, AlertDescription } from "../components/ui/alert";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { ActiveOrderBar } from "../components/ActiveOrderBar";
+import { Mascot } from "../components/Mascot";
+import { useMascot } from "../lib/mascot-context";
 
 interface MenuCounts {
   todaysSpecial: number;
@@ -36,6 +39,7 @@ export default function Home() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { totalItems } = useCart();
+  const cachedLogo = useRestaurantLogo();
   const [menuCounts, setMenuCounts] = useState<MenuCounts>({
     todaysSpecial: 0,
     kidsMenu: 0,
@@ -67,6 +71,9 @@ export default function Home() {
           if (status.whatsappNumber) {
             setWhatsAppConfig(status.whatsappNumber, status.whatsappDisplay);
           }
+          // Cache logo URL in localStorage for instant display on next visit
+          cacheRestaurantLogo(status.restaurantLogoUrl || null);
+          notifyLogoUpdate();
         } else {
           // Silently fail - restaurant is accepting orders by default
           setRestaurantStatus({ isOpen: true, acceptingOrders: true });
@@ -200,39 +207,39 @@ export default function Home() {
     fetchUserCounts();
   }, [user]);
 
-  const DEFAULT_ADDRESS = "Jl. Epicentrum Tengah No.3, Rasuna Garden Food Street, Karet Kuningan, Setiabudi, South Jakarta 12940";
+  const DEFAULT_ADDRESS = APP_CONFIG.restaurant.defaultAddress;
 
   // Derive display values from restaurant status
   const displayAddress = restaurantStatus.restaurantAddress || DEFAULT_ADDRESS;
-  const displayLogoSrc = restaurantStatus.restaurantLogoUrl || logoImage;
+  const displayLogoSrc = restaurantStatus.restaurantLogoUrl || cachedLogo;
 
   const menuCategories = [
     {
       id: 1,
       title: "Today's Special",
       icon: ChefHat,
-      color: "#D91A60",
+      color: APP_CONFIG.brand.primaryColor,
       route: "/todays-special"
     },
     {
       id: 2,
       title: "Kids Menu",
       icon: Baby,
-      color: "#D91A60",
+      color: APP_CONFIG.brand.primaryColor,
       route: "/kids-menu"
     },
     {
       id: 3,
       title: "Flash Sale",
       icon: Zap,
-      color: "#D91A60",
+      color: APP_CONFIG.brand.primaryColor,
       route: "/flash-sale"
     },
     {
       id: 4,
       title: "Regular Menu",
       icon: UtensilsCrossed,
-      color: "#D91A60",
+      color: APP_CONFIG.brand.primaryColor,
       route: "/regular-menu"
     }
   ];
@@ -242,11 +249,11 @@ export default function Home() {
   };
 
   const handleOrderLineClick = () => {
-    window.open(getWhatsAppLink("Hello Tikka N Talk, I want to place an order."), "_blank");
+    window.open(getWhatsAppLink(whatsAppOrderMessage()), "_blank");
   };
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: "#FFF5F7" }}>
+    <div className="min-h-screen flex flex-col" style={{ backgroundColor: APP_CONFIG.brand.backgroundTint }}>
       {/* Login/Register Link */}
       <div className="px-5 sm:px-7 pt-4 sm:pt-5">
         <div className="max-w-lg mx-auto flex items-center justify-between">
@@ -254,7 +261,7 @@ export default function Home() {
             <button
               onClick={() => navigate("/profile")}
               className="text-base font-medium hover:underline"
-              style={{ color: "#D91A60" }}
+              style={{ color: APP_CONFIG.brand.primaryColor }}
             >
               {user.name || user.phone}
             </button>
@@ -262,7 +269,7 @@ export default function Home() {
             <button
               onClick={() => navigate("/login")}
               className="text-base font-medium hover:underline"
-              style={{ color: "#D91A60" }}
+              style={{ color: APP_CONFIG.brand.primaryColor }}
             >
               Login / Register
             </button>
@@ -273,11 +280,11 @@ export default function Home() {
             onClick={() => navigate("/cart")}
             className="relative p-2.5 -mr-2"
           >
-            <ShoppingCart className="w-6 sm:w-7 h-6 sm:h-7" style={{ color: "#D91A60" }} />
+            <ShoppingCart className="w-6 sm:w-7 h-6 sm:h-7" style={{ color: APP_CONFIG.brand.primaryColor }} />
             {totalItems > 0 && (
               <span
                 className="absolute -top-1 -right-1 w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center text-white"
-                style={{ backgroundColor: "#D91A60" }}
+                style={{ backgroundColor: APP_CONFIG.brand.primaryColor }}
               >
                 {totalItems}
               </span>
@@ -292,16 +299,26 @@ export default function Home() {
         <div className="flex justify-center">
           <img 
             src={displayLogoSrc} 
-            alt="Tikka N Talk - An Indian Kitchen" 
+            alt={LOGO_ALT} 
             className="w-48 sm:w-64 h-auto max-w-full mx-auto"
             style={{ 
-              filter: "drop-shadow(0 2px 8px rgba(217, 26, 96, 0.15))",
+              filter: `drop-shadow(0 2px 8px ${APP_CONFIG.brand.primaryShadow})`,
               objectFit: "contain",
               mixBlendMode: "multiply"
             }}
           />
         </div>
       </div>
+
+      {/* Mascot Greeting Section */}
+      {APP_CONFIG.mascot.enabled && (
+        <Mascot
+          page="home"
+          activeOrders={userCounts.activeOrders}
+          availableRewards={userCounts.availableRewards}
+          className="pb-3 sm:pb-4"
+        />
+      )}
 
       {/* Store Closed Message - Full Page */}
       {(!restaurantStatus.isOpen || !restaurantStatus.acceptingOrders) ? (
@@ -352,14 +369,14 @@ export default function Home() {
                   onClick={() => navigate("/order-history")}
                   className="bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col items-center gap-2"
                 >
-                  <Package className="w-6 h-6" style={{ color: "#D91A60" }} />
+                  <Package className="w-6 h-6" style={{ color: APP_CONFIG.brand.primaryColor }} />
                   <span className="text-sm font-semibold text-gray-700">My Orders</span>
                 </button>
                 <button
                   onClick={() => navigate("/rewards")}
                   className="bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col items-center gap-2"
                 >
-                  <Gift className="w-6 h-6" style={{ color: "#D91A60" }} />
+                  <Gift className="w-6 h-6" style={{ color: APP_CONFIG.brand.primaryColor }} />
                   <span className="text-sm font-semibold text-gray-700">My Rewards</span>
                 </button>
               </div>
@@ -394,7 +411,7 @@ export default function Home() {
                       <div className="absolute top-2 right-2">
                         <Badge 
                           count={count}
-                          style={{ backgroundColor: "#D91A60", color: "white" }}
+                          style={{ backgroundColor: APP_CONFIG.brand.primaryColor, color: "white" }}
                         />
                       </div>
                     )}
@@ -428,11 +445,11 @@ export default function Home() {
                   <div className="absolute top-2 right-2">
                     <Badge 
                       count={userCounts.activeOrders}
-                      style={{ backgroundColor: "#D91A60", color: "white" }}
+                      style={{ backgroundColor: APP_CONFIG.brand.primaryColor, color: "white" }}
                     />
                   </div>
                 )}
-                <Package className="w-6 h-6 sm:w-7 sm:h-7" style={{ color: "#D91A60" }} />
+                <Package className="w-6 h-6 sm:w-7 sm:h-7" style={{ color: APP_CONFIG.brand.primaryColor }} />
                 <span className="text-sm sm:text-base font-semibold" style={{ color: "#4A4A4A" }}>
                   My Orders
                 </span>
@@ -447,11 +464,11 @@ export default function Home() {
                   <div className="absolute top-2 right-2">
                     <Badge 
                       count={userCounts.availableRewards}
-                      style={{ backgroundColor: "#D91A60", color: "white" }}
+                      style={{ backgroundColor: APP_CONFIG.brand.primaryColor, color: "white" }}
                     />
                   </div>
                 )}
-                <Gift className="w-6 h-6 sm:w-7 sm:h-7" style={{ color: "#D91A60" }} />
+                <Gift className="w-6 h-6 sm:w-7 sm:h-7" style={{ color: APP_CONFIG.brand.primaryColor }} />
                 <span className="text-sm sm:text-base font-semibold" style={{ color: "#4A4A4A" }}>
                   My Rewards
                 </span>
@@ -470,7 +487,7 @@ export default function Home() {
         <div 
           className="py-2 sm:py-3 px-5 sm:px-7"
           style={{
-            background: "linear-gradient(180deg, #E91E63 0%, #C2185B 100%)"
+            background: `linear-gradient(180deg, ${APP_CONFIG.brand.gradientStart} 0%, ${APP_CONFIG.brand.gradientEnd} 100%)`
           }}
         >
           <div className="max-w-lg mx-auto text-center space-y-2 sm:space-y-2.5">

@@ -1,37 +1,36 @@
 /**
- * Currency utilities for Indonesian Rupiah (IDR)
+ * Currency utilities — powered by config for white-label rebranding.
+ * Change currency in /src/app/lib/config.ts to switch to USD, EUR, INR, etc.
  */
+import { APP_CONFIG } from "./config";
+
+const { symbol, locale, decimals, pointsPerUnit } = APP_CONFIG.currency;
 
 /**
- * Format number as Indonesian Rupiah
- * @param amount - The amount to format
- * @returns Formatted string like "Rp 15.000"
+ * Format a number in the configured currency.
+ * Examples:
+ *   IDR: formatCurrency(15000) -> "Rp 15.000"
+ *   USD: formatCurrency(15.99) -> "$15.99"
  */
-export function formatIDR(amount: number): string {
-  // Round to nearest integer (no decimals for IDR)
-  const rounded = Math.round(amount);
-  
-  // Format with Indonesian locale (periods as thousands separator)
-  return `Rp ${rounded.toLocaleString('id-ID')}`;
+export function formatCurrency(amount: number): string {
+  const rounded = decimals === 0 ? Math.round(amount) : amount;
+  const formatted = rounded.toLocaleString(locale, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+  return `${symbol} ${formatted}`;
 }
 
 /**
- * Convert USD price to IDR (approximate conversion rate: 1 USD = 15,000 IDR)
- * This is for migrating existing USD prices to IDR
- * @param usdAmount - Amount in USD
- * @returns Amount in IDR
+ * @deprecated Use formatCurrency() instead. Kept for backward compatibility.
  */
-export function usdToIDR(usdAmount: number): number {
-  const conversionRate = 15000; // 1 USD = 15,000 IDR
-  return Math.round(usdAmount * conversionRate);
-}
+export const formatIDR = formatCurrency;
 
 /**
- * Calculate reward points from order total
- * Rule: 1 point per Rp 1.000
- * @param orderTotal - Total order amount in IDR
- * @returns Points earned
+ * Calculate loyalty points from an order total.
+ * Rule is configured in APP_CONFIG.currency.pointsPerUnit.
+ * Default: 1 point per Rp 1.000
  */
 export function calculatePoints(orderTotal: number): number {
-  return Math.floor(orderTotal / 1000);
+  return Math.floor(orderTotal / pointsPerUnit);
 }

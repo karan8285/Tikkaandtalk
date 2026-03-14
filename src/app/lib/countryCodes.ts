@@ -1,4 +1,6 @@
 // Country code data for phone number input
+import { APP_CONFIG } from "./config";
+
 export interface CountryCode {
   code: string;   // e.g., "+62"
   dial: string;   // e.g., "62"
@@ -296,8 +298,10 @@ export const COUNTRY_CODES: CountryCode[] = [
   { code: "+263", dial: "263", country: "Zimbabwe",               flag: "ZW", emoji: toFlagEmoji("ZW"), maxDigits: 10 },
 ];
 
-/** Default country code (Indonesia) */
-export const DEFAULT_COUNTRY_CODE = COUNTRY_CODES[0]; // +62
+/** Default country code — determined by config */
+export const DEFAULT_COUNTRY_CODE = COUNTRY_CODES.find(
+  (c) => c.code === APP_CONFIG.phone.defaultCountryCode
+) || COUNTRY_CODES[0];
 
 /**
  * Build a full international phone string from country code + local number.
@@ -339,8 +343,8 @@ export function parseFullPhone(fullPhone: string): { countryCode: string; localP
     }
   }
 
-  // Legacy number without country code - assume Indonesia (+62)
-  return { countryCode: "+62", localPhone: phone };
+  // Legacy number without country code - assume configured default
+  return { countryCode: APP_CONFIG.phone.defaultCountryCode, localPhone: phone };
 }
 
 /**

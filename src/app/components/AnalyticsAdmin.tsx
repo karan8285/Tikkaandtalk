@@ -1,10 +1,8 @@
-import { useState, useEffect } from "react";
+import { toast } from "sonner";
+import { APP_CONFIG } from "../lib/config";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { toast } from "sonner";
-import { formatIDR } from "../lib/currency";
-import { Users, TrendingUp, Award, ShoppingBag, Star, DollarSign } from "lucide-react";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -163,11 +161,11 @@ export function AnalyticsAdmin({ customToken }: { customToken: string | null }) 
         <Card className="p-6">
           <div className="flex items-center gap-4 mb-4">
             <div className="p-3 rounded-lg" style={{ backgroundColor: '#FCE4EC' }}>
-              <DollarSign className="w-6 h-6" style={{ color: '#D91A60' }} />
+              <DollarSign className="w-6 h-6" style={{ color: APP_CONFIG.brand.primaryColor }} />
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Revenue Overview</p>
-              <p className="text-2xl font-bold" style={{ color: '#D91A60' }}>
+              <p className="text-2xl font-bold" style={{ color: APP_CONFIG.brand.primaryColor }}>
                 {formatIDR(analytics.revenue.realized)}
               </p>
               <p className="text-xs text-muted-foreground">Total Realized</p>
@@ -177,7 +175,7 @@ export function AnalyticsAdmin({ customToken }: { customToken: string | null }) 
           <div className="space-y-2 mt-4">
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Pending Payment</span>
-              <span className="font-semibold" style={{ color: '#D91A60' }}>
+              <span className="font-semibold" style={{ color: APP_CONFIG.brand.primaryColor }}>
                 {formatIDR(analytics.revenue.pending)}
               </span>
             </div>
@@ -207,7 +205,7 @@ export function AnalyticsAdmin({ customToken }: { customToken: string | null }) 
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm">Unpaid Orders</span>
-              <span className="font-semibold" style={{ color: '#D91A60' }}>{analytics.orders.unpaid}</span>
+              <span className="font-semibold" style={{ color: APP_CONFIG.brand.primaryColor }}>{analytics.orders.unpaid}</span>
             </div>
           </div>
         </Card>

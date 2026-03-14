@@ -1,9 +1,12 @@
+import { type ReactNode } from "react";
 import { Outlet, useLocation } from "react-router";
-import React from "react";
 import { AuthProvider } from "../lib/auth";
 import { CartProvider } from "../lib/cart";
+import { MascotProvider } from "../lib/mascot-context";
 import { usePresence } from "../lib/presence";
 import { useDeviceSize } from "../lib/useDeviceSize";
+import { APP_CONFIG } from "../lib/config";
+import { GlobalMascot } from "../components/GlobalMascot";
 
 function PresenceTracker() {
   usePresence();
@@ -13,7 +16,7 @@ function PresenceTracker() {
 // Routes that should bypass the phone frame (admin/desktop tools)
 const FULL_WIDTH_ROUTES = ["/admin", "/admin-debug", "/debug", "/test-auth"];
 
-function AdaptiveShell({ children }: { children: React.ReactNode }) {
+function AdaptiveShell({ children }: { children: ReactNode }) {
   const { isMobile } = useDeviceSize();
   const location = useLocation();
 
@@ -24,7 +27,12 @@ function AdaptiveShell({ children }: { children: React.ReactNode }) {
 
   // On mobile or full-width routes, render full-screen
   if (isMobile || isFullWidth) {
-    return <>{children}</>;
+    return (
+      <>
+        {children}
+        <GlobalMascot variant="mobile" />
+      </>
+    );
   }
 
   // On tablet/desktop, show a phone-like frame centered on screen
@@ -32,18 +40,18 @@ function AdaptiveShell({ children }: { children: React.ReactNode }) {
     <div
       className="min-h-screen flex items-start justify-center py-6 sm:py-8 lg:py-10"
       style={{
-        background: "linear-gradient(135deg, #FFF5F7 0%, #FCE4EC 30%, #F8BBD0 60%, #F48FB1 100%)",
+        background: APP_CONFIG.brand.desktopBg,
       }}
     >
       {/* Branding text - desktop only */}
       <div className="hidden lg:flex fixed left-12 top-1/2 -translate-y-1/2 flex-col items-start gap-3 opacity-60 pointer-events-none select-none">
-        <p className="text-2xl font-bold" style={{ color: "#D91A60" }}>
-          Tikka N Talk
+        <p className="text-2xl font-bold" style={{ color: APP_CONFIG.brand.primaryColor }}>
+          {APP_CONFIG.restaurant.name}
         </p>
         <p className="text-sm text-gray-500 max-w-[200px] leading-relaxed">
-          AN INDIAN KITCHEN
+          {APP_CONFIG.restaurant.tagline}
         </p>
-        <div className="w-12 h-0.5 rounded-full mt-1" style={{ backgroundColor: "#D91A60" }} />
+        <div className="w-12 h-0.5 rounded-full mt-1" style={{ backgroundColor: APP_CONFIG.brand.primaryColor }} />
         <p className="text-xs text-gray-400 mt-2">
           Order online for pickup or delivery
         </p>
@@ -73,6 +81,9 @@ function AdaptiveShell({ children }: { children: React.ReactNode }) {
         <div className="flex-1 overflow-y-auto overflow-x-hidden phone-scroll" style={{ scrollbarWidth: "thin" }}>
           {children}
         </div>
+
+        {/* Floating mascot inside phone frame */}
+        <GlobalMascot variant="desktop" />
       </div>
     </div>
   );
@@ -82,10 +93,12 @@ function RootLayout() {
   return (
     <AuthProvider>
       <CartProvider>
-        <PresenceTracker />
-        <AdaptiveShell>
-          <Outlet />
-        </AdaptiveShell>
+        <MascotProvider>
+          <PresenceTracker />
+          <AdaptiveShell>
+            <Outlet />
+          </AdaptiveShell>
+        </MascotProvider>
       </CartProvider>
     </AuthProvider>
   );

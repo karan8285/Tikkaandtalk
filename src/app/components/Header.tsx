@@ -1,8 +1,9 @@
 import React from "react";
-import { ArrowLeft, ShoppingCart } from "lucide-react";
 import { useNavigate } from "react-router";
+import { ArrowLeft, ShoppingCart } from "lucide-react";
 import { useCart } from "../lib/cart";
-import logoImage from "../lib/logo";
+import { getRestaurantLogo } from "../lib/useRestaurantLogo";
+import { LOGO_ALT } from "../lib/config";
 
 interface HeaderProps {
   showBack?: boolean;
@@ -12,7 +13,7 @@ interface HeaderProps {
   onBack?: () => void;
 }
 
-export const Header = React.memo(function Header({ showBack = false, title, showCart = true, rightContent, onBack }: HeaderProps) {
+export function Header({ showBack = false, title, showCart = true, rightContent, onBack }: HeaderProps) {
   const navigate = useNavigate();
   const { totalItems } = useCart();
 
@@ -40,11 +41,11 @@ export const Header = React.memo(function Header({ showBack = false, title, show
           {title ? (
             <h1 className="text-base sm:text-lg font-semibold truncate">{title}</h1>
           ) : (
-            <img 
-              src={logoImage} 
-              alt="Tikka N Talk - An Indian Kitchen" 
+            <img
+              src={getRestaurantLogo()}
+              alt={LOGO_ALT}
               className="h-8 sm:h-10 w-auto"
-              style={{ 
+              style={{
                 filter: "brightness(0) invert(1)",
                 objectFit: "contain"
               }}
@@ -68,4 +69,4 @@ export const Header = React.memo(function Header({ showBack = false, title, show
       </div>
     </header>
   );
-});
+}

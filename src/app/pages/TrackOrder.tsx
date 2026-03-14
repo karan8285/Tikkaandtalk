@@ -1,13 +1,10 @@
-import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router";
-import { Clock, MapPin, Phone, RefreshCw, Package, CheckCircle2, ArrowLeft, Ticket } from "lucide-react";
-import { Button } from "../components/ui/button";
-import { toast } from "sonner";
-import logoImage from "../lib/logo";
+import { getRestaurantLogo } from "../lib/useRestaurantLogo";
 import { getShortOrderId } from "../lib/orderUtils";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { LOGO_ALT, APP_CONFIG } from "../lib/config";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+const BRAND = APP_CONFIG.brand.primaryColor;
 
 interface OrderItem {
   id: string;
@@ -70,7 +67,7 @@ const statusConfig: Record<string, { icon: string; color: string; description: s
   },
   cooking: { 
     icon: '🍳', 
-    color: '#D91A60', 
+    color: BRAND, 
     description: 'Preparing your food'
   },
   ready: { 
@@ -80,7 +77,7 @@ const statusConfig: Record<string, { icon: string; color: string; description: s
   },
   out_for_delivery: { 
     icon: '🚗', 
-    color: '#D91A60', 
+    color: BRAND, 
     description: 'On the way to you'
   },
   delivered: { 
@@ -284,14 +281,14 @@ export default function TrackOrder() {
     if (order.status === 'closed' && effectivePS !== 'paid') {
       return {
         message: `⏳ ${pointsAmount} points pending full payment`,
-        color: "#D91A60"
+        color: BRAND
       };
     }
     
     if (order.status === 'delivered') {
       return {
         message: `⏳ Will earn ${pointsAmount} points once fully paid`,
-        color: "#D91A60"
+        color: BRAND
       };
     }
     
@@ -389,11 +386,11 @@ export default function TrackOrder() {
         <div className="text-center mb-6">
           <div className="flex justify-center mb-2">
             <img 
-              src={logoImage} 
-              alt="Tikka N Talk - An Indian Kitchen" 
+              src={getRestaurantLogo()} 
+              alt={LOGO_ALT} 
               className="w-40 h-auto"
               style={{ 
-                filter: "drop-shadow(0 2px 8px rgba(217, 26, 96, 0.15))",
+                filter: `drop-shadow(0 2px 8px ${APP_CONFIG.brand.primaryShadow})`,
                 objectFit: "contain"
               }}
             />
@@ -407,7 +404,7 @@ export default function TrackOrder() {
         {/* Order Details Card */}
         <div className="bg-white rounded-xl shadow-md p-5 mb-4">
           <h3 className="font-semibold mb-3 flex items-center gap-2">
-            <Package className="w-5 h-5" style={{ color: '#D91A60' }} />
+            <Package className="w-5 h-5" style={{ color: BRAND }} />
             Order Details
           </h3>
           
@@ -477,7 +474,7 @@ export default function TrackOrder() {
                 </span>
               </div>
             )}
-            <div className="flex justify-between pt-1.5 border-t font-bold text-lg" style={{ color: '#D91A60' }}>
+            <div className="flex justify-between pt-1.5 border-t font-bold text-lg" style={{ color: BRAND }}>
               <span>Total</span>
               <span>Rp {order.total.toLocaleString()}</span>
             </div>
@@ -510,7 +507,7 @@ export default function TrackOrder() {
         {/* Order Tracking Timeline */}
         <div className="bg-white rounded-xl shadow-md p-5 mb-4">
           <h3 className="font-semibold mb-4 flex items-center gap-2">
-            <Clock className="w-5 h-5" style={{ color: '#D91A60' }} />
+            <Clock className="w-5 h-5" style={{ color: BRAND }} />
             Order Tracking
           </h3>
 

@@ -1,3 +1,5 @@
+import { formatIDR } from "../lib/currency";
+import { APP_CONFIG } from "../lib/config";
 import { useState, useEffect } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
@@ -6,7 +8,6 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Badge } from "./ui/badge";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { toast } from "sonner";
-import { formatIDR } from "../lib/currency";
 import { TrendingUp, DollarSign, ShoppingCart, XCircle, Clock, CheckCircle2, Package, Loader2 } from "lucide-react";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -280,16 +281,16 @@ export function SalesReportsAdmin({ customToken }: { customToken: string | null 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card 
           className="p-6 cursor-pointer hover:shadow-lg transition-shadow" 
-          style={{ borderLeft: '4px solid #D91A60' }}
+          style={{ borderLeft: `4px solid ${APP_CONFIG.brand.primaryColor}` }}
           onClick={() => openDetailDialog('revenueRealized')}
         >
           <div className="flex items-center gap-4">
             <div className="p-3 rounded-lg" style={{ backgroundColor: '#FCE4EC' }}>
-              <CheckCircle2 className="w-6 h-6" style={{ color: '#D91A60' }} />
+              <CheckCircle2 className="w-6 h-6" style={{ color: APP_CONFIG.brand.primaryColor }} />
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Revenue Realized</p>
-              <p className="text-2xl font-bold" style={{ color: '#D91A60' }}>
+              <p className="text-2xl font-bold" style={{ color: APP_CONFIG.brand.primaryColor }}>
                 {formatIDR(report.summary.revenueRealized)}
               </p>
               <p className="text-xs text-muted-foreground">
@@ -301,16 +302,16 @@ export function SalesReportsAdmin({ customToken }: { customToken: string | null 
 
         <Card 
           className="p-6 cursor-pointer hover:shadow-lg transition-shadow" 
-          style={{ borderLeft: '4px solid #D91A60' }}
+          style={{ borderLeft: `4px solid ${APP_CONFIG.brand.primaryColor}` }}
           onClick={() => openDetailDialog('pendingPayment')}
         >
           <div className="flex items-center gap-4">
             <div className="p-3 rounded-lg" style={{ backgroundColor: '#FCE4EC' }}>
-              <Clock className="w-6 h-6" style={{ color: '#D91A60' }} />
+              <Clock className="w-6 h-6" style={{ color: APP_CONFIG.brand.primaryColor }} />
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Pending Payment</p>
-              <p className="text-2xl font-bold" style={{ color: '#D91A60' }}>
+              <p className="text-2xl font-bold" style={{ color: APP_CONFIG.brand.primaryColor }}>
                 {formatIDR(report.summary.totalRevenue - report.summary.revenueRealized)}
               </p>
               <p className="text-xs text-muted-foreground">

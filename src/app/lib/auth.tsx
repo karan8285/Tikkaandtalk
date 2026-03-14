@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { APP_CONFIG } from "./config";
 
 interface User {
   id: string;
@@ -21,7 +22,7 @@ interface AuthContextType {
 
 // Persist context across HMR reloads — when Vite hot-reloads this module,
 // createContext() would create a NEW object, breaking existing consumers.
-const AUTH_CTX_KEY = "__TIKKA_AUTH_CTX__";
+const AUTH_CTX_KEY = APP_CONFIG.keys.authContextKey;
 const AuthContext = ((globalThis as any)[AUTH_CTX_KEY] ??=
   createContext<AuthContextType | undefined>(undefined)) as React.Context<AuthContextType | undefined>;
 

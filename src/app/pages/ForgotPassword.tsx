@@ -1,15 +1,12 @@
-import { useNavigate } from "react-router";
-import { MessageCircle, Lock } from "lucide-react";
+import { getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
+import { whatsAppPinResetMessage } from "../lib/config";
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
-import { getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
 
 // Forgot PIN - WhatsApp Contact Page
 export default function ForgotPassword() {
-  const navigate = useNavigate();
-
   const handleWhatsAppClick = () => {
-    window.open(getWhatsAppLink("Hi, I need help to reset my PIN for Tikka N Talk app. Please help me reset my account PIN."), "_blank");
+    window.open(getWhatsAppLink(whatsAppPinResetMessage()), "_blank");
   };
 
   return (

@@ -6,14 +6,15 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { create, verify } from "jsr:@zaubrik/djwt@3.0.2";
 import { crypto } from "https://deno.land/std@0.224.0/crypto/mod.ts";
 import { getImageForDish } from "./menu_images.tsx";
+import { SERVER_CONFIG } from "./config.ts";
 
 const app = new Hono();
 
 // Custom JWT secret for our own token system (bypasses Supabase Auth mismatch)
-// ⚠️ PRODUCTION: Set JWT_SECRET in Supabase Dashboard → Edge Functions → Secrets
+// PRODUCTION: Set JWT_SECRET in Supabase Dashboard -> Edge Functions -> Secrets
 const JWT_SECRET = Deno.env.get('JWT_SECRET') || (() => {
-  console.warn('⚠️ JWT_SECRET env var not set! Using insecure default. Set JWT_SECRET in Supabase Dashboard before go-live.');
-  return 'tikka-n-talk-default-dev-key-CHANGE-ME';
+  console.warn('JWT_SECRET env var not set! Using insecure default. Set JWT_SECRET in Supabase Dashboard before go-live.');
+  return SERVER_CONFIG.defaultJwtSecret;
 })();
 
 // Helper: Create our own JWT key
@@ -179,7 +180,7 @@ function phoneToDigits(phone: string): string {
 
 // Helper: Normalize a phone for email format — returns email string
 function phoneToEmail(phone: string): string {
-  return `${phoneToDigits(phone)}@tikka.app`;
+  return `${phoneToDigits(phone)}@${SERVER_CONFIG.emailDomain}`;
 }
 
 // Helper: Check if a phone matches the admin phone (handles both old and new format)
@@ -362,7 +363,7 @@ async function initializeDefaultData(attempt = 1) {
     
     // Admin email: try new format first, fallback to legacy
     const adminEmailNew = phoneToEmail(ADMIN_PHONE); // 629999999999@tikka.app
-    const adminEmailLegacy = `${ADMIN_PHONE_LEGACY}@tikka.app`; // 9999999999@tikka.app
+    const adminEmailLegacy = `${ADMIN_PHONE_LEGACY}@${SERVER_CONFIG.emailDomain}`;
     
     // Try to find existing admin user
     let existingUsers;
@@ -619,7 +620,7 @@ app.post("/make-server-e5e192fb/debug/force-init-admin", async (c) => {
 
     // Try both new and legacy email formats
     const emailNew = phoneToEmail(ADMIN_PHONE);
-    const emailLegacy = `${ADMIN_PHONE_LEGACY}@tikka.app`;
+    const emailLegacy = `${ADMIN_PHONE_LEGACY}@${SERVER_CONFIG.emailDomain}`;
     
     // Get the admin user by email
     const { data: { users }, error: listError } = await supabase.auth.admin.listUsers();
@@ -799,13 +800,13 @@ app.post("/make-server-e5e192fb/signin", async (c) => {
       const rawDigits = phone.replace(/\D/g, '');
       // Build possible legacy emails: the raw digits as-is, or without leading 0
       const legacyEmails = new Set<string>();
-      legacyEmails.add(`${rawDigits}@tikka.app`);
+      legacyEmails.add(`${rawDigits}@${SERVER_CONFIG.emailDomain}`);
       // If phone was like +628123456789, rawDigits = 628123456789
       // Legacy user might have registered as 8123456789 or 08123456789
       // Try stripping the country code prefix to get local number
       if (normalizedPhone.startsWith('+62') && rawDigits.startsWith('62')) {
-        legacyEmails.add(`${rawDigits.slice(2)}@tikka.app`); // 8123456789
-        legacyEmails.add(`0${rawDigits.slice(2)}@tikka.app`); // 08123456789
+        legacyEmails.add(`${rawDigits.slice(2)}@${SERVER_CONFIG.emailDomain}`); // 8123456789
+        legacyEmails.add(`0${rawDigits.slice(2)}@${SERVER_CONFIG.emailDomain}`); // 08123456789
       }
       // Remove the already-tried email
       legacyEmails.delete(newEmail);
@@ -843,7 +844,7 @@ app.post("/make-server-e5e192fb/signin", async (c) => {
       try {
         const { data: { users } } = await supabase.auth.admin.listUsers();
         const adminEmailNew = phoneToEmail(normalizedPhone);
-        const adminEmailLegacy = `${ADMIN_PHONE_LEGACY}@tikka.app`;
+        const adminEmailLegacy = `${ADMIN_PHONE_LEGACY}@${SERVER_CONFIG.emailDomain}`;
         const adminUser = users?.find((u: any) => u.email === adminEmailNew || u.email === adminEmailLegacy);
         if (adminUser) {
           await supabase.auth.admin.updateUserById(adminUser.id, { password: ADMIN_PIN });
@@ -1267,8 +1268,8 @@ app.post("/make-server-e5e192fb/orders", async (c) => {
     const newCounter = currentCounter + 1;
     await kv.set(counterKey, newCounter);
     
-    // Format as TNT00000001, TNT00000002, etc.
-    const orderNumber = `TNT${String(newCounter).padStart(8, '0')}`;
+    // Format as PREFIX00000001, PREFIX00000002, etc.
+    const orderNumber = `${SERVER_CONFIG.orderPrefix}${String(newCounter).padStart(8, '0')}`;
     
     const isMidtransPayment = orderData.paymentMethod === "midtrans";
     const isAlreadyPaid = orderData.paymentReceived === true;
@@ -1704,7 +1705,7 @@ app.post("/make-server-e5e192fb/debug/force-init-admin", async (c) => {
     
     // Try both new and legacy email formats
     const emailNew = phoneToEmail(ADMIN_PHONE);
-    const emailLegacy = `${ADMIN_PHONE_LEGACY}@tikka.app`;
+    const emailLegacy = `${ADMIN_PHONE_LEGACY}@${SERVER_CONFIG.emailDomain}`;
     
     // Create Supabase service client
     const supabase = createClient(
@@ -6751,7 +6752,7 @@ app.post("/make-server-e5e192fb/admin/create-custom-order", async (c) => {
     const newCounter = currentCounter + 1;
     await kv.set(counterKey, newCounter);
     
-    const orderNumber = `TNT${String(newCounter).padStart(8, '0')}`;
+    const orderNumber = `${SERVER_CONFIG.orderPrefix}${String(newCounter).padStart(8, '0')}`;
     
     // Get admin user data for audit trail
     const adminUser = await kv.get(`user:${adminAuth.userId}`);
@@ -7092,7 +7093,7 @@ app.post("/make-server-e5e192fb/create-payment-intent", async (c) => {
     const counterKey = "order_counter";
     let currentCounter = await kv.get(counterKey);
     if (!currentCounter) { currentCounter = 0; }
-    const tempOrderNumber = `TNT${String(currentCounter + 1).padStart(8, '0')}`;
+    const tempOrderNumber = `${SERVER_CONFIG.orderPrefix}${String(currentCounter + 1).padStart(8, '0')}`;
     const midtransOrderId = `${tempOrderNumber}-${Date.now()}`;
 
     const grossAmount = Math.round(total);
@@ -7319,8 +7320,9 @@ app.post("/make-server-e5e192fb/midtrans-notification", async (c) => {
     console.log(`✅ [MIDTRANS-WEBHOOK] Signature verified for: ${midtransOrderId}`);
 
     // Find the order by midtransOrderId
-    // midtransOrderId format: TNT00000XXX-timestamp
-    const orderNumberMatch = midtransOrderId.match(/^(TNT\d+)-\d+$/);
+    // midtransOrderId format: PREFIX00000XXX-timestamp
+    const prefixPattern = new RegExp(`^(${SERVER_CONFIG.orderPrefix}\\d+)-(\\d+)$`);
+    const orderNumberMatch = midtransOrderId.match(prefixPattern);
     if (!orderNumberMatch) {
       console.log(`❌ [MIDTRANS-WEBHOOK] Cannot parse order number from: ${midtransOrderId}`);
       return c.json({ error: "Invalid order ID format" }, 400);

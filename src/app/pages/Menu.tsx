@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useCart } from "../lib/cart";
+import { APP_CONFIG } from "../lib/config";
 import { ArrowLeft, Plus, ShoppingCart } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 
@@ -91,12 +92,14 @@ export default function Menu() {
 
   const categoryTitle = categoryTitles[category || "regular"] || "Menu";
 
+  const BRAND = APP_CONFIG.brand.primaryColor;
+
   return (
     <div className="min-h-screen pb-24" style={{ backgroundColor: "#FFF5F7" }}>
       {/* Header */}
       <div
         className="sticky top-0 z-10 px-4 py-4 shadow-sm"
-        style={{ backgroundColor: "#D91A60" }}
+        style={{ backgroundColor: BRAND }}
       >
         <div className="flex items-center justify-between max-w-md mx-auto">
           <button
@@ -114,7 +117,7 @@ export default function Menu() {
             {totalItems > 0 && (
               <span
                 className="absolute -top-1 -right-1 w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center text-white"
-                style={{ backgroundColor: "#D91A60" }}
+                style={{ backgroundColor: BRAND }}
               >
                 {totalItems}
               </span>
@@ -137,7 +140,7 @@ export default function Menu() {
               <button
                 onClick={() => navigate("/")}
                 className="mt-4 px-6 py-2 rounded-full text-white font-semibold"
-                style={{ backgroundColor: "#D91A60" }}
+                style={{ backgroundColor: BRAND }}
               >
                 Back to Home
               </button>
@@ -175,7 +178,7 @@ export default function Menu() {
                             <span className="text-sm text-gray-400 line-through">
                               {formatPrice(item.originalPrice)}
                             </span>
-                            <span className="font-bold" style={{ color: "#D91A60" }}>
+                            <span className="font-bold" style={{ color: BRAND }}>
                               {formatPrice(item.price)}
                             </span>
                           </div>
@@ -190,7 +193,7 @@ export default function Menu() {
                       <button
                         onClick={() => handleAddToCart(item)}
                         className="p-2 rounded-full transition-all active:scale-95"
-                        style={{ backgroundColor: "#D91A60" }}
+                        style={{ backgroundColor: BRAND }}
                       >
                         <Plus className="w-5 h-5 text-white" />
                       </button>

@@ -1,16 +1,17 @@
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
+import { APP_CONFIG } from "../lib/config";
+import { Button } from "../components/ui/button";
 import { Header } from "../components/Header";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Clock, MapPin, ShoppingBag, ChevronDown, ChevronUp, RefreshCw, Package, RotateCw, Ticket } from "lucide-react";
-import { useNavigate } from "react-router";
 import { toast } from "sonner";
-import { Button } from "../components/ui/button";
+import { ShoppingBag, ChevronDown, ChevronUp, MapPin, Package, RotateCw, Ticket } from "lucide-react";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
 
-const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+const BRAND = APP_CONFIG.brand.primaryColor;
 
 interface OrderItem {
   id: string;
@@ -64,15 +65,16 @@ interface Order {
 const statusConfig: Record<string, { color: string; bgColor: string; label: string }> = {
   pending: { color: '#FFA500', bgColor: '#FFF3E0', label: 'Pending' },
   confirmed: { color: '#00AA99', bgColor: '#E0F7F5', label: 'Confirmed' },
-  cooking: { color: '#D91A60', bgColor: '#FCE4EC', label: 'Cooking' },
+  cooking: { color: BRAND, bgColor: '#FCE4EC', label: 'Cooking' },
   ready: { color: '#9B59B6', bgColor: '#F4ECF7', label: 'Ready' },
-  out_for_delivery: { color: '#D91A60', bgColor: '#FCE4EC', label: 'Out for Delivery' },
+  out_for_delivery: { color: BRAND, bgColor: '#FCE4EC', label: 'Out for Delivery' },
   delivered: { color: '#00AA99', bgColor: '#E0F7F5', label: 'Delivered' },
   closed: { color: '#00AA99', bgColor: '#E0F7F5', label: 'Closed' },
   cancelled: { color: '#E74C3C', bgColor: '#FADBD8', label: 'Cancelled' },
 };
 
 export default function OrderHistory() {
+  const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
   const navigate = useNavigate();
   const { user, accessToken, refreshProfile, loading: authLoading } = useAuth();
   const { clearCart, setItemQuantity, cartItems } = useCart();
@@ -231,14 +233,14 @@ export default function OrderHistory() {
     if (order.status === 'closed' && effectivePS !== 'paid') {
       return {
         message: `⏳ ${pointsAmount} points pending full payment`,
-        color: "#D91A60"
+        color: BRAND
       };
     }
     
     if (order.status === 'delivered') {
       return {
         message: `⏳ ${pointsAmount} points pending confirmation`,
-        color: "#D91A60"
+        color: BRAND
       };
     }
     
@@ -573,7 +575,7 @@ export default function OrderHistory() {
             <p className="text-sm text-muted-foreground mb-6">
               Start ordering to see your history here
             </p>
-            <Button onClick={() => navigate("/")} style={{ backgroundColor: '#D91A60' }}>
+            <Button onClick={() => navigate("/")} style={{ backgroundColor: BRAND }}>
               Start Ordering
             </Button>
           </div>
@@ -592,18 +594,18 @@ export default function OrderHistory() {
                     className="rounded-xl p-4 text-left transition-all"
                     style={{
                       backgroundColor: notFullyPaidOrders.length > 0 ? '#FCE4EC' : '#F3F4F6',
-                      borderLeft: `4px solid ${notFullyPaidOrders.length > 0 ? '#D91A60' : '#9CA3AF'}`,
-                      outline: orderFilter === 'unpaid' ? '2px solid #D91A60' : 'none',
+                      borderLeft: `4px solid ${notFullyPaidOrders.length > 0 ? BRAND : '#9CA3AF'}`,
+                      outline: orderFilter === 'unpaid' ? `2px solid ${BRAND}` : 'none',
                       outlineOffset: '-2px',
                     }}
                   >
-                    <p className="text-xs font-semibold mb-1" style={{ color: notFullyPaidOrders.length > 0 ? '#D91A60' : '#6B7280' }}>
+                    <p className="text-xs font-semibold mb-1" style={{ color: notFullyPaidOrders.length > 0 ? BRAND : '#6B7280' }}>
                       Outstanding
                     </p>
-                    <p className="text-base font-bold" style={{ color: notFullyPaidOrders.length > 0 ? '#D91A60' : '#6B7280' }}>
+                    <p className="text-base font-bold" style={{ color: notFullyPaidOrders.length > 0 ? BRAND : '#6B7280' }}>
                       Rp {notFullyPaidTotal.toLocaleString()}
                     </p>
-                    <p className="text-xs mt-1" style={{ color: notFullyPaidOrders.length > 0 ? '#D91A60' : '#9CA3AF' }}>
+                    <p className="text-xs mt-1" style={{ color: notFullyPaidOrders.length > 0 ? BRAND : '#9CA3AF' }}>
                       Orders: {notFullyPaidOrders.length}
                     </p>
                   </button>
@@ -632,13 +634,13 @@ export default function OrderHistory() {
             {/* Filter indicator */}
             {orderFilter === 'unpaid' && (
               <div className="flex items-center justify-between bg-pink-50 rounded-lg px-3 py-2">
-                <p className="text-xs font-medium" style={{ color: '#D91A60' }}>
+                <p className="text-xs font-medium" style={{ color: BRAND }}>
                   Showing unpaid orders only
                 </p>
                 <button
                   onClick={() => setOrderFilter('all')}
                   className="text-xs font-semibold underline"
-                  style={{ color: '#D91A60' }}
+                  style={{ color: BRAND }}
                 >
                   Show All
                 </button>
@@ -660,9 +662,9 @@ export default function OrderHistory() {
                 const ps = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
                 const isPaid = ps === 'paid';
                 const isPartial = ps === 'partial';
-                const borderColor = isPaid ? '#00AA99' : isPartial ? '#F59E0B' : '#D91A60';
+                const borderColor = isPaid ? '#00AA99' : isPartial ? '#F59E0B' : BRAND;
                 const badgeBg = isPaid ? '#E0F7F5' : isPartial ? '#FEF3C7' : '#FCE4EC';
-                const badgeColor = isPaid ? '#00AA99' : isPartial ? '#D97706' : '#D91A60';
+                const badgeColor = isPaid ? '#00AA99' : isPartial ? '#D97706' : BRAND;
                 const badgeLabel = isPaid ? 'Paid' : isPartial ? `Partial (Rp ${(order.paidAmount || 0).toLocaleString()})` : 'Not Paid';
                 
                 return (
@@ -731,8 +733,8 @@ export default function OrderHistory() {
                           onClick={() => handleViewTracking(order.id)}
                           className="w-full mb-2 py-1.5 text-xs font-semibold rounded-lg border transition-colors"
                           style={{ 
-                            color: '#D91A60',
-                            borderColor: '#D91A60',
+                            color: BRAND,
+                            borderColor: BRAND,
                             backgroundColor: 'rgba(217, 26, 96, 0.03)'
                           }}
                         >
@@ -745,7 +747,7 @@ export default function OrderHistory() {
                         onClick={() => toggleExpanded(order.id)}
                         className="w-full flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-lg transition-colors"
                         style={{ 
-                          color: '#D91A60',
+                          color: BRAND,
                           backgroundColor: 'rgba(217, 26, 96, 0.05)'
                         }}
                       >
@@ -769,7 +771,7 @@ export default function OrderHistory() {
                         {/* Items List */}
                         <div>
                           <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
-                            <Package className="w-4 h-4" style={{ color: '#D91A60' }} />
+                            <Package className="w-4 h-4" style={{ color: BRAND }} />
                             Items Ordered ({order.items?.length || 1})
                           </h4>
                           <div className="space-y-2">
@@ -843,7 +845,7 @@ export default function OrderHistory() {
                             </div>
                             <div className="flex justify-between pt-2 border-t font-semibold">
                               <span>Total:</span>
-                              <span style={{ color: '#D91A60' }}>Rp {order.total?.toLocaleString()}</span>
+                              <span style={{ color: BRAND }}>Rp {order.total?.toLocaleString()}</span>
                             </div>
                           </div>
                           
@@ -873,7 +875,7 @@ export default function OrderHistory() {
                         {order.address && (
                           <div>
                             <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
-                              <MapPin className="w-4 h-4" style={{ color: '#D91A60' }} />
+                              <MapPin className="w-4 h-4" style={{ color: BRAND }} />
                               Delivery Address
                             </h4>
                             <p className="text-sm text-muted-foreground">{order.address}</p>
@@ -926,7 +928,7 @@ export default function OrderHistory() {
                               size="sm"
                               onClick={() => handleViewTracking(order.id)}
                               className="flex-1"
-                              style={{ backgroundColor: '#D91A60' }}
+                              style={{ backgroundColor: BRAND }}
                             >
                               Track Order
                             </Button>
@@ -949,7 +951,7 @@ export default function OrderHistory() {
                               onClick={() => handleReorder(order)}
                               disabled={reordering === order.id}
                               className="flex-1 flex items-center justify-center gap-1"
-                              style={{ backgroundColor: '#D91A60' }}
+                              style={{ backgroundColor: BRAND }}
                             >
                               <RotateCw className="w-4 h-4" />
                               {reordering === order.id ? "Reordering..." : "Reorder"}

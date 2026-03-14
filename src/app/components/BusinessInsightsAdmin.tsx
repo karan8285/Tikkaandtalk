@@ -1,18 +1,20 @@
+import { formatIDR } from "../lib/currency";
+import { APP_CONFIG } from "../lib/config";
 import { useState, useEffect, useRef, useCallback } from "react";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { toast } from "sonner";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { toast } from "sonner";
-import { formatIDR } from "../lib/currency";
 import {
-  ShoppingCart, Users, AlertTriangle, Clock,
-  ShoppingBag, RefreshCw, ChevronDown, ChevronUp, Phone, UserX,
-  ArrowUpRight, ArrowDownRight, Minus, Timer, Truck,
-  BarChart3, UserCheck, UserMinus, ShieldBan, Eye, Globe, Monitor
+  Eye, RefreshCw, Users, Globe, Monitor, ShoppingCart, ShoppingBag,
+  AlertTriangle, Phone, BarChart3, Timer, Clock, Truck,
+  ArrowUpRight, ArrowDownRight, Minus, ChevronUp, ChevronDown,
+  UserCheck, UserMinus, UserX, ShieldBan
 } from "lucide-react";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+const BRAND = APP_CONFIG.brand.primaryColor;
 
 interface CartInfo {
   userId: string;
@@ -392,9 +394,9 @@ export function BusinessInsightsAdmin({ customToken }: { customToken: string | n
 
       {/* ============ REVENUE TREND CARDS ============ */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className="p-4" style={{ borderLeft: "4px solid #D91A60" }}>
+        <Card className="p-4" style={{ borderLeft: `4px solid ${BRAND}` }}>
           <p className="text-xs text-muted-foreground">Today's Revenue</p>
-          <p className="text-lg font-bold" style={{ color: "#D91A60" }}>{formatIDR(data.revenue.todayRevenue)}</p>
+          <p className="text-lg font-bold" style={{ color: BRAND }}>{formatIDR(data.revenue.todayRevenue)}</p>
           <div className="flex items-center justify-between mt-1">
             <span className="text-[10px] text-muted-foreground">{data.revenue.todayOrders} orders</span>
             <TrendArrow value={data.revenue.todayVsYesterday} />
@@ -456,11 +458,11 @@ export function BusinessInsightsAdmin({ customToken }: { customToken: string | n
       {/* ============ CARTS ============ */}
       <CollapsibleSection
         title="Cart Activity"
-        icon={<ShoppingCart className="w-5 h-5" style={{ color: "#D91A60" }} />}
+        icon={<ShoppingCart className="w-5 h-5" style={{ color: BRAND }} />}
         defaultOpen={data.carts.abandonedCount > 0}
         badge={
           data.carts.abandonedCount > 0 ? (
-            <Badge className="text-white text-[10px]" style={{ backgroundColor: "#D91A60" }}>
+            <Badge className="text-white text-[10px]" style={{ backgroundColor: BRAND }}>
               {data.carts.abandonedCount} abandoned
             </Badge>
           ) : null
@@ -478,11 +480,11 @@ export function BusinessInsightsAdmin({ customToken }: { customToken: string | n
             </div>
             <div className="rounded-lg p-3" style={{ backgroundColor: "#FFF1F5" }}>
               <div className="flex items-center gap-2 mb-1">
-                <AlertTriangle className="w-4 h-4" style={{ color: "#D91A60" }} />
+                <AlertTriangle className="w-4 h-4" style={{ color: BRAND }} />
                 <p className="text-xs font-semibold" style={{ color: "#9F1239" }}>Abandoned Carts</p>
               </div>
-              <p className="text-xl font-bold" style={{ color: "#D91A60" }}>{data.carts.abandonedCount}</p>
-              <p className="text-[10px]" style={{ color: "#D91A60" }}>{formatIDR(data.carts.totalAbandonedValue)} potential revenue</p>
+              <p className="text-xl font-bold" style={{ color: BRAND }}>{data.carts.abandonedCount}</p>
+              <p className="text-[10px]" style={{ color: BRAND }}>{formatIDR(data.carts.totalAbandonedValue)} potential revenue</p>
             </div>
           </div>
 
@@ -490,7 +492,7 @@ export function BusinessInsightsAdmin({ customToken }: { customToken: string | n
             <div className="space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Abandoned Cart Details</p>
               {data.carts.abandoned.map((cart) => (
-                <div key={cart.userId} className="border rounded-lg p-3" style={{ borderLeftWidth: 3, borderLeftColor: "#D91A60" }}>
+                <div key={cart.userId} className="border rounded-lg p-3" style={{ borderLeftWidth: 3, borderLeftColor: BRAND }}>
                   <div className="flex items-start justify-between mb-2">
                     <div>
                       <p className="font-medium text-sm">{cart.userName}</p>
@@ -499,7 +501,7 @@ export function BusinessInsightsAdmin({ customToken }: { customToken: string | n
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="font-bold text-sm" style={{ color: "#D91A60" }}>{formatIDR(cart.cartValue)}</p>
+                      <p className="font-bold text-sm" style={{ color: BRAND }}>{formatIDR(cart.cartValue)}</p>
                       <p className="text-[10px] text-muted-foreground">{cart.itemCount} items</p>
                     </div>
                   </div>
@@ -663,7 +665,7 @@ export function BusinessInsightsAdmin({ customToken }: { customToken: string | n
                       className="w-full rounded-t-sm transition-all"
                       style={{
                         height: `${Math.max(height, h.count > 0 ? 8 : 2)}%`,
-                        backgroundColor: isCurrentHour ? "#D91A60" : h.count > 0 ? "#6366F1" : "#E5E7EB",
+                        backgroundColor: isCurrentHour ? BRAND : h.count > 0 ? "#6366F1" : "#E5E7EB",
                         minHeight: h.count > 0 ? 4 : 1,
                       }}
                     />
@@ -743,7 +745,7 @@ export function BusinessInsightsAdmin({ customToken }: { customToken: string | n
                         <p className="text-[10px] text-muted-foreground">{c.orderCount} orders</p>
                       </div>
                     </div>
-                    <p className="font-bold text-sm" style={{ color: "#D91A60" }}>{formatIDR(c.totalSpent)}</p>
+                    <p className="font-bold text-sm" style={{ color: BRAND }}>{formatIDR(c.totalSpent)}</p>
                   </div>
                 ))}
               </div>

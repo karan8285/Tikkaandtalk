@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { APP_CONFIG } from "../lib/config";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -10,6 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Award, Plus, Pencil, Trash2, Ticket, Car, UtensilsCrossed, Gift } from "lucide-react";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+
+const BRAND = APP_CONFIG.brand.primaryColor;
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -279,7 +282,7 @@ export function TierBenefitsAdmin({ customToken }: TierBenefitsAdminProps) {
                       </div>
                       
                       {benefit.expiryDate && (
-                        <p className="text-xs" style={{ color: "#D91A60" }}>
+                        <p className="text-xs" style={{ color: BRAND }}>
                           Expires by {benefit.expiryDate}
                         </p>
                       )}
@@ -349,7 +352,7 @@ export function TierBenefitsAdmin({ customToken }: TierBenefitsAdminProps) {
                       </div>
                       
                       {benefit.expiryDate && (
-                        <p className="text-xs" style={{ color: "#D91A60" }}>
+                        <p className="text-xs" style={{ color: BRAND }}>
                           Expires by {benefit.expiryDate}
                         </p>
                       )}
@@ -419,7 +422,7 @@ export function TierBenefitsAdmin({ customToken }: TierBenefitsAdminProps) {
                       </div>
                       
                       {benefit.expiryDate && (
-                        <p className="text-xs" style={{ color: "#D91A60" }}>
+                        <p className="text-xs" style={{ color: BRAND }}>
                           Expires by {benefit.expiryDate}
                         </p>
                       )}

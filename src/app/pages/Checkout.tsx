@@ -2,14 +2,17 @@ import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router";
 import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
+import { APP_CONFIG } from "../lib/config";
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card } from "../components/ui/card";
 import { UserPlus, ShoppingCart, Check, X } from "lucide-react";
-import { CountryCodeSelect } from "../components/CountryCodeSelect";
 import { DEFAULT_COUNTRY_CODE, buildFullPhone } from "../lib/countryCodes";
+import { CountryCodeSelect } from "../components/CountryCodeSelect";
+
+const BRAND = APP_CONFIG.brand.primaryColor;
 
 export default function Checkout() {
   const navigate = useNavigate();
@@ -90,7 +93,7 @@ export default function Checkout() {
           <div className="space-y-5">
             {/* Cart summary */}
             <div className="bg-white rounded-xl px-4 py-3 shadow-sm flex items-center gap-3">
-              <ShoppingCart className="w-5 h-5" style={{ color: "#D91A60" }} />
+              <ShoppingCart className="w-5 h-5" style={{ color: BRAND }} />
               <span className="font-semibold text-gray-800">
                 {cartItems.length} {cartItems.length === 1 ? "item" : "items"} in cart
               </span>
@@ -115,7 +118,7 @@ export default function Checkout() {
                 <div className="bg-white/80 backdrop-blur-sm rounded-lg p-2.5 mb-2.5 border border-pink-100">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-semibold text-gray-800">
-                      Earn <span className="text-[#D91A60] font-bold">{potentialPoints} Points</span> from this order!
+                      Earn <span style={{ color: BRAND }} className="font-bold">{potentialPoints} Points</span> from this order!
                     </p>
                     <span className="text-xl ml-2">🏆</span>
                   </div>
@@ -180,7 +183,7 @@ export default function Checkout() {
                   }}
                   className="w-full h-10 text-sm font-bold rounded-xl shadow-lg text-white"
                   style={{
-                    background: "linear-gradient(135deg, #E91E63, #D91A60)",
+                    background: `linear-gradient(135deg, #E91E63, ${BRAND})`,
                   }}
                 >
                   Register to Get Rewards
@@ -328,7 +331,7 @@ export default function Checkout() {
                 <Button
                   onClick={handleGuestCheckout}
                   className="flex-1"
-                  style={{ backgroundColor: "#D91A60" }}
+                  style={{ backgroundColor: BRAND }}
                   type="button"
                 >
                   Continue

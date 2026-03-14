@@ -1,9 +1,11 @@
 // Centralized WhatsApp configuration
-// Defaults are used when admin hasn't configured WhatsApp in Restaurant Settings
+// Defaults are pulled from config; overridden at runtime by admin settings.
+
+import { APP_CONFIG } from "./config";
 
 /** Default WhatsApp number (fallback when not configured in admin) */
-const DEFAULT_WHATSAPP_NUMBER = "628192515550";
-const DEFAULT_WHATSAPP_DISPLAY = "+62 819-2515-550";
+const DEFAULT_WHATSAPP_NUMBER = APP_CONFIG.whatsapp.defaultNumber;
+const DEFAULT_WHATSAPP_DISPLAY = APP_CONFIG.whatsapp.defaultDisplay;
 
 // Cached dynamic config from restaurant-status endpoint
 let _cachedWhatsApp: { number: string; display: string } | null = null;
@@ -51,20 +53,21 @@ export function getWhatsAppLink(message?: string): string {
  * Ensure a phone number is formatted for wa.me links (digits only, with country code).
  * Handles all formats:
  *   "+628123456789" -> "628123456789"  (already international)
- *   "08123456789"   -> "628123456789"  (Indonesian local with leading 0)
+ *   "08123456789"   -> "628123456789"  (local with leading 0)
  *   "8123456789"    -> "628123456789"  (legacy without prefix)
  *   "628123456789"  -> "628123456789"  (already correct digits)
  */
 export function formatPhoneForWhatsApp(phone: string): string {
+  const defaultDial = APP_CONFIG.phone.defaultCountryDial;
   // Remove all non-digit characters (strips +, spaces, dashes)
   let digits = phone.replace(/\D/g, "");
-  // If starts with 0, replace with 62 (Indonesian local -> international)
+  // If starts with 0, replace with default country dial code
   if (digits.startsWith("0")) {
-    digits = "62" + digits.slice(1);
+    digits = defaultDial + digits.slice(1);
   }
-  // If the number is short (no country code), prepend 62
-  if (digits.length <= 12 && !digits.startsWith("62") && !digits.startsWith("1") && !digits.startsWith("44") && !digits.startsWith("91")) {
-    digits = "62" + digits;
+  // If the number is short (no country code), prepend default dial code
+  if (digits.length <= 12 && !digits.startsWith(defaultDial) && !digits.startsWith("1") && !digits.startsWith("44") && !digits.startsWith("91")) {
+    digits = defaultDial + digits;
   }
   return digits;
 }

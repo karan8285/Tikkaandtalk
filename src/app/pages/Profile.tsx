@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
+import { useMascot } from "../lib/mascot-context";
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
-import { User, Smartphone, Award, LogOut, ShieldCheck, Key } from "lucide-react";
+import { User, Smartphone, Award, LogOut, ShieldCheck, Key, Bot } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { APP_CONFIG } from "../lib/config";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
 export default function Profile() {
   const navigate = useNavigate();
   const { user, signOut, loading, refreshProfile, accessToken } = useAuth();
+  const { isMascotVisible, hideMascot, showMascot } = useMascot();
   const [isSigningOut, setIsSigningOut] = useState(false);
 
   useEffect(() => {
@@ -160,6 +163,38 @@ export default function Profile() {
             </div>
           </div>
         </div>
+
+        {/* Mascot Preferences */}
+        {APP_CONFIG.mascot.enabled && (
+          <div className="bg-white rounded-xl shadow-md p-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Bot className="w-5 h-5" style={{ color: APP_CONFIG.brand.primaryColor }} />
+                <div>
+                  <p className="font-medium text-sm">Chef Mascot</p>
+                  <p className="text-xs text-muted-foreground">
+                    {isMascotVisible ? "Showing tips & greetings" : "Hidden for 30 minutes"}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => isMascotVisible ? hideMascot() : showMascot()}
+                className="relative w-11 h-6 rounded-full transition-colors duration-200"
+                style={{
+                  backgroundColor: isMascotVisible ? APP_CONFIG.brand.primaryColor : "#D1D5DB",
+                }}
+                aria-label={isMascotVisible ? "Hide mascot" : "Show mascot"}
+              >
+                <span
+                  className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200"
+                  style={{
+                    transform: isMascotVisible ? "translateX(20px)" : "translateX(0)",
+                  }}
+                />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Sign Out */}
         <Button

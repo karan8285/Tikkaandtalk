@@ -6,6 +6,7 @@ import { Label } from "./ui/label";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
+import { APP_CONFIG } from "../lib/config";
 import { MapPin, Plus, Trash2, Truck, AlertTriangle } from "lucide-react";
 import type { DeliveryZonesConfig, DeliveryZone } from "../lib/delivery";
 import { DEFAULT_DELIVERY_CONFIG } from "../lib/delivery";
@@ -132,10 +133,10 @@ export function DeliveryZonesAdmin({ customToken }: { customToken: string | null
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold flex items-center gap-2">
-          <Truck className="w-5 h-5" style={{ color: "#D91A60" }} />
+          <Truck className="w-5 h-5" style={{ color: APP_CONFIG.brand.primaryColor }} />
           Delivery Zones
         </h2>
-        <Button onClick={saveConfig} disabled={saving} style={{ backgroundColor: "#D91A60" }} className="text-white">
+        <Button onClick={saveConfig} disabled={saving} style={{ backgroundColor: APP_CONFIG.brand.primaryColor }} className="text-white">
           {saving ? "Saving..." : "Save Changes"}
         </Button>
       </div>
@@ -147,7 +148,7 @@ export function DeliveryZonesAdmin({ customToken }: { customToken: string | null
           Restaurant Location
         </h3>
         <p className="text-xs text-gray-400 mb-3">
-          Set the GPS coordinates of Tikka N Talk. You can find these from Google Maps.
+          Set the GPS coordinates of your restaurant. You can find these from Google Maps.
         </p>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -235,7 +236,7 @@ export function DeliveryZonesAdmin({ customToken }: { customToken: string | null
                 <div className="flex items-center gap-2">
                   <div
                     className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                    style={{ backgroundColor: "#D91A60" }}
+                    style={{ backgroundColor: APP_CONFIG.brand.primaryColor }}
                   >
                     {index + 1}
                   </div>
@@ -307,7 +308,7 @@ export function DeliveryZonesAdmin({ customToken }: { customToken: string | null
 
         {sortedZones.length > 0 && (
           <div className="mt-4 p-3 bg-pink-50 rounded-lg border border-pink-100">
-            <p className="text-xs font-medium" style={{ color: "#D91A60" }}>
+            <p className="text-xs font-medium" style={{ color: APP_CONFIG.brand.primaryColor }}>
               Zone Summary
             </p>
             <div className="mt-1 space-y-0.5">

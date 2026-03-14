@@ -1,15 +1,7 @@
-import { useState, useEffect } from "react";
-import { useNavigate, Link, useLocation } from "react-router";
-import { useAuth } from "../lib/auth";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
-import { PinInput } from "../components/PinInput";
-import { Smartphone, AlertCircle, ArrowLeft } from "lucide-react";
-import { toast } from "sonner";
-import logoImage from "../lib/logo";
+import { getRestaurantLogo } from "../lib/useRestaurantLogo";
 import { CountryCodeSelect } from "../components/CountryCodeSelect";
 import { DEFAULT_COUNTRY_CODE, buildFullPhone } from "../lib/countryCodes";
+import { LOGO_ALT, APP_CONFIG } from "../lib/config";
 
 export default function Signup() {
   const navigate = useNavigate();
@@ -92,11 +84,11 @@ export default function Signup() {
         <div className="text-center">
           <div className="flex justify-center mb-4">
             <img 
-              src={logoImage} 
-              alt="Tikka N Talk - An Indian Kitchen" 
+              src={getRestaurantLogo()} 
+              alt={LOGO_ALT} 
               className="w-48 h-auto"
               style={{ 
-                filter: "drop-shadow(0 2px 8px rgba(217, 26, 96, 0.15))",
+                filter: `drop-shadow(0 2px 8px ${APP_CONFIG.brand.primaryShadow})`,
                 objectFit: "contain"
               }}
             />

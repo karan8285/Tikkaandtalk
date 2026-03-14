@@ -1,6 +1,7 @@
 import { useNavigate, useParams } from "react-router";
 import { useState, useEffect } from "react";
 import { useAuth } from "../lib/auth";
+import { APP_CONFIG } from "../lib/config";
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
 import { Separator } from "../components/ui/separator";
@@ -29,6 +30,7 @@ import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { loadSnapJs, openSnapPayment } from "../lib/midtrans";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+const BRAND = APP_CONFIG.brand.primaryColor;
 
 // Receipt icon component (simple replacement)
 const Receipt = ({ className }: { className?: string }) => (
@@ -276,7 +278,7 @@ export default function OrderSuccess() {
     );
   }
   
-  const orderNumber = order.orderNumber || `TNT${order.id.slice(0, 8).toUpperCase()}`;
+  const orderNumber = order.orderNumber || `${order.id.slice(0, 8).toUpperCase()}`;
   const potentialPoints = Math.floor(order.total / 1000);
   const isGuestOrder = !order.userId;
   const isMidtransPayment = order.paymentMethod === "midtrans";
@@ -636,7 +638,7 @@ export default function OrderSuccess() {
               onClick={handleRetryPayment}
               disabled={retryingPayment}
               className="w-full h-11 rounded-xl font-semibold text-white flex items-center justify-center gap-2"
-              style={{ backgroundColor: "#D91A60" }}
+              style={{ backgroundColor: BRAND }}
             >
               {retryingPayment ? (
                 <><RefreshCw className="w-4 h-4 animate-spin" /> Preparing Payment...</>

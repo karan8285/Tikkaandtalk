@@ -4,8 +4,11 @@ import { useAuth } from "../lib/auth";
 import { getShortOrderId } from "../lib/orderUtils";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { ChevronRight } from "lucide-react";
+import { APP_CONFIG } from "../lib/config";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+const C = APP_CONFIG.brand.primaryColor;
+const BG = APP_CONFIG.brand.badgeBg;
 
 interface ActiveOrder {
   id: string;
@@ -32,11 +35,11 @@ const PICKUP_STEPS = [
 ];
 
 const statusMeta: Record<string, { label: string; color: string; bgColor: string; emoji: string }> = {
-  pending:          { label: "Preparing your order",  color: "#D91A60", bgColor: "#FFF0F5", emoji: "🕐" },
-  confirmed:        { label: "Preparing your order",  color: "#D91A60", bgColor: "#FFF0F5", emoji: "✅" },
-  cooking:          { label: "Preparing your order",  color: "#D91A60", bgColor: "#FFF0F5", emoji: "🍳" },
+  pending:          { label: "Preparing your order",  color: C, bgColor: BG, emoji: "🕐" },
+  confirmed:        { label: "Preparing your order",  color: C, bgColor: BG, emoji: "✅" },
+  cooking:          { label: "Preparing your order",  color: C, bgColor: BG, emoji: "🍳" },
   ready:            { label: "Order Ready!",          color: "#9B59B6", bgColor: "#F5F0FF", emoji: "📦" },
-  out_for_delivery: { label: "On the Way",            color: "#D91A60", bgColor: "#FFF0F5", emoji: "🚗" },
+  out_for_delivery: { label: "On the Way",            color: C, bgColor: BG, emoji: "🚗" },
   delivered:        { label: "Delivered!",             color: "#00AA99", bgColor: "#F0FFF8", emoji: "🎉" },
 };
 
@@ -297,7 +300,7 @@ export const ActiveOrderBar = memo(function ActiveOrderBar() {
                       <span
                         className="text-[10px] font-semibold transition-colors duration-300 text-center"
                         style={{
-                          color: isCurrent ? "#D91A60" : isCompleted ? "#B8860B" : "#C4A96A",
+                          color: isCurrent ? C : isCompleted ? "#B8860B" : "#C4A96A",
                           fontWeight: isCurrent ? 700 : 500,
                         }}
                       >

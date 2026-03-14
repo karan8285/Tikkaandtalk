@@ -1,12 +1,14 @@
 import React, { Suspense } from "react";
 import { createBrowserRouter, Navigate } from "react-router";
 import type { RouteObject } from "react-router";
+import { APP_CONFIG } from "./lib/config";
 import RootLayout from "./layouts/RootLayout";
 
 // Only eagerly load Home (first page users see)
 import Home from "./pages/Home";
 
 // Lazy load everything else - splits the bundle so users only download what they visit
+// Each lazy() call creates a separate chunk that loads on-demand
 const Menu = React.lazy(() => import("./pages/Menu"));
 const RegularMenu = React.lazy(() => import("./pages/RegularMenu"));
 const TodaysSpecial = React.lazy(() => import("./pages/TodaysSpecial"));
@@ -30,13 +32,15 @@ const ForgotPassword = React.lazy(() => import("./pages/ForgotPassword"));
 const TrackOrder = React.lazy(() => import("./pages/TrackOrder"));
 const GuestOrderTracking = React.lazy(() => import("./pages/GuestOrderTracking"));
 
+const BRAND = APP_CONFIG.brand.primaryColor;
+
 // Minimal loading spinner matching brand color
 function LazyFallback() {
   return (
     <div className="min-h-[60vh] flex items-center justify-center">
       <div
         className="w-8 h-8 border-3 border-t-transparent rounded-full animate-spin"
-        style={{ borderColor: "#D91A60", borderTopColor: "transparent" }}
+        style={{ borderColor: BRAND, borderTopColor: "transparent" }}
       />
     </div>
   );

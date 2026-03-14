@@ -306,7 +306,7 @@ export default function GuestOrderTracking() {
     );
   }
 
-  const orderNumber = order.orderNumber || `TNT${order.id.slice(0, 8).toUpperCase()}`;
+  const orderNumber = order.orderNumber || `${order.id.slice(0, 8).toUpperCase()}`;
   const isDelivery = order.deliveryMethod === "delivery";
   const potentialPoints = Math.floor(order.total / 1000);
   const isGuestOrder = !order.userId;

@@ -4,6 +4,7 @@ import { useNavigate, useLocation } from "react-router";
 import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
 import { toast } from "sonner";
+import { APP_CONFIG } from "../lib/config";
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
 import { Separator } from "../components/ui/separator";
@@ -932,7 +933,7 @@ export default function OrderConfirmation() {
         <Header showBack title="Order Confirmation" />
         <div className="flex items-center justify-center h-screen">
           <div className="text-center">
-            <div className="w-12 h-12 border-4 border-gray-200 border-t-[#D91A60] rounded-full animate-spin mx-auto mb-4" />
+            <div className="w-12 h-12 border-4 border-gray-200 border-t-primary rounded-full animate-spin mx-auto mb-4" />
             <p className="text-muted-foreground">
               {paymentMethod === "pay-now" ? "Preparing payment..." : "Placing your order..."}
             </p>
@@ -965,7 +966,7 @@ export default function OrderConfirmation() {
               onClick={handleRetryPayment}
               disabled={retryingPayment || switchingToCash}
               className="w-full h-12 rounded-xl font-semibold text-white flex items-center justify-center gap-2 text-sm"
-              style={{ backgroundColor: "#D91A60" }}
+              style={{ backgroundColor: APP_CONFIG.brand.primaryColor }}
             >
               {retryingPayment ? (
                 <>
