@@ -85,6 +85,7 @@ function getCustomToken(c: any): string | null {
 }
 
 // Helper: Verify admin access using our custom JWT
+// Now also accepts staff tokens (any active staff member)
 async function verifyAdminAccess(token: string): Promise<{ userId: string; isAdmin: boolean } | null> {
   console.log(`🔐 verifyAdminAccess - Starting verification`);
   console.log(`🔐 Token (first 50 chars): ${token?.substring(0, 50)}...`);
@@ -101,9 +102,20 @@ async function verifyAdminAccess(token: string): Promise<{ userId: string; isAdm
     return null;
   }
   
-  console.log(`✅ JWT validated - userId: ${payload.userId}, isAdmin: ${payload.isAdmin}`);
+  console.log(`✅ JWT validated - userId: ${payload.userId}, isAdmin: ${payload.isAdmin}, staffRole: ${payload.staffRole}`);
   
-  // Double-check admin status in KV store
+  // Path 1: Any active staff member with a valid staff token
+  if (payload.staffRole) {
+    const staffData = await kv.get(`staff:${payload.userId}`);
+    if (staffData && staffData.active) {
+      console.log(`✅ Staff access verified for ${payload.userId} (role: ${staffData.role})`);
+      return { userId: payload.userId, isAdmin: true };
+    }
+    console.log(`❌ Staff ${payload.userId} not found or inactive`);
+    return null;
+  }
+  
+  // Path 2: Legacy customer admin token
   console.log(`🔍 Checking KV store for user: ${payload.userId}`);
   const userData = await kv.get(`user:${payload.userId}`);
   
@@ -2114,17 +2126,15 @@ app.get("/make-server-e5e192fb/admin/orders", async (c) => {
       if (order.status === "scheduled") scheduledCount++;
     }
 
-    // Preload user map for customer name search (only if searching)
+    // Preload user map for customer name search and enrichment
     let userMap: Record<string, any> = {};
-    if (searchQuery) {
-      try {
-        const allUsers = await kv.getByPrefix("user:");
-        for (const u of allUsers) {
-          if (u.id) userMap[u.id] = u;
-        }
-      } catch (e) {
-        console.log(`Warning: could not load users for search: ${e}`);
+    try {
+      const allUsers = await kv.getByPrefix("user:");
+      for (const u of allUsers) {
+        if (u.id) userMap[u.id] = u;
       }
+    } catch (e) {
+      console.log(`Warning: could not load users: ${e}`);
     }
 
     // Apply filters
@@ -2191,8 +2201,14 @@ app.get("/make-server-e5e192fb/admin/orders", async (c) => {
     const startIdx = (safePage - 1) * limit;
     const pageOrders = filtered.slice(startIdx, startIdx + limit);
 
+    // Enrich orders with customer name from user map
+    const enrichedOrders = pageOrders.map((order: any) => ({
+      ...order,
+      customerName: order.customerName || userMap[order.userId]?.name || "",
+    }));
+
     return c.json({
-      orders: pageOrders,
+      orders: enrichedOrders,
       page: safePage,
       limit,
       totalFiltered,
@@ -9393,6 +9409,625 @@ app.put("/make-server-e5e192fb/admin/party-packages-settings", async (c) => {
   } catch (error) {
     console.log(`Error updating party packages settings: ${error?.message}`);
     return c.json({ error: `Failed to update settings: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== HOME LAYOUT CONFIG ====================
+
+// Default home layout categories
+const DEFAULT_HOME_LAYOUT = [
+  { id: "todays-special", title: "Today's Special", icon: "ChefHat", route: "/todays-special", visible: true, order: 0, countKey: "todaysSpecial", isBuiltIn: true },
+  { id: "kids-menu", title: "Kids Menu", icon: "Baby", route: "/kids-menu", visible: true, order: 1, countKey: "kidsMenu", isBuiltIn: true },
+  { id: "flash-sale", title: "Flash Sale", icon: "Zap", route: "/flash-sale", visible: true, order: 2, countKey: "flashSale", isBuiltIn: true },
+  { id: "regular-menu", title: "Regular Menu", icon: "UtensilsCrossed", route: "/regular-menu", visible: true, order: 3, countKey: "regularMenu", isBuiltIn: true },
+  { id: "celebrations", title: "Celebrations", icon: "PartyPopper", route: "/celebrations", visible: true, order: 4, countKey: null, isBuiltIn: true },
+];
+
+// Public: Get home layout config (returns only visible categories, sorted by order)
+app.get("/make-server-e5e192fb/home-layout", async (c) => {
+  try {
+    let layout = await kvGetWithRetry("home_layout_config");
+    if (!layout || !Array.isArray(layout)) {
+      layout = [...DEFAULT_HOME_LAYOUT];
+    }
+    // Merge with defaults to ensure new built-in categories are always included
+    const existingIds = new Set(layout.map((cat: any) => cat.id));
+    for (const def of DEFAULT_HOME_LAYOUT) {
+      if (!existingIds.has(def.id)) {
+        layout.push(def);
+      }
+    }
+    // Return only visible ones, sorted by order
+    const visible = layout
+      .filter((cat: any) => cat.visible !== false)
+      .sort((a: any, b: any) => (a.order ?? 999) - (b.order ?? 999));
+    return c.json({ categories: visible });
+  } catch (error) {
+    console.log(`Error getting home layout: ${error?.message}`);
+    return c.json({ categories: DEFAULT_HOME_LAYOUT });
+  }
+});
+
+// Admin: Get full home layout config (including hidden categories)
+app.get("/make-server-e5e192fb/admin/home-layout", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const admin = await verifyAdminAccess(authHeader);
+    if (!admin) return c.json({ error: "Admin access required" }, 403);
+
+    let layout = await kvGetWithRetry("home_layout_config");
+    if (!layout || !Array.isArray(layout)) {
+      layout = [...DEFAULT_HOME_LAYOUT];
+    }
+    // Merge with defaults
+    const existingIds = new Set(layout.map((cat: any) => cat.id));
+    for (const def of DEFAULT_HOME_LAYOUT) {
+      if (!existingIds.has(def.id)) {
+        layout.push(def);
+      }
+    }
+    layout.sort((a: any, b: any) => (a.order ?? 999) - (b.order ?? 999));
+    return c.json({ categories: layout, defaults: DEFAULT_HOME_LAYOUT });
+  } catch (error) {
+    console.log(`Error getting admin home layout: ${error?.message}`);
+    return c.json({ error: `Failed to get layout: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Save full home layout config
+app.put("/make-server-e5e192fb/admin/home-layout", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const admin = await verifyAdminAccess(authHeader);
+    if (!admin) return c.json({ error: "Admin access required" }, 403);
+
+    const { categories } = await c.req.json();
+    if (!Array.isArray(categories)) {
+      return c.json({ error: "categories must be an array" }, 400);
+    }
+    for (const cat of categories) {
+      if (!cat.id || !cat.title || !cat.icon || !cat.route) {
+        return c.json({ error: "Invalid category: missing required fields (id, title, icon, route)" }, 400);
+      }
+    }
+    // Re-assign order based on array index
+    const ordered = categories.map((cat: any, idx: number) => ({
+      ...cat,
+      order: idx,
+    }));
+    await kv.set("home_layout_config", ordered);
+    console.log(`✅ Home layout config updated by admin ${admin.userId} (${ordered.length} categories)`);
+    return c.json({ success: true, categories: ordered });
+  } catch (error) {
+    console.log(`Error updating home layout: ${error?.message}`);
+    return c.json({ error: `Failed to update layout: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Reset home layout to defaults
+app.post("/make-server-e5e192fb/admin/home-layout/reset", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const admin = await verifyAdminAccess(authHeader);
+    if (!admin) return c.json({ error: "Admin access required" }, 403);
+
+    await kv.set("home_layout_config", DEFAULT_HOME_LAYOUT);
+    console.log(`✅ Home layout config reset to defaults by admin ${admin.userId}`);
+    return c.json({ success: true, categories: DEFAULT_HOME_LAYOUT });
+  } catch (error) {
+    console.log(`Error resetting home layout: ${error?.message}`);
+    return c.json({ error: `Failed to reset layout: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== CUSTOM MENU CATEGORIES (GENERIC) ====================
+
+// Helper: Get KV key for a custom menu slug
+function customMenuKey(slug: string): string {
+  return `custom_menu_${slug}`;
+}
+
+// Public: Get items for a custom menu category (only enabled items)
+app.get("/make-server-e5e192fb/custom-menu/:slug", async (c) => {
+  try {
+    const slug = c.req.param("slug");
+    if (!slug || slug.length > 100) {
+      return c.json({ error: "Invalid slug" }, 400);
+    }
+    const data = await kvGetWithRetry(customMenuKey(slug));
+    const items = Array.isArray(data?.items) ? data.items : [];
+    // Return only enabled items, sorted by displayOrder
+    const visibleItems = items
+      .filter((item: any) => item.enabled !== false)
+      .sort((a: any, b: any) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999));
+    return c.json({ items: visibleItems, slug });
+  } catch (error) {
+    console.log(`Error fetching custom menu ${c.req.param("slug")}: ${error?.message}`);
+    return c.json({ error: `Failed to fetch custom menu: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Get ALL items for a custom menu category (including disabled)
+app.get("/make-server-e5e192fb/admin/custom-menu/:slug", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const admin = await verifyAdminAccess(authHeader);
+    if (!admin) return c.json({ error: "Admin access required" }, 403);
+
+    const slug = c.req.param("slug");
+    if (!slug || slug.length > 100) {
+      return c.json({ error: "Invalid slug" }, 400);
+    }
+    const data = await kvGetWithRetry(customMenuKey(slug));
+    const items = Array.isArray(data?.items) ? data.items : [];
+    items.sort((a: any, b: any) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999));
+    return c.json({ items, slug });
+  } catch (error) {
+    console.log(`Error fetching admin custom menu ${c.req.param("slug")}: ${error?.message}`);
+    return c.json({ error: `Failed to fetch custom menu: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Add or update an item in a custom menu category
+app.put("/make-server-e5e192fb/admin/custom-menu/:slug/item", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const admin = await verifyAdminAccess(authHeader);
+    if (!admin) return c.json({ error: "Admin access required" }, 403);
+
+    const slug = c.req.param("slug");
+    if (!slug || slug.length > 100) {
+      return c.json({ error: "Invalid slug" }, 400);
+    }
+
+    const body = await c.req.json();
+    const { item } = body;
+    if (!item || !item.name) {
+      return c.json({ error: "Item name is required" }, 400);
+    }
+
+    const data = await kvGetWithRetry(customMenuKey(slug));
+    let items: any[] = Array.isArray(data?.items) ? data.items : [];
+
+    if (item.id) {
+      // Update existing item
+      const idx = items.findIndex((i: any) => i.id === item.id);
+      if (idx >= 0) {
+        items[idx] = { ...items[idx], ...item, updatedAt: new Date().toISOString() };
+      } else {
+        return c.json({ error: "Item not found" }, 404);
+      }
+    } else {
+      // Add new item
+      const newItem = {
+        id: `cm-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: item.name,
+        description: item.description || "",
+        price: Number(item.price) || 0,
+        originalPrice: item.originalPrice ? Number(item.originalPrice) : undefined,
+        image: item.image || "",
+        enabled: item.enabled !== false,
+        displayOrder: items.length,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      items.push(newItem);
+    }
+
+    await kvSetWithRetry(customMenuKey(slug), { items });
+    console.log(`✅ Custom menu "${slug}" updated by admin ${admin.userId} — now has ${items.length} items`);
+    return c.json({ success: true, items });
+  } catch (error) {
+    console.log(`Error updating custom menu item ${c.req.param("slug")}: ${error?.message}`);
+    return c.json({ error: `Failed to update item: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Delete an item from a custom menu category
+app.delete("/make-server-e5e192fb/admin/custom-menu/:slug/item/:itemId", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const admin = await verifyAdminAccess(authHeader);
+    if (!admin) return c.json({ error: "Admin access required" }, 403);
+
+    const slug = c.req.param("slug");
+    const itemId = c.req.param("itemId");
+    if (!slug || !itemId) {
+      return c.json({ error: "Slug and itemId are required" }, 400);
+    }
+
+    const data = await kvGetWithRetry(customMenuKey(slug));
+    let items: any[] = Array.isArray(data?.items) ? data.items : [];
+    const before = items.length;
+    items = items.filter((i: any) => i.id !== itemId);
+    if (items.length === before) {
+      return c.json({ error: "Item not found" }, 404);
+    }
+
+    // Reindex display order
+    items.forEach((item: any, idx: number) => { item.displayOrder = idx; });
+    await kvSetWithRetry(customMenuKey(slug), { items });
+
+    console.log(`✅ Deleted item ${itemId} from custom menu "${slug}" — ${items.length} items remain`);
+    return c.json({ success: true, items });
+  } catch (error) {
+    console.log(`Error deleting custom menu item: ${error?.message}`);
+    return c.json({ error: `Failed to delete item: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Reorder items in a custom menu category
+app.put("/make-server-e5e192fb/admin/custom-menu/:slug/reorder", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const admin = await verifyAdminAccess(authHeader);
+    if (!admin) return c.json({ error: "Admin access required" }, 403);
+
+    const slug = c.req.param("slug");
+    const body = await c.req.json();
+    const { itemIds } = body;
+    if (!Array.isArray(itemIds)) {
+      return c.json({ error: "itemIds array is required" }, 400);
+    }
+
+    const data = await kvGetWithRetry(customMenuKey(slug));
+    let items: any[] = Array.isArray(data?.items) ? data.items : [];
+
+    // Reorder: build a map, then reorder based on provided IDs
+    const itemMap = new Map(items.map((i: any) => [i.id, i]));
+    const reordered: any[] = [];
+    for (const id of itemIds) {
+      const item = itemMap.get(id);
+      if (item) {
+        item.displayOrder = reordered.length;
+        reordered.push(item);
+        itemMap.delete(id);
+      }
+    }
+    // Append any items not in the reorder list (safety)
+    for (const item of itemMap.values()) {
+      item.displayOrder = reordered.length;
+      reordered.push(item);
+    }
+
+    await kvSetWithRetry(customMenuKey(slug), { items: reordered });
+    console.log(`✅ Reordered custom menu "${slug}" — ${reordered.length} items`);
+    return c.json({ success: true, items: reordered });
+  } catch (error) {
+    console.log(`Error reordering custom menu: ${error?.message}`);
+    return c.json({ error: `Failed to reorder: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Import items from Regular Menu into a custom menu category
+app.post("/make-server-e5e192fb/admin/custom-menu/:slug/import-regular", async (c) => {
+  try {
+    const authHeader = c.req.header("X-Custom-Auth");
+    if (!authHeader) return c.json({ error: "Unauthorized" }, 401);
+    const admin = await verifyAdminAccess(authHeader);
+    if (!admin) return c.json({ error: "Admin access required" }, 403);
+
+    const slug = c.req.param("slug");
+    if (!slug || slug.length > 100) {
+      return c.json({ error: "Invalid slug" }, 400);
+    }
+
+    const body = await c.req.json();
+    const { itemIds } = body;
+    if (!Array.isArray(itemIds) || itemIds.length === 0) {
+      return c.json({ error: "itemIds array is required and must not be empty" }, 400);
+    }
+
+    // Fetch all regular menu items
+    const regularItems = await kvGetByPrefixWithRetry("regular_menu:");
+
+    // Filter to only the selected IDs
+    const selectedRegular = regularItems.filter((item: any) => itemIds.includes(item.id));
+    if (selectedRegular.length === 0) {
+      return c.json({ error: "None of the specified items were found in the Regular Menu" }, 404);
+    }
+
+    // Get existing custom menu items
+    const data = await kvGetWithRetry(customMenuKey(slug));
+    let existingItems: any[] = Array.isArray(data?.items) ? data.items : [];
+
+    // Track existing item names (lowercase) to skip duplicates
+    const existingNames = new Set(existingItems.map((i: any) => i.name?.toLowerCase()));
+
+    let importedCount = 0;
+    let skippedCount = 0;
+
+    for (const regItem of selectedRegular) {
+      if (existingNames.has(regItem.name?.toLowerCase())) {
+        skippedCount++;
+        continue;
+      }
+
+      const newItem = {
+        id: `cm-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: regItem.name,
+        description: regItem.category ? `From ${regItem.category}` : "",
+        price: regItem.price || 0,
+        originalPrice: undefined,
+        image: regItem.image || "",
+        enabled: true,
+        displayOrder: existingItems.length,
+        sourceMenu: "regular",
+        sourceId: regItem.id,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      existingItems.push(newItem);
+      existingNames.add(regItem.name?.toLowerCase());
+      importedCount++;
+    }
+
+    await kvSetWithRetry(customMenuKey(slug), { items: existingItems });
+    console.log(`✅ Imported ${importedCount} items from Regular Menu into custom menu "${slug}" (skipped ${skippedCount} duplicates) — admin ${admin.userId}`);
+    return c.json({ success: true, items: existingItems, importedCount, skippedCount });
+  } catch (error) {
+    console.log(`Error importing regular menu items to custom menu: ${error?.message}`);
+    return c.json({ error: `Failed to import: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== STAFF / ROLE MANAGEMENT ====================
+// Roles: superuser, manager, cashier, kitchen, delivery
+const VALID_STAFF_ROLES = ['superuser', 'manager', 'cashier', 'kitchen', 'delivery'] as const;
+type StaffRole = typeof VALID_STAFF_ROLES[number];
+
+// Helper: Verify staff access from JWT
+async function verifyStaffAccess(token: string): Promise<{ userId: string; role: StaffRole; phone: string } | null> {
+  const payload = await verifyToken(token);
+  if (!payload || !payload.userId || !payload.staffRole) return null;
+  const staffData = await kv.get(`staff:${payload.userId}`);
+  if (!staffData || !staffData.active) {
+    console.log(`❌ Staff access denied - inactive or missing: ${payload.userId}`);
+    return null;
+  }
+  return { userId: payload.userId, role: staffData.role, phone: staffData.phone };
+}
+
+// Initialize Super User from ADMIN_PHONE on startup
+async function initializeSuperUser() {
+  try {
+    console.log('🔧 Checking for super user staff record...');
+    const allStaff = await kvGetByPrefixWithRetry('staff:');
+    const existingSU = allStaff.find((s: any) => s.role === 'superuser' && isAdminPhone(s.phone));
+    if (existingSU) { console.log(`✅ Super user already exists: ${existingSU.id}`); return; }
+    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const { data: { users } } = await supabase.auth.admin.listUsers();
+    const aNew = phoneToEmail(ADMIN_PHONE);
+    const aLeg = `${ADMIN_PHONE_LEGACY}@${SERVER_CONFIG.emailDomain}`;
+    const adminUser = users?.find((u: any) => u.email === aNew || u.email === aLeg);
+    if (adminUser) {
+      await kvSetWithRetry(`staff:${adminUser.id}`, { id: adminUser.id, phone: ADMIN_PHONE, name: 'Super Admin', role: 'superuser', active: true, createdAt: new Date().toISOString() });
+      console.log(`✅ Super user staff record created for ${adminUser.id}`);
+    } else {
+      console.log('⚠️ Admin auth user not found yet, super user will be created on first staff login');
+    }
+  } catch (error) { console.error('⚠️ Failed to init super user:', truncateError(error)); }
+}
+setTimeout(() => initializeSuperUser(), 8000);
+
+// Staff Sign In
+app.post("/make-server-e5e192fb/staff/signin", async (c) => {
+  try {
+    const { phone, pin } = await c.req.json();
+    console.log(`🔐 STAFF SIGNIN: Starting for phone: ${phone}`);
+    if (!phone || !pin) return c.json({ error: "Phone number and PIN are required" }, 400);
+
+    const normalizedPhone = normalizePhoneForStorage(phone);
+    const email = phoneToEmail(normalizedPhone);
+    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+
+    let { data, error } = await supabase.auth.signInWithPassword({ email, password: pin });
+
+    if (error) {
+      const rawDigits = phone.replace(/\D/g, '');
+      const legacyEmails = new Set<string>();
+      legacyEmails.add(`${rawDigits}@${SERVER_CONFIG.emailDomain}`);
+      if (normalizedPhone.startsWith('+62') && rawDigits.startsWith('62')) {
+        legacyEmails.add(`${rawDigits.slice(2)}@${SERVER_CONFIG.emailDomain}`);
+        legacyEmails.add(`0${rawDigits.slice(2)}@${SERVER_CONFIG.emailDomain}`);
+      }
+      legacyEmails.delete(email);
+      for (const le of legacyEmails) {
+        const r = await supabase.auth.signInWithPassword({ email: le, password: pin });
+        if (!r.error && r.data?.session) { data = r.data; error = null; break; }
+      }
+    }
+
+    if (error && isAdminPhone(phone) && pin === ADMIN_PIN) {
+      const { data: { users } } = await supabase.auth.admin.listUsers();
+      const aNew = phoneToEmail(normalizedPhone);
+      const aLeg = `${ADMIN_PHONE_LEGACY}@${SERVER_CONFIG.emailDomain}`;
+      const au = users?.find((u: any) => u.email === aNew || u.email === aLeg);
+      if (au) {
+        await supabase.auth.admin.updateUserById(au.id, { password: ADMIN_PIN });
+        const retry = await supabase.auth.signInWithPassword({ email: au.email!, password: ADMIN_PIN });
+        if (!retry.error && retry.data?.session) { data = retry.data; error = null; }
+      }
+    }
+
+    if (error || !data?.user) {
+      console.log(`❌ STAFF SIGNIN: Auth failed - ${error?.message}`);
+      return c.json({ error: "Invalid phone number or PIN" }, 400);
+    }
+
+    const userId = data.user.id;
+    let staffData = await kv.get(`staff:${userId}`);
+
+    // Auto-create superuser for ADMIN_PHONE
+    if (!staffData && isAdminPhone(normalizedPhone)) {
+      staffData = { id: userId, phone: normalizedPhone, name: 'Super Admin', role: 'superuser', active: true, createdAt: new Date().toISOString() };
+      await kvSetWithRetry(`staff:${userId}`, staffData);
+      console.log(`✅ Auto-created super user staff record for ${userId}`);
+    }
+
+    if (!staffData) return c.json({ error: "You are not a staff member. Please use the customer login." }, 403);
+    if (!staffData.active) return c.json({ error: "Your staff account has been deactivated. Contact your supervisor." }, 403);
+
+    const staffToken = await signToken({
+      userId,
+      phone: staffData.phone,
+      staffRole: staffData.role,
+      isAdmin: staffData.role === 'superuser' || staffData.role === 'manager',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60),
+    });
+
+    console.log(`✅ STAFF SIGNIN: Success - ${staffData.name} (${staffData.role})`);
+    return c.json({ success: true, accessToken: staffToken, staff: { id: staffData.id, phone: staffData.phone, name: staffData.name, role: staffData.role } });
+  } catch (error) {
+    console.log(`❌ STAFF SIGNIN EXCEPTION: ${error}`);
+    return c.json({ error: "Staff sign-in failed" }, 500);
+  }
+});
+
+// Get current staff profile
+app.get("/make-server-e5e192fb/staff/me", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const staff = await verifyStaffAccess(token);
+    if (!staff) return c.json({ error: "Unauthorized" }, 401);
+    const staffData = await kv.get(`staff:${staff.userId}`);
+    if (!staffData) return c.json({ error: "Staff not found" }, 404);
+    return c.json({ staff: staffData });
+  } catch (error) {
+    return c.json({ error: `Failed to get staff profile: ${error?.message}` }, 500);
+  }
+});
+
+// List all staff (superuser only)
+app.get("/make-server-e5e192fb/admin/staff", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const staff = await verifyStaffAccess(token);
+    if (!staff || staff.role !== 'superuser') return c.json({ error: "Only Super User can manage staff" }, 403);
+    const allStaff = await kvGetByPrefixWithRetry('staff:');
+    const sorted = allStaff.sort((a: any, b: any) => {
+      if (a.role === 'superuser' && b.role !== 'superuser') return -1;
+      if (a.role !== 'superuser' && b.role === 'superuser') return 1;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+    return c.json({ staff: sorted });
+  } catch (error) {
+    return c.json({ error: `Failed to list staff: ${error?.message}` }, 500);
+  }
+});
+
+// Create staff member (superuser only)
+app.post("/make-server-e5e192fb/admin/staff", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const superUser = await verifyStaffAccess(token);
+    if (!superUser || superUser.role !== 'superuser') return c.json({ error: "Only Super User can create staff" }, 403);
+
+    const { phone, pin, name, role } = await c.req.json();
+    if (!phone || !pin || !name || !role) return c.json({ error: "Phone, PIN, name, and role are required" }, 400);
+    if (!isValidPin(pin)) return c.json({ error: "PIN must be exactly 6 digits" }, 400);
+    if (!VALID_STAFF_ROLES.includes(role)) return c.json({ error: `Invalid role. Must be one of: ${VALID_STAFF_ROLES.join(', ')}` }, 400);
+    if (role === 'superuser') return c.json({ error: "Cannot create another Super User account" }, 400);
+
+    const normalizedPhone = normalizePhoneForStorage(phone);
+    const emailAddr = phoneToEmail(normalizedPhone);
+    const allStaff = await kvGetByPrefixWithRetry('staff:');
+    const phoneDigitsNorm = phoneToDigits(normalizedPhone);
+    if (allStaff.find((s: any) => phoneToDigits(s.phone) === phoneDigitsNorm)) {
+      return c.json({ error: "A staff member with this phone number already exists" }, 400);
+    }
+
+    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const { data: { users } } = await supabase.auth.admin.listUsers();
+    let authUser = users?.find((u: any) => u.email === emailAddr);
+
+    if (authUser) {
+      await supabase.auth.admin.updateUserById(authUser.id, { password: pin });
+    } else {
+      const { data: cd, error: ce } = await supabase.auth.admin.createUser({
+        email: emailAddr, password: pin, user_metadata: { name, phone: normalizedPhone }, email_confirm: true,
+      });
+      if (ce) return c.json({ error: `Failed to create staff account: ${ce.message}` }, 500);
+      authUser = cd.user;
+    }
+
+    const staffRecord = { id: authUser!.id, phone: normalizedPhone, name, role, active: true, createdAt: new Date().toISOString() };
+    await kvSetWithRetry(`staff:${authUser!.id}`, staffRecord);
+    console.log(`✅ Staff created: ${name} (${role}) - ${authUser!.id}`);
+    return c.json({ success: true, staff: staffRecord });
+  } catch (error) {
+    console.log(`❌ Create staff error: ${error?.message}`);
+    return c.json({ error: `Failed to create staff: ${error?.message}` }, 500);
+  }
+});
+
+// Deactivate staff (superuser only)
+app.put("/make-server-e5e192fb/admin/staff/:id/deactivate", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const su = await verifyStaffAccess(token);
+    if (!su || su.role !== 'superuser') return c.json({ error: "Only Super User can deactivate staff" }, 403);
+    const sid = c.req.param('id');
+    if (sid === su.userId) return c.json({ error: "Cannot deactivate yourself" }, 400);
+    const sd = await kv.get(`staff:${sid}`);
+    if (!sd) return c.json({ error: "Staff not found" }, 404);
+    if (sd.role === 'superuser') return c.json({ error: "Cannot deactivate a Super User" }, 400);
+    await kvSetWithRetry(`staff:${sid}`, { ...sd, active: false, deactivatedAt: new Date().toISOString() });
+    console.log(`✅ Staff deactivated: ${sd.name} by ${su.userId}`);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ error: `Failed to deactivate staff: ${error?.message}` }, 500);
+  }
+});
+
+// Activate staff (superuser only)
+app.put("/make-server-e5e192fb/admin/staff/:id/activate", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const su = await verifyStaffAccess(token);
+    if (!su || su.role !== 'superuser') return c.json({ error: "Only Super User can activate staff" }, 403);
+    const sid = c.req.param('id');
+    const sd = await kv.get(`staff:${sid}`);
+    if (!sd) return c.json({ error: "Staff not found" }, 404);
+    await kvSetWithRetry(`staff:${sid}`, { ...sd, active: true, deactivatedAt: undefined });
+    console.log(`✅ Staff activated: ${sd.name} by ${su.userId}`);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ error: `Failed to activate staff: ${error?.message}` }, 500);
+  }
+});
+
+// Delete staff (superuser only)
+app.delete("/make-server-e5e192fb/admin/staff/:id", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const su = await verifyStaffAccess(token);
+    if (!su || su.role !== 'superuser') return c.json({ error: "Only Super User can delete staff" }, 403);
+    const sid = c.req.param('id');
+    if (sid === su.userId) return c.json({ error: "Cannot delete yourself" }, 400);
+    const sd = await kv.get(`staff:${sid}`);
+    if (!sd) return c.json({ error: "Staff not found" }, 404);
+    if (sd.role === 'superuser') return c.json({ error: "Cannot delete a Super User" }, 400);
+    await kv.del(`staff:${sid}`);
+    console.log(`✅ Staff deleted: ${sd.name} by ${su.userId}`);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ error: `Failed to delete staff: ${error?.message}` }, 500);
   }
 });
 

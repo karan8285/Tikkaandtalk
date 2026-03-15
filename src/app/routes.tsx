@@ -1,6 +1,5 @@
 import React, { Suspense } from "react";
 import { createBrowserRouter, Navigate } from "react-router";
-import type { RouteObject } from "react-router";
 import { APP_CONFIG } from "./lib/config";
 import RootLayout from "./layouts/RootLayout";
 
@@ -9,7 +8,6 @@ import Home from "./pages/Home";
 
 // Lazy load everything else - splits the bundle so users only download what they visit
 // Each lazy() call creates a separate chunk that loads on-demand
-const Menu = React.lazy(() => import("./pages/Menu"));
 const RegularMenu = React.lazy(() => import("./pages/RegularMenu"));
 const TodaysSpecial = React.lazy(() => import("./pages/TodaysSpecial"));
 const KidsMenu = React.lazy(() => import("./pages/KidsMenu"));
@@ -25,14 +23,20 @@ const Profile = React.lazy(() => import("./pages/Profile"));
 const OrderHistory = React.lazy(() => import("./pages/OrderHistory"));
 const OrderTracking = React.lazy(() => import("./pages/OrderTracking"));
 const Rewards = React.lazy(() => import("./pages/Rewards"));
-const Admin = React.lazy(() => import("./pages/Admin"));
-const CreateCustomOrder = React.lazy(() => import("./pages/CreateCustomOrder"));
-const KitchenDisplay = React.lazy(() => import("./pages/KitchenDisplay"));
 const ForgotPassword = React.lazy(() => import("./pages/ForgotPassword"));
 const TrackOrder = React.lazy(() => import("./pages/TrackOrder"));
 const GuestOrderTracking = React.lazy(() => import("./pages/GuestOrderTracking"));
 const CelebrationsHub = React.lazy(() => import("./pages/CelebrationsHub"));
 const PartyPackages = React.lazy(() => import("./pages/PartyPackages"));
+const CustomMenuPage = React.lazy(() => import("./pages/CustomMenuPage"));
+
+// Staff pages (completely separate from customer app)
+const StaffLayout = React.lazy(() => import("./layouts/StaffLayout"));
+const StaffLogin = React.lazy(() => import("./pages/StaffLogin"));
+const StaffAdmin = React.lazy(() => import("./pages/StaffAdmin"));
+const StaffKitchen = React.lazy(() => import("./pages/StaffKitchen"));
+const StaffDelivery = React.lazy(() => import("./pages/StaffDelivery"));
+const StaffCashier = React.lazy(() => import("./pages/StaffCashier"));
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -73,6 +77,7 @@ function ErrorFallback() {
 
 export const router = createBrowserRouter(
   [
+    // ─── Customer App ─────────────────────────────────────────────
     {
       path: "/",
       element: <RootLayout />,
@@ -83,8 +88,8 @@ export const router = createBrowserRouter(
           element: <Home />,
         },
         {
-          path: "menu/:category",
-          element: <Lazy><Menu /></Lazy>,
+          path: "menu/:slug",
+          element: <Lazy><CustomMenuPage /></Lazy>,
         },
         {
           path: "regular-menu",
@@ -177,18 +182,6 @@ export const router = createBrowserRouter(
           element: <Lazy><Rewards /></Lazy>,
         },
         {
-          path: "admin",
-          element: <Lazy><Admin /></Lazy>,
-        },
-        {
-          path: "admin/create-custom-order",
-          element: <Lazy><CreateCustomOrder /></Lazy>,
-        },
-        {
-          path: "admin/kitchen",
-          element: <Lazy><KitchenDisplay /></Lazy>,
-        },
-        {
           path: "track/:orderNumber",
           element: <Lazy><TrackOrder /></Lazy>,
         },
@@ -212,10 +205,53 @@ export const router = createBrowserRouter(
           path: "party-packages",
           element: <Lazy><PartyPackages /></Lazy>,
         },
+        // Old /admin route redirects to /staff (no customer-side admin access)
+        {
+          path: "admin",
+          element: <Navigate to="/staff" replace />,
+        },
+        {
+          path: "admin/*",
+          element: <Navigate to="/staff" replace />,
+        },
         // Catch-all route for 404s - redirect to home
         {
           path: "*",
           element: <Navigate to="/" replace />,
+        },
+      ],
+    },
+
+    // ─── Staff Portal (Completely separate from customer app) ─────
+    {
+      path: "/staff",
+      element: <Lazy><StaffLayout /></Lazy>,
+      errorElement: <ErrorFallback />,
+      children: [
+        {
+          index: true,
+          element: <Lazy><StaffLogin /></Lazy>,
+        },
+        {
+          path: "admin",
+          element: <Lazy><StaffAdmin /></Lazy>,
+        },
+        {
+          path: "kitchen",
+          element: <Lazy><StaffKitchen /></Lazy>,
+        },
+        {
+          path: "delivery",
+          element: <Lazy><StaffDelivery /></Lazy>,
+        },
+        {
+          path: "cashier",
+          element: <Lazy><StaffCashier /></Lazy>,
+        },
+        // Catch-all for staff routes
+        {
+          path: "*",
+          element: <Navigate to="/staff" replace />,
         },
       ],
     },

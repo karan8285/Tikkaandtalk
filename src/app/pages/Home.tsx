@@ -1,5 +1,6 @@
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { ChefHat, Baby, Zap, UtensilsCrossed, ShoppingCart, Gift, AlertCircle, MessageCircle, Package, PartyPopper } from "lucide-react";
+import { ShoppingCart, Gift, AlertCircle, MessageCircle, Package } from "lucide-react";
+import { getIconComponent } from "../lib/iconMap";
 import { setWhatsAppConfig, getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
 import { ActiveOrderBar } from "../components/ActiveOrderBar";
 import { APP_CONFIG, LOGO_ALT, whatsAppOrderMessage } from "../lib/config";
@@ -37,6 +38,17 @@ interface RestaurantStatus {
   mascotImageUrl?: string;
 }
 
+interface HomeCategory {
+  id: string;
+  title: string;
+  icon: string;
+  route: string;
+  visible: boolean;
+  order: number;
+  countKey: string | null;
+  isBuiltIn: boolean;
+}
+
 export default function Home() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -52,6 +64,8 @@ export default function Home() {
     activeOrders: 0,
     availableRewards: 0,
   });
+  const [homeCategories, setHomeCategories] = useState<HomeCategory[]>([]);
+  const [customCounts, setCustomCounts] = useState<Record<string, number>>({});
   const [restaurantStatus, setRestaurantStatus] = useState<RestaurantStatus>({
     isOpen: true,
     acceptingOrders: true,
@@ -92,6 +106,27 @@ export default function Home() {
     // Refresh every 30 seconds
     const interval = setInterval(fetchRestaurantStatus, 30000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Fetch home layout categories from server
+  useEffect(() => {
+    const fetchHomeLayout = async () => {
+      try {
+        const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+        const res = await fetch(`${API_BASE}/home-layout`, {
+          headers: { Authorization: `Bearer ${publicAnonKey}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.categories?.length > 0) {
+            setHomeCategories(data.categories);
+          }
+        }
+      } catch (error) {
+        console.log("Could not fetch home layout - using defaults");
+      }
+    };
+    fetchHomeLayout();
   }, []);
 
   // Fetch menu counts
@@ -218,43 +253,46 @@ export default function Home() {
   const displayAddress = restaurantStatus.restaurantAddress || DEFAULT_ADDRESS;
   const displayLogoSrc = restaurantStatus.restaurantLogoUrl || cachedLogo;
 
-  const menuCategories = [
-    {
-      id: 1,
-      title: "Today's Special",
-      icon: ChefHat,
-      color: APP_CONFIG.brand.primaryColor,
-      route: "/todays-special"
-    },
-    {
-      id: 2,
-      title: "Kids Menu",
-      icon: Baby,
-      color: APP_CONFIG.brand.primaryColor,
-      route: "/kids-menu"
-    },
-    {
-      id: 3,
-      title: "Flash Sale",
-      icon: Zap,
-      color: APP_CONFIG.brand.primaryColor,
-      route: "/flash-sale"
-    },
-    {
-      id: 4,
-      title: "Regular Menu",
-      icon: UtensilsCrossed,
-      color: APP_CONFIG.brand.primaryColor,
-      route: "/regular-menu"
-    },
-    {
-      id: 5,
-      title: "Celebrations",
-      icon: PartyPopper,
-      color: APP_CONFIG.brand.primaryColor,
-      route: "/party-packages"
-    }
+  // Use server-fetched layout or fall back to defaults
+  const defaultCategories: HomeCategory[] = [
+    { id: "todays-special", title: "Today's Special", icon: "ChefHat", route: "/todays-special", visible: true, order: 0, countKey: "todaysSpecial", isBuiltIn: true },
+    { id: "kids-menu", title: "Kids Menu", icon: "Baby", route: "/kids-menu", visible: true, order: 1, countKey: "kidsMenu", isBuiltIn: true },
+    { id: "flash-sale", title: "Flash Sale", icon: "Zap", route: "/flash-sale", visible: true, order: 2, countKey: "flashSale", isBuiltIn: true },
+    { id: "regular-menu", title: "Regular Menu", icon: "UtensilsCrossed", route: "/regular-menu", visible: true, order: 3, countKey: "regularMenu", isBuiltIn: true },
+    { id: "celebrations", title: "Celebrations", icon: "PartyPopper", route: "/celebrations", visible: true, order: 4, countKey: null, isBuiltIn: true },
   ];
+  const menuCategories = homeCategories.length > 0 ? homeCategories : defaultCategories;
+
+  // Fetch counts for custom /menu/ categories
+  useEffect(() => {
+    const customCats = menuCategories.filter(
+      (c) => !c.isBuiltIn && c.route.startsWith("/menu/")
+    );
+    if (customCats.length === 0) return;
+
+    const fetchCustomCounts = async () => {
+      const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+      const counts: Record<string, number> = {};
+      await Promise.all(
+        customCats.map(async (cat) => {
+          try {
+            const slug = cat.route.replace("/menu/", "");
+            const res = await fetch(`${API_BASE}/custom-menu/${slug}`, {
+              headers: { Authorization: `Bearer ${publicAnonKey}` },
+            });
+            if (res.ok) {
+              const data = await res.json();
+              counts[cat.id] = data.items?.length || 0;
+            }
+          } catch {
+            // silently ignore
+          }
+        })
+      );
+      setCustomCounts(counts);
+    };
+    fetchCustomCounts();
+  }, [homeCategories]);
 
   const handleCategoryClick = (route: string) => {
     navigate(route);
@@ -405,88 +443,75 @@ export default function Home() {
         </div>
       ) : (
         <>
-          {/* Menu Categories Grid */}
-          <div className="px-4 sm:px-5 pb-3 sm:pb-4">
-            <div className="grid grid-cols-2 gap-3 sm:gap-4 max-w-lg mx-auto">
-              {menuCategories.filter(c => c.route !== "/party-packages").map((category) => {
-                const IconComponent = category.icon;
-                let count = 0;
-                
-                // Map route to correct count
-                if (category.route === "/todays-special") count = menuCounts.todaysSpecial;
-                else if (category.route === "/kids-menu") count = menuCounts.kidsMenu;
-                else if (category.route === "/flash-sale") count = menuCounts.flashSale;
-                else if (category.route === "/regular-menu") count = menuCounts.regularMenu;
-                
-                return (
-                  <button
-                    key={category.id}
-                    onClick={() => handleCategoryClick(category.route)}
-                    className="relative bg-white rounded-2xl p-4 sm:p-5 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col items-center justify-center gap-2 sm:gap-2.5 active:scale-95"
-                    style={{ minHeight: "108px" }}
-                  >
-                    {/* Badge at top-right */}
-                    {count > 0 && (
-                      <div className="absolute top-2 right-2">
-                        <Badge 
-                          count={count}
-                          style={{ backgroundColor: APP_CONFIG.brand.primaryColor, color: "white" }}
-                        />
-                      </div>
-                    )}
-                    
-                    {/* Icon - Direct, No Circle Background */}
-                    <IconComponent 
-                      className="w-10 h-10 sm:w-12 sm:h-12" 
-                      strokeWidth={2} 
-                      style={{ color: category.color }}
-                    />
-                    
-                    {/* Category Name */}
-                    <span className="text-sm sm:text-base font-semibold text-center leading-tight" style={{ color: "#4A4A4A" }}>
-                      {category.title}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Celebrations Banner - Full Width Featured */}
-          <div className="px-4 sm:px-5 pb-4 sm:pb-5">
+          {/* Menu Categories - Horizontal Scrollable Icon Row */}
+          <div className="px-1 pb-4 sm:pb-5">
             <div className="max-w-lg mx-auto">
-              <button
-                onClick={() => navigate("/celebrations")}
-                className="relative w-full rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-200 active:scale-[0.98]"
+              {/* Section Label */}
+              <div className="px-4 mb-2.5">
+                <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  Explore Menu
+                </span>
+              </div>
+
+              {/* Scrollable Row */}
+              <div
+                className="flex gap-1 overflow-x-auto px-3 pb-2 scrollbar-hide"
                 style={{
-                  background: `linear-gradient(135deg, ${APP_CONFIG.brand.gradientStart}15, ${APP_CONFIG.brand.gradientEnd}20)`,
-                  border: `1px solid ${APP_CONFIG.brand.primaryColor}20`,
+                  scrollSnapType: "x mandatory",
+                  WebkitOverflowScrolling: "touch",
+                  msOverflowStyle: "none",
+                  scrollbarWidth: "none",
                 }}
               >
-                <div className="flex items-center gap-3 p-4 sm:p-5">
-                  <div
-                    className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center flex-shrink-0"
-                    style={{ backgroundColor: `${APP_CONFIG.brand.primaryColor}12` }}
-                  >
-                    <PartyPopper
-                      className="w-7 h-7 sm:w-8 sm:h-8"
-                      strokeWidth={2}
-                      style={{ color: APP_CONFIG.brand.primaryColor }}
-                    />
-                  </div>
-                  <div className="text-left flex-1">
-                    <span className="text-sm sm:text-base font-bold block" style={{ color: "#4A4A4A" }}>
-                      Celebrations & Events
-                    </span>
-                    <span className="text-xs sm:text-sm text-gray-500">
-                      Birthday parties, catering & custom packages
-                    </span>
-                  </div>
-                  <svg className="w-5 h-5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                  </svg>
-                </div>
-              </button>
+                {menuCategories.map((category) => {
+                  const IconComponent = getIconComponent(category.icon);
+                  const count = category.countKey
+                    ? menuCounts[category.countKey as keyof MenuCounts] || 0
+                    : customCounts[category.id] || 0;
+
+                  return (
+                    <button
+                      key={category.id}
+                      onClick={() => handleCategoryClick(category.route)}
+                      className="flex flex-col items-center gap-1.5 flex-shrink-0 active:scale-95 transition-transform duration-150 px-2 py-1"
+                      style={{ scrollSnapAlign: "start", minWidth: "72px" }}
+                    >
+                      {/* Circular Icon Container */}
+                      <div className="relative">
+                        <div
+                          className="w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center shadow-sm transition-shadow duration-200 hover:shadow-md"
+                          style={{
+                            background: `linear-gradient(135deg, ${APP_CONFIG.brand.primaryColor}10, ${APP_CONFIG.brand.primaryColor}20)`,
+                            border: `2px solid ${APP_CONFIG.brand.primaryColor}25`,
+                          }}
+                        >
+                          <IconComponent
+                            className="w-6 h-6 sm:w-7 sm:h-7"
+                            strokeWidth={2.2}
+                            style={{ color: APP_CONFIG.brand.primaryColor }}
+                          />
+                        </div>
+                        {/* Count Badge */}
+                        {count > 0 && (
+                          <span
+                            className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full text-[10px] font-bold flex items-center justify-center text-white shadow-sm"
+                            style={{ backgroundColor: APP_CONFIG.brand.primaryColor }}
+                          >
+                            {count}
+                          </span>
+                        )}
+                      </div>
+                      {/* Label */}
+                      <span
+                        className="text-[11px] sm:text-xs font-semibold text-center leading-tight max-w-[72px]"
+                        style={{ color: "#5A5A5A" }}
+                      >
+                        {category.title}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 

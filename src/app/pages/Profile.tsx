@@ -141,16 +141,7 @@ export default function Profile() {
             Rewards & Offers
           </Button>
 
-          {user.isAdmin && (
-            <Button
-              onClick={() => navigate("/admin")}
-              variant="outline"
-              className="w-full justify-start border-accent text-accent hover:bg-accent/10"
-            >
-              <ShieldCheck className="w-4 h-4 mr-2" />
-              Admin Dashboard
-            </Button>
-          )}
+          {/* Admin access moved to /staff portal — no longer accessible from customer side */}
         </div>
 
         {/* Security Info */}

@@ -423,7 +423,7 @@ export default function CreateCustomOrder() {
       
       // Navigate to admin page
       setTimeout(() => {
-        navigate("/admin");
+        navigate("/staff/admin");
       }, 1500);
       
     } catch (error: any) {

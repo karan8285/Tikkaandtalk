@@ -30,6 +30,8 @@ import { BusinessInsightsAdmin } from "../components/BusinessInsightsAdmin";
 import { PaymentGatewayAdmin } from "../components/PaymentGatewayAdmin";
 import { PartyPackagesAdmin } from "../components/PartyPackagesAdmin";
 import { CelebrationCategoriesAdmin } from "../components/CelebrationCategoriesAdmin";
+import { HomeLayoutAdmin } from "../components/HomeLayoutAdmin";
+import { CustomMenuAdmin } from "../components/CustomMenuAdmin";
 import { getShortOrderId } from "../lib/orderUtils";
 import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG } from "../lib/config";
@@ -1131,6 +1133,8 @@ export default function Admin() {
               <TabsTrigger value="kids-menu">Kids</TabsTrigger>
               <TabsTrigger value="flash-sale">Flash</TabsTrigger>
               <TabsTrigger value="party-packages">Parties</TabsTrigger>
+              <TabsTrigger value="home-layout">Layout</TabsTrigger>
+              <TabsTrigger value="custom-menus">Custom</TabsTrigger>
               <TabsTrigger value="insights">Insights</TabsTrigger>
               <TabsTrigger value="payments">Payments</TabsTrigger>
               <TabsTrigger value="settings">Settings</TabsTrigger>
@@ -2240,6 +2244,28 @@ export default function Admin() {
                   <PartyPackagesAdmin customToken={accessToken} />
                 </div>
               </>
+            ) : (
+              <Card className="p-8 text-center">
+                <p className="text-muted-foreground">Loading authentication...</p>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* Home Layout Tab */}
+          <TabsContent value="home-layout" className="space-y-4">
+            {accessToken ? (
+              <HomeLayoutAdmin customToken={accessToken} />
+            ) : (
+              <Card className="p-8 text-center">
+                <p className="text-muted-foreground">Loading authentication...</p>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* Custom Menus Tab */}
+          <TabsContent value="custom-menus" className="space-y-4">
+            {accessToken ? (
+              <CustomMenuAdmin customToken={accessToken} />
             ) : (
               <Card className="p-8 text-center">
                 <p className="text-muted-foreground">Loading authentication...</p>

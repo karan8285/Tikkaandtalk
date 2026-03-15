@@ -160,7 +160,7 @@ export default function KitchenDisplay() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => navigate("/admin")}
+                onClick={() => navigate("/staff/admin")}
                 className="text-white hover:bg-gray-700"
               >
                 <ArrowLeft className="w-4 h-4 mr-2" />
