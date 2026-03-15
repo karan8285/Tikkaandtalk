@@ -1,6 +1,8 @@
 import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { APP_CONFIG } from "../lib/config";
+import { MenuImageUpload } from "./MenuImageUpload";
+import { MenuVideoUpload } from "./MenuVideoUpload";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -10,6 +12,7 @@ interface FlashSaleItem {
   subtitle: string;
   description: string;
   image: string;
+  video?: string;
   originalPrice: number;
   discountPercentage: number;
   finalPrice: number;
@@ -36,6 +39,7 @@ export function FlashSaleAdmin({ customToken }: Props) {
     subtitle: "",
     description: "",
     image: "",
+    video: "",
     originalPrice: "",
     discountPercentage: "",
     badgeText: "",
@@ -79,6 +83,7 @@ export function FlashSaleAdmin({ customToken }: Props) {
       subtitle: "",
       description: "",
       image: "",
+      video: "",
       originalPrice: "",
       discountPercentage: "",
       badgeText: "",
@@ -96,6 +101,7 @@ export function FlashSaleAdmin({ customToken }: Props) {
       subtitle: item.subtitle,
       description: item.description,
       image: item.image,
+      video: item.video || "",
       originalPrice: item.originalPrice.toString(),
       discountPercentage: item.discountPercentage.toString(),
       badgeText: item.badgeText,
@@ -119,6 +125,7 @@ export function FlashSaleAdmin({ customToken }: Props) {
         subtitle: formData.subtitle,
         description: formData.description,
         image: formData.image,
+        video: formData.video,
         originalPrice: parseFloat(formData.originalPrice),
         discountPercentage: parseFloat(formData.discountPercentage || "0"),
         badgeText: formData.badgeText || `FLASH ${formData.discountPercentage}% OFF`,
@@ -244,18 +251,25 @@ export function FlashSaleAdmin({ customToken }: Props) {
           {items.map((item) => (
             <Card key={item.id} className="p-4">
               <div className="flex gap-4">
-                {/* Image */}
-                {item.image ? (
-                  <img
-                    src={item.image}
-                    alt={item.name}
-                    className="w-24 h-24 object-cover rounded-lg"
-                  />
-                ) : (
-                  <div className="w-24 h-24 bg-gray-100 rounded-lg flex items-center justify-center">
-                    <ImageIcon className="w-8 h-8 text-gray-400" />
-                  </div>
-                )}
+                {/* Image with optional video indicator */}
+                <div className="relative flex-shrink-0">
+                  {item.image ? (
+                    <img
+                      src={item.image}
+                      alt={item.name}
+                      className="w-24 h-24 object-cover rounded-lg"
+                    />
+                  ) : (
+                    <div className="w-24 h-24 bg-gray-100 rounded-lg flex items-center justify-center">
+                      <ImageIcon className="w-8 h-8 text-gray-400" />
+                    </div>
+                  )}
+                  {item.video && (
+                    <div className="absolute bottom-1 left-1 bg-black/70 text-white px-1.5 py-0.5 rounded flex items-center gap-1 text-[10px]">
+                      <Video className="w-3 h-3" />
+                    </div>
+                  )}
+                </div>
 
                 {/* Content */}
                 <div className="flex-1 space-y-2">
@@ -371,12 +385,26 @@ export function FlashSaleAdmin({ customToken }: Props) {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="image">Image URL</Label>
-              <Input
-                id="image"
+              <MenuImageUpload
                 value={formData.image}
-                onChange={(e) => setFormData({ ...formData, image: e.target.value })}
-                placeholder="https://example.com/image.jpg"
+                onChange={(url) => setFormData({ ...formData, image: url })}
+                customToken={customToken}
+                label="Dish Image"
+                context="Flash Sale Card"
+                recommendedSize="800 x 600 px"
+                aspectRatio="4:3"
+                maxSizeMB={5}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <MenuVideoUpload
+                value={formData.video}
+                onChange={(url) => setFormData({ ...formData, video: url })}
+                customToken={customToken}
+                label="Dish Video (Optional)"
+                context="Flash Sale"
+                maxSizeMB={50}
               />
             </div>
 

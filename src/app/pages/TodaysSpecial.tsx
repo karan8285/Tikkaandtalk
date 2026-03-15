@@ -9,6 +9,7 @@ import { APP_CONFIG } from "../lib/config";
 import Slider from "react-slick";
 import "slick-carousel/slick/slick.css";
 import "slick-carousel/slick/slick-theme.css";
+import { MediaOverlay } from "../components/MediaOverlay";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -18,6 +19,7 @@ interface TodaysSpecialItem {
   subtitle?: string;
   description: string;
   image: string;
+  video?: string;
   originalPrice: number;
   discountPercentage: number;
   finalPrice: number;
@@ -265,16 +267,13 @@ export default function TodaysSpecial() {
           {items.map((item) => (
             <div key={item.id}>
               <div className="relative">
-                {/* Hero Image */}
-                <div className="relative h-72 overflow-hidden">
-                  <img
-                    src={item.image}
-                    alt={item.name}
-                    className="w-full h-full object-cover"
-                  />
-                  {/* Gradient Overlay */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent"></div>
-                  
+                {/* Hero Image/Video with MediaOverlay */}
+                <MediaOverlay
+                  image={item.image}
+                  video={item.video}
+                  alt={item.name}
+                  heightClass="h-72"
+                >
                   {/* Share Button */}
                   <button
                     onClick={handleShare}
@@ -285,7 +284,7 @@ export default function TodaysSpecial() {
 
                   {/* Badge */}
                   {item.badgeText && (
-                    <div className="absolute top-4 right-4 bg-accent text-accent-foreground px-3 py-1 rounded-full text-xs font-bold shadow-lg">
+                    <div className="absolute top-4 right-4 bg-accent text-accent-foreground px-3 py-1 rounded-full text-xs font-bold shadow-lg z-10">
                       {item.badgeText}
                     </div>
                   )}
@@ -294,20 +293,20 @@ export default function TodaysSpecial() {
                   {items.length > 1 && (
                     <>
                       <button
-                        onClick={() => sliderRef.current?.slickPrev()}
-                        className="absolute left-4 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg transition-colors"
+                        onClick={(e) => { e.stopPropagation(); sliderRef.current?.slickPrev(); }}
+                        className="absolute left-4 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg transition-colors z-10"
                       >
                         <ChevronLeft className="w-5 h-5 text-gray-800" />
                       </button>
                       <button
-                        onClick={() => sliderRef.current?.slickNext()}
-                        className="absolute right-4 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg transition-colors"
+                        onClick={(e) => { e.stopPropagation(); sliderRef.current?.slickNext(); }}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white p-2 rounded-full shadow-lg transition-colors z-10"
                       >
                         <ChevronRight className="w-5 h-5 text-gray-800" />
                       </button>
                     </>
                   )}
-                </div>
+                </MediaOverlay>
               </div>
             </div>
           ))}

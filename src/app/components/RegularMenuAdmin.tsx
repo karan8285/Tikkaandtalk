@@ -10,6 +10,7 @@ import { Badge } from "./ui/badge";
 import { Plus, Edit, Trash2, RefreshCw, Search, Image as ImageIcon, PackageX, Award, ChefHat } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
+import { MenuImageUpload } from "./MenuImageUpload";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -620,12 +621,15 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
               />
             </div>
             <div>
-              <Label htmlFor="add-image">Image URL</Label>
-              <Input
-                id="add-image"
+              <MenuImageUpload
                 value={formData.image}
-                onChange={(e) => setFormData({ ...formData, image: e.target.value })}
-                placeholder="e.g., https://example.com/image.jpg"
+                onChange={(url) => setFormData({ ...formData, image: url })}
+                customToken={customToken}
+                label="Dish Image"
+                context="Regular Menu Card"
+                recommendedSize="400 x 300 px"
+                aspectRatio="4:3"
+                maxSizeMB={5}
               />
             </div>
             {/* Badge Toggles */}
@@ -702,12 +706,15 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
               />
             </div>
             <div>
-              <Label htmlFor="edit-image">Image URL</Label>
-              <Input
-                id="edit-image"
+              <MenuImageUpload
                 value={formData.image}
-                onChange={(e) => setFormData({ ...formData, image: e.target.value })}
-                placeholder="e.g., https://example.com/image.jpg"
+                onChange={(url) => setFormData({ ...formData, image: url })}
+                customToken={customToken}
+                label="Dish Image"
+                context="Regular Menu Card"
+                recommendedSize="400 x 300 px"
+                aspectRatio="4:3"
+                maxSizeMB={5}
               />
             </div>
             {/* Badge Toggles */}

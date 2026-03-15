@@ -2,8 +2,8 @@ import React from "react";
 import { useNavigate } from "react-router";
 import { ArrowLeft, ShoppingCart } from "lucide-react";
 import { useCart } from "../lib/cart";
-import { getRestaurantLogo } from "../lib/useRestaurantLogo";
-import { LOGO_ALT } from "../lib/config";
+import { useRestaurantLogo } from "../lib/useRestaurantLogo";
+import { LOGO_ALT, APP_CONFIG } from "../lib/config";
 
 interface HeaderProps {
   showBack?: boolean;
@@ -16,6 +16,7 @@ interface HeaderProps {
 export function Header({ showBack = false, title, showCart = true, rightContent, onBack }: HeaderProps) {
   const navigate = useNavigate();
   const { totalItems } = useCart();
+  const { logo, loading: logoLoading } = useRestaurantLogo();
 
   return (
     <header className="bg-secondary text-secondary-foreground py-3 sm:py-4 px-4 sticky top-0 z-50">
@@ -40,9 +41,14 @@ export function Header({ showBack = false, title, showCart = true, rightContent,
         <div className="flex-1 min-w-0">
           {title ? (
             <h1 className="text-base sm:text-lg font-semibold truncate">{title}</h1>
+          ) : logoLoading ? (
+            /* Show text fallback while logo is loading to avoid SVG flash */
+            <span className="text-base sm:text-lg font-bold truncate opacity-90">
+              {APP_CONFIG.restaurant.name}
+            </span>
           ) : (
             <img
-              src={getRestaurantLogo()}
+              src={logo}
               alt={LOGO_ALT}
               className="h-8 sm:h-10 w-auto"
               style={{

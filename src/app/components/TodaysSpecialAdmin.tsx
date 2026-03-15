@@ -7,7 +7,9 @@ import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Switch } from "./ui/switch";
-import { ChefHat, Plus, Pencil, Trash2, Image as ImageIcon } from "lucide-react";
+import { ChefHat, Plus, Pencil, Trash2, Image as ImageIcon, Video } from "lucide-react";
+import { MenuImageUpload } from "./MenuImageUpload";
+import { MenuVideoUpload } from "./MenuVideoUpload";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
@@ -20,6 +22,7 @@ interface TodaysSpecialItem {
   subtitle: string;
   description: string;
   image: string;
+  video?: string;
   originalPrice: number;
   discountPercentage: number;
   finalPrice: number;
@@ -46,6 +49,7 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
     subtitle: "",
     description: "",
     image: "",
+    video: "",
     originalPrice: "",
     discountPercentage: "",
     badgeText: "",
@@ -88,6 +92,7 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
       subtitle: "",
       description: "",
       image: "",
+      video: "",
       originalPrice: "",
       discountPercentage: "",
       badgeText: "",
@@ -104,6 +109,7 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
       subtitle: item.subtitle || "",
       description: item.description || "",
       image: item.image || "",
+      video: item.video || "",
       originalPrice: item.originalPrice?.toString() || "",
       discountPercentage: item.discountPercentage?.toString() || "",
       badgeText: item.badgeText || "",
@@ -126,6 +132,7 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
         subtitle: formData.subtitle,
         description: formData.description,
         image: formData.image,
+        video: formData.video,
         originalPrice: parseFloat(formData.originalPrice),
         discountPercentage: parseFloat(formData.discountPercentage || "0"),
         badgeText: formData.badgeText || `SPECIAL ${formData.discountPercentage}% OFF`,
@@ -285,17 +292,26 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
           {items.map((item) => (
             <Card key={item.id} className="overflow-hidden">
               {/* Image */}
-              {item.image ? (
-                <img
-                  src={item.image}
-                  alt={item.name}
-                  className="w-full h-48 object-cover"
-                />
-              ) : (
-                <div className="w-full h-48 bg-gray-100 flex items-center justify-center">
-                  <ImageIcon className="w-12 h-12 text-gray-400" />
-                </div>
-              )}
+              {/* Image with optional video indicator */}
+              <div className="relative">
+                {item.image ? (
+                  <img
+                    src={item.image}
+                    alt={item.name}
+                    className="w-full h-48 object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-48 bg-gray-100 flex items-center justify-center">
+                    <ImageIcon className="w-12 h-12 text-gray-400" />
+                  </div>
+                )}
+                {item.video && (
+                  <div className="absolute bottom-2 left-2 bg-black/70 text-white px-2 py-1 rounded-md flex items-center gap-1 text-xs">
+                    <Video className="w-3.5 h-3.5" />
+                    Video
+                  </div>
+                )}
+              </div>
 
               {/* Content */}
               <div className="p-4 space-y-3">
@@ -410,16 +426,27 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
               </div>
 
               <div className="col-span-2">
-                <Label htmlFor="image">Image URL</Label>
-                <Input
-                  id="image"
+                <MenuImageUpload
                   value={formData.image}
-                  onChange={(e) => setFormData({ ...formData, image: e.target.value })}
-                  placeholder="https://example.com/image.jpg"
+                  onChange={(url) => setFormData({ ...formData, image: url })}
+                  customToken={customToken}
+                  label="Dish Image"
+                  context="Today's Special Card"
+                  recommendedSize="800 x 600 px"
+                  aspectRatio="4:3"
+                  maxSizeMB={5}
                 />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Use Unsplash or other image URL
-                </p>
+              </div>
+
+              <div className="col-span-2">
+                <MenuVideoUpload
+                  value={formData.video}
+                  onChange={(url) => setFormData({ ...formData, video: url })}
+                  customToken={customToken}
+                  label="Dish Video (Optional)"
+                  context="Today's Special"
+                  maxSizeMB={50}
+                />
               </div>
 
               <div>

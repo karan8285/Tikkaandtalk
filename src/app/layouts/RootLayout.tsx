@@ -7,9 +7,57 @@ import { usePresence } from "../lib/presence";
 import { useDeviceSize } from "../lib/useDeviceSize";
 import { APP_CONFIG } from "../lib/config";
 import { GlobalMascot } from "../components/GlobalMascot";
+import { cacheRestaurantLogo, notifyLogoUpdate, notifyBrandingFetched, isBrandingFetched } from "../lib/useRestaurantLogo";
+import { cacheRestaurantMascot, notifyMascotUpdate } from "../lib/useRestaurantMascot";
+import { setWhatsAppConfig } from "../lib/whatsapp";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 function PresenceTracker() {
   usePresence();
+  return null;
+}
+
+/**
+ * Prefetch branding assets (logo, mascot) from restaurant-status.
+ * Fires once per session at the layout level so it works regardless
+ * of which page the user lands on — eliminating the SVG fallback flash.
+ */
+function BrandingPrefetch() {
+  useEffect(() => {
+    // Skip if already fetched this session
+    if (isBrandingFetched()) return;
+
+    const fetchBranding = async () => {
+      try {
+        const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+        const response = await fetch(`${API_BASE}/restaurant-status`, {
+          headers: { Authorization: `Bearer ${publicAnonKey}` },
+        });
+
+        if (response.ok) {
+          const status = await response.json();
+          // Cache logo
+          cacheRestaurantLogo(status.restaurantLogoUrl || null);
+          notifyLogoUpdate();
+          // Cache mascot
+          cacheRestaurantMascot(status.mascotImageUrl || null);
+          notifyMascotUpdate();
+          // Update WhatsApp config
+          if (status.whatsappNumber) {
+            setWhatsAppConfig(status.whatsappNumber, status.whatsappDisplay);
+          }
+        }
+      } catch {
+        // Silently fail — fallbacks will be used
+      } finally {
+        // Always mark as fetched so we don't re-fetch and hooks resolve loading state
+        notifyBrandingFetched();
+      }
+    };
+
+    fetchBranding();
+  }, []);
+
   return null;
 }
 
@@ -69,6 +117,7 @@ export default function RootLayout() {
         <MascotProvider>
           <DocumentTitle />
           <PresenceTracker />
+          <BrandingPrefetch />
           <AdaptiveShell>
             <Outlet />
             <GlobalMascot />

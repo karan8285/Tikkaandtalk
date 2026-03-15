@@ -247,7 +247,7 @@ export function Mascot({
   const { user } = useAuth();
   const { totalItems } = useCart();
   const { isMascotVisible, hideMascot } = useMascot();
-  const dynamicMascotUrl = useRestaurantMascot();
+  const { mascot: dynamicMascotUrl, loading: mascotLoading } = useRestaurantMascot();
   const [isVisible, setIsVisible] = useState(false);
   const [isDismissing, setIsDismissing] = useState(false);
 
@@ -293,6 +293,19 @@ export function Mascot({
 
   // Render mascot image or emoji fallback
   const renderMascotImage = (imgSize: number) => {
+    // While branding is still loading, show a subtle placeholder instead of emoji flash
+    if (mascotLoading) {
+      return (
+        <div
+          className="rounded-full animate-pulse"
+          style={{
+            width: `${imgSize}px`,
+            height: `${imgSize}px`,
+            background: `linear-gradient(135deg, ${brandColor}10, ${brandColor}20)`,
+          }}
+        />
+      );
+    }
     if (!hasMascotImage) {
       return (
         <div

@@ -2675,7 +2675,7 @@ app.post("/make-server-e5e192fb/admin/todays-special", async (c) => {
     }
 
     const body = await c.req.json();
-    const { name, subtitle, description, image, originalPrice, discountPercentage, badgeText, enabled, displayOrder } = body;
+    const { name, subtitle, description, image, video, originalPrice, discountPercentage, badgeText, enabled, displayOrder } = body;
 
     if (!name || !originalPrice) {
       return c.json({ error: "Name and original price are required" }, 400);
@@ -2698,6 +2698,7 @@ app.post("/make-server-e5e192fb/admin/todays-special", async (c) => {
       subtitle: subtitle || "",
       description: description || "",
       image: image || "",
+      video: video || "",
       originalPrice,
       discountPercentage: discountPercentage || 0,
       finalPrice,
@@ -2732,7 +2733,7 @@ app.put("/make-server-e5e192fb/admin/todays-special/:id", async (c) => {
 
     const itemId = c.req.param('id');
     const body = await c.req.json();
-    const { name, subtitle, description, image, originalPrice, discountPercentage, badgeText, enabled, displayOrder } = body;
+    const { name, subtitle, description, image, video, originalPrice, discountPercentage, badgeText, enabled, displayOrder } = body;
 
     const existingItem = await kv.get(`todays_special:${itemId}`);
     if (!existingItem) {
@@ -2754,6 +2755,7 @@ app.put("/make-server-e5e192fb/admin/todays-special/:id", async (c) => {
       subtitle: subtitle !== undefined ? subtitle : existingItem.subtitle,
       description: description !== undefined ? description : existingItem.description,
       image: image !== undefined ? image : existingItem.image,
+      video: video !== undefined ? video : (existingItem.video || ""),
       originalPrice: updatedOriginalPrice,
       discountPercentage: updatedDiscountPercentage,
       finalPrice,
@@ -3036,7 +3038,7 @@ app.post("/make-server-e5e192fb/admin/flash-sale", async (c) => {
     }
 
     const body = await c.req.json();
-    const { name, subtitle, description, image, originalPrice, discountPercentage, badgeText, enabled, displayOrder, endTime } = body;
+    const { name, subtitle, description, image, video, originalPrice, discountPercentage, badgeText, enabled, displayOrder, endTime } = body;
 
     if (!name || !description || !image || originalPrice === undefined || discountPercentage === undefined) {
       return c.json({ error: "Missing required fields" }, 400);
@@ -3056,6 +3058,7 @@ app.post("/make-server-e5e192fb/admin/flash-sale", async (c) => {
       subtitle: subtitle || "",
       description,
       image,
+      video: video || "",
       originalPrice,
       discountPercentage,
       finalPrice,
@@ -3090,7 +3093,7 @@ app.put("/make-server-e5e192fb/admin/flash-sale/:id", async (c) => {
 
     const itemId = c.req.param('id');
     const body = await c.req.json();
-    const { name, subtitle, description, image, originalPrice, discountPercentage, badgeText, enabled, displayOrder, endTime } = body;
+    const { name, subtitle, description, image, video, originalPrice, discountPercentage, badgeText, enabled, displayOrder, endTime } = body;
 
     const existingItem = await kv.get(`flash_sale:${itemId}`);
     if (!existingItem) {
@@ -3105,6 +3108,7 @@ app.put("/make-server-e5e192fb/admin/flash-sale/:id", async (c) => {
       subtitle: subtitle || "",
       description,
       image,
+      video: video !== undefined ? video : (existingItem.video || ""),
       originalPrice,
       discountPercentage,
       finalPrice,
@@ -5945,6 +5949,274 @@ app.delete("/make-server-e5e192fb/admin/delete-mascot", async (c) => {
     return c.json({ error: `Failed to delete mascot: ${error}` }, 500);
   }
 });
+
+// ==================== MENU IMAGE UPLOAD & DELETE ====================
+
+// Upload menu image (admin only) - generic endpoint for all menu items
+app.post("/make-server-e5e192fb/admin/upload-menu-image", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required - no token provided" }, 401);
+    }
+
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    const formData = await c.req.formData();
+    const file = formData.get("image") as File | null;
+    if (!file) {
+      return c.json({ error: "No file provided. Send an 'image' field in multipart form data." }, 400);
+    }
+
+    // Validate file type
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
+    if (!allowedTypes.includes(file.type)) {
+      return c.json({ error: `Invalid file type: ${file.type}. Allowed: PNG, JPG, WebP, GIF.` }, 400);
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      return c.json({ error: "File too large. Maximum size is 5MB." }, 400);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    // Ensure bucket exists
+    if (!logoBucketReady) {
+      console.log("📦 Logo bucket not ready yet, creating inline for menu image...");
+      await ensureLogoBucket();
+      if (!logoBucketReady) {
+        return c.json({ error: "Storage bucket could not be created. Please try again in a moment." }, 500);
+      }
+    }
+
+    // Determine file extension from mime type
+    const extMap: Record<string, string> = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/jpg": "jpg",
+      "image/webp": "webp",
+      "image/gif": "gif",
+    };
+    const ext = extMap[file.type] || "png";
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    const filePath = `menu-images/${timestamp}-${random}.${ext}`;
+
+    // Upload the file
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    console.log(`📤 Uploading menu image: ${filePath}, size: ${uint8.length} bytes, type: ${file.type}`);
+
+    const { data, error } = await supabase.storage.from(LOGO_BUCKET).upload(filePath, uint8, {
+      contentType: file.type,
+      upsert: false,
+    });
+
+    if (error) {
+      console.error("❌ Menu image upload to storage failed:", JSON.stringify(error));
+      return c.json({ error: `Failed to upload menu image to storage: ${error.message}` }, 500);
+    }
+
+    console.log("✅ Menu image uploaded to storage:", data.path);
+
+    // Generate a signed URL with very long expiry (10 years)
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(LOGO_BUCKET)
+      .createSignedUrl(filePath, 315360000);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("❌ Failed to create signed URL for menu image:", signedUrlError);
+      return c.json({ error: "Image uploaded but failed to generate access URL. Please try again." }, 500);
+    }
+
+    const imageUrl = signedUrlData.signedUrl;
+    console.log("✅ Menu image signed URL generated:", imageUrl.substring(0, 100) + "...");
+
+    return c.json({ success: true, imageUrl, path: filePath, size: file.size });
+  } catch (error) {
+    console.error("Upload menu image error:", error);
+    return c.json({ error: `Failed to upload menu image: ${error}` }, 500);
+  }
+});
+
+// Delete menu image from storage (admin only) - cleanup when image is replaced
+app.post("/make-server-e5e192fb/admin/delete-menu-image", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required" }, 401);
+    }
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    const { path: filePath } = await c.req.json();
+    if (!filePath || !filePath.startsWith("menu-images/")) {
+      return c.json({ error: "Invalid file path. Must start with 'menu-images/'." }, 400);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    const { error } = await supabase.storage.from(LOGO_BUCKET).remove([filePath]);
+    if (error) {
+      console.error("❌ Failed to delete menu image:", error);
+      return c.json({ error: `Failed to delete menu image: ${error.message}` }, 500);
+    }
+
+    console.log("✅ Menu image deleted from storage:", filePath);
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("Delete menu image error:", error);
+    return c.json({ error: `Failed to delete menu image: ${error}` }, 500);
+  }
+});
+
+// ==================== END MENU IMAGE UPLOAD & DELETE ====================
+
+// ==================== MENU VIDEO UPLOAD & DELETE ====================
+
+// Upload menu video (admin only) - for Today's Special & Flash Sale
+app.post("/make-server-e5e192fb/admin/upload-menu-video", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required - no token provided" }, 401);
+    }
+
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    const formData = await c.req.formData();
+    const file = formData.get("video") as File | null;
+    if (!file) {
+      return c.json({ error: "No file provided. Send a 'video' field in multipart form data." }, 400);
+    }
+
+    // Validate file type
+    const allowedTypes = ["video/mp4", "video/webm", "video/quicktime", "video/x-m4v", "video/mpeg"];
+    if (!allowedTypes.includes(file.type)) {
+      return c.json({ error: `Invalid file type: ${file.type}. Allowed: MP4, WebM, MOV.` }, 400);
+    }
+
+    // Validate file size (max 50MB)
+    if (file.size > 50 * 1024 * 1024) {
+      return c.json({ error: "File too large. Maximum size is 50MB." }, 400);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    // Ensure bucket exists
+    if (!logoBucketReady) {
+      console.log("📦 Logo bucket not ready yet, creating inline for menu video...");
+      await ensureLogoBucket();
+      if (!logoBucketReady) {
+        return c.json({ error: "Storage bucket could not be created. Please try again in a moment." }, 500);
+      }
+    }
+
+    // Determine file extension from mime type
+    const extMap: Record<string, string> = {
+      "video/mp4": "mp4",
+      "video/webm": "webm",
+      "video/quicktime": "mov",
+      "video/x-m4v": "m4v",
+      "video/mpeg": "mpeg",
+    };
+    const ext = extMap[file.type] || "mp4";
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    const filePath = `menu-videos/${timestamp}-${random}.${ext}`;
+
+    // Upload the file
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    console.log(`📤 Uploading menu video: ${filePath}, size: ${uint8.length} bytes, type: ${file.type}`);
+
+    const { data, error } = await supabase.storage.from(LOGO_BUCKET).upload(filePath, uint8, {
+      contentType: file.type,
+      upsert: false,
+    });
+
+    if (error) {
+      console.error("❌ Menu video upload to storage failed:", JSON.stringify(error));
+      return c.json({ error: `Failed to upload menu video to storage: ${error.message}` }, 500);
+    }
+
+    console.log("✅ Menu video uploaded to storage:", data.path);
+
+    // Generate a signed URL with very long expiry (10 years)
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(LOGO_BUCKET)
+      .createSignedUrl(filePath, 315360000);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("❌ Failed to create signed URL for menu video:", signedUrlError);
+      return c.json({ error: "Video uploaded but failed to generate access URL. Please try again." }, 500);
+    }
+
+    const videoUrl = signedUrlData.signedUrl;
+    console.log("✅ Menu video signed URL generated:", videoUrl.substring(0, 100) + "...");
+
+    return c.json({ success: true, videoUrl, path: filePath, size: file.size });
+  } catch (error) {
+    console.error("Upload menu video error:", error);
+    return c.json({ error: `Failed to upload menu video: ${error}` }, 500);
+  }
+});
+
+// Delete menu video from storage (admin only)
+app.post("/make-server-e5e192fb/admin/delete-menu-video", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required" }, 401);
+    }
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    const { path: filePath } = await c.req.json();
+    if (!filePath || !filePath.startsWith("menu-videos/")) {
+      return c.json({ error: "Invalid file path. Must start with 'menu-videos/'." }, 400);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    const { error } = await supabase.storage.from(LOGO_BUCKET).remove([filePath]);
+    if (error) {
+      console.error("❌ Failed to delete menu video:", error);
+      return c.json({ error: `Failed to delete menu video: ${error.message}` }, 500);
+    }
+
+    console.log("✅ Menu video deleted from storage:", filePath);
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("Delete menu video error:", error);
+    return c.json({ error: `Failed to delete menu video: ${error}` }, 500);
+  }
+});
+
+// ==================== END MENU VIDEO UPLOAD & DELETE ====================
 
 // Serve logo (public fallback — redirects to signed URL)
 app.get("/make-server-e5e192fb/logo", async (c) => {

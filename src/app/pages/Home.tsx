@@ -41,7 +41,7 @@ export default function Home() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { totalItems } = useCart();
-  const cachedLogo = useRestaurantLogo();
+  const { logo: cachedLogo, loading: logoLoading } = useRestaurantLogo();
   const [menuCounts, setMenuCounts] = useState<MenuCounts>({
     todaysSpecial: 0,
     kidsMenu: 0,
@@ -309,16 +309,24 @@ export default function Home() {
       <div className="text-center pt-1.5 sm:pt-3 pb-3 sm:pb-4 px-5">
         {/* Restaurant Logo */}
         <div className="flex justify-center">
-          <img 
-            src={displayLogoSrc} 
-            alt={LOGO_ALT} 
-            className="w-48 sm:w-64 h-auto max-w-full mx-auto"
-            style={{ 
-              filter: `drop-shadow(0 2px 8px ${APP_CONFIG.brand.primaryShadow})`,
-              objectFit: "contain",
-              mixBlendMode: "multiply"
-            }}
-          />
+          {logoLoading ? (
+            /* Skeleton placeholder while logo is loading - avoids SVG fallback flash */
+            <div 
+              className="w-48 sm:w-64 h-12 sm:h-16 rounded-lg animate-pulse"
+              style={{ backgroundColor: `${APP_CONFIG.brand.primaryColor}15` }}
+            />
+          ) : (
+            <img 
+              src={displayLogoSrc} 
+              alt={LOGO_ALT} 
+              className="w-48 sm:w-64 h-auto max-w-full mx-auto"
+              style={{ 
+                filter: `drop-shadow(0 2px 8px ${APP_CONFIG.brand.primaryShadow})`,
+                objectFit: "contain",
+                mixBlendMode: "multiply"
+              }}
+            />
+          )}
         </div>
       </div>
 

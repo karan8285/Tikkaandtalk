@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Checkbox } from "./ui/checkbox";
 import { toast } from "sonner";
 import { Plus, Edit2, Trash2, GripVertical, Save, RefreshCw, Settings, X } from "lucide-react";
+import { MenuImageUpload } from "./MenuImageUpload";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -593,19 +594,16 @@ export function PartyPackagesAdmin({ customToken }: Props) {
               />
             </div>
             <div>
-              <Label>Banner Image URL</Label>
-              <Input
+              <MenuImageUpload
                 value={settings.bannerImage}
-                onChange={(e) => setSettings({ ...settings, bannerImage: e.target.value })}
-                placeholder="https://..."
+                onChange={(url) => setSettings({ ...settings, bannerImage: url })}
+                customToken={customToken}
+                label="Banner Image"
+                context="Party Packages Banner"
+                recommendedSize="1200 x 400 px"
+                aspectRatio="3:1"
+                maxSizeMB={5}
               />
-              {settings.bannerImage && (
-                <img
-                  src={settings.bannerImage}
-                  alt="Banner preview"
-                  className="mt-2 rounded-lg h-24 w-full object-cover"
-                />
-              )}
             </div>
             <div>
               <Label>WhatsApp Booking Message</Label>

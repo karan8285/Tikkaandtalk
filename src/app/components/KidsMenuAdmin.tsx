@@ -1,6 +1,7 @@
 import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { APP_CONFIG } from "../lib/config";
+import { MenuImageUpload } from "./MenuImageUpload";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -366,12 +367,15 @@ export function KidsMenuAdmin({ customToken }: Props) {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="image">Image URL</Label>
-              <Input
-                id="image"
+              <MenuImageUpload
                 value={formData.image}
-                onChange={(e) => setFormData({ ...formData, image: e.target.value })}
-                placeholder="https://example.com/image.jpg"
+                onChange={(url) => setFormData({ ...formData, image: url })}
+                customToken={customToken}
+                label="Dish Image"
+                context="Kids Menu Card"
+                recommendedSize="800 x 600 px"
+                aspectRatio="4:3"
+                maxSizeMB={5}
               />
             </div>
 

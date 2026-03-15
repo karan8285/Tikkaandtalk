@@ -16,6 +16,7 @@ import {
 import { Checkbox } from "./ui/checkbox";
 import { toast } from "sonner";
 import { Plus, Edit2, Trash2, Save, RefreshCw, Settings, X } from "lucide-react";
+import { MenuImageUpload } from "./MenuImageUpload";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -362,19 +363,16 @@ export function CelebrationCategoriesAdmin({ customToken }: Props) {
             </div>
 
             <div>
-              <Label>Image URL</Label>
-              <Input
+              <MenuImageUpload
                 value={form.image}
-                onChange={(e) => setForm({ ...form, image: e.target.value })}
-                placeholder="https://images.unsplash.com/..."
+                onChange={(url) => setForm({ ...form, image: url })}
+                customToken={customToken}
+                label="Category Image"
+                context="Celebration Category Card"
+                recommendedSize="800 x 500 px"
+                aspectRatio="16:10"
+                maxSizeMB={5}
               />
-              {form.image && (
-                <img
-                  src={form.image}
-                  alt="Preview"
-                  className="w-full h-24 object-cover rounded-lg mt-2"
-                />
-              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
