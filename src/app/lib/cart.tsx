@@ -253,7 +253,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   // Sync cart whenever it changes (debounced)
   useEffect(() => {
     if (user && accessToken && !isSyncing && hasInitialFetch) {
-      const timer = setTimeout(() => syncCartToBackend(cartItems), 500);
+      const timer = setTimeout(() => syncCartToBackend(cartItems), 800);
       return () => clearTimeout(timer);
     }
   }, [cartItems, user, accessToken, isSyncing, hasInitialFetch]);

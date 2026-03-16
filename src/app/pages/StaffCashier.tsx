@@ -13,8 +13,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
+import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin, MessageSquare, Save, Filter, X, Share2 } from "lucide-react";
+import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin, MessageSquare, Save, Filter, X, Share2, CheckSquare, Loader2, Ban, Plus, Star } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
@@ -55,9 +56,27 @@ interface Order {
   promoDiscount?: number;
   adminMessage?: string;
   adminMessageAt?: string;
+  deliveryNote?: string;
+  deliveryNoteAt?: string;
+  deliveryNoteBy?: string;
+  rating?: number;
+  ratingComment?: string;
+  ratingAt?: string;
 }
 
 const ORDER_STATUSES = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
+
+const STATUS_BG_STYLE: Record<string, { backgroundColor: string; borderColor: string }> = {
+  scheduled: { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' },
+  pending: { backgroundColor: '#fff7ed', borderColor: '#fed7aa' },
+  confirmed: { backgroundColor: '#f0fdfa', borderColor: '#99f6e4' },
+  cooking: { backgroundColor: '#fffbeb', borderColor: '#fde68a' },
+  ready: { backgroundColor: '#faf5ff', borderColor: '#e9d5ff' },
+  out_for_delivery: { backgroundColor: '#f0f9ff', borderColor: '#bae6fd' },
+  delivered: { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' },
+  closed: { backgroundColor: '#f3f4f6', borderColor: '#d1d5db' },
+  cancelled: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+};
 
 export default function StaffCashier() {
   const navigate = useNavigate();
@@ -80,26 +99,24 @@ export default function StaffCashier() {
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentLoading, setPaymentLoading] = useState(false);
 
-  // Admin messages
+  // Unified local edits per order
+  const [pendingStatuses, setPendingStatuses] = useState<Record<string, string>>({});
   const [adminMessages, setAdminMessages] = useState<Record<string, string>>({});
-  const [savingMessage, setSavingMessage] = useState<string | null>(null);
+  const [deliveryNotes, setDeliveryNotes] = useState<Record<string, string>>({});
+  const [savingOrder, setSavingOrder] = useState<string | null>(null);
+
+  // Bulk actions
+  const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
+
+  // Cancel order
+  const [cancelOrderTarget, setCancelOrderTarget] = useState<Order | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelLoading, setCancelLoading] = useState(false);
 
   const { checkForNewOrders } = useNewOrderAlert({ label: "Cashier" });
   const accessTokenRef = useRef(accessToken);
   accessTokenRef.current = accessToken;
-
-  useEffect(() => {
-    if (authLoading) return;
-    if (!staff) { navigate("/staff"); return; }
-    if (staff.role !== 'cashier' && staff.role !== 'superuser' && staff.role !== 'manager') {
-      toast.error("Cashier access required");
-      navigate("/staff");
-      return;
-    }
-    fetchOrders();
-    const interval = setInterval(() => fetchOrders(), 15000);
-    return () => clearInterval(interval);
-  }, [staff, authLoading, navigate, fetchOrders]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery), 400);
@@ -138,8 +155,24 @@ export default function StaffCashier() {
     }
   }, [currentPage, debouncedSearch, activeTab, paymentFilter, deliveryFilter, checkForNewOrders]);
 
-  useEffect(() => { if (!loading) fetchOrders(); }, [currentPage, debouncedSearch, activeTab, paymentFilter, deliveryFilter]);
+  useEffect(() => {
+    if (authLoading) return;
+    if (!staff) { navigate("/staff"); return; }
+    if (staff.role !== 'cashier' && staff.role !== 'superuser' && staff.role !== 'manager') {
+      toast.error("Cashier access required");
+      navigate("/staff");
+      return;
+    }
+    fetchOrders();
+    const interval = setInterval(() => fetchOrders(), 15000);
+    return () => clearInterval(interval);
+  }, [staff, authLoading, navigate, fetchOrders]);
 
+  // fetchOrders is already re-created (via useCallback) when currentPage, debouncedSearch,
+  // activeTab, paymentFilter, or deliveryFilter change — and the useEffect above already
+  // depends on fetchOrders, so it will re-run automatically. No extra effect needed.
+
+  // eslint-disable-next-line -- force recompile
   const handleAddPayment = async () => {
     if (!paymentOrder || !paymentAmount) return;
     const amount = parseInt(paymentAmount);
@@ -194,59 +227,157 @@ export default function StaffCashier() {
     }
   };
 
-  // Update order status
-  const updateOrderStatus = async (orderId: string, newStatus: string) => {
+  // Unified save: status + admin message + delivery note in one API call
+  const saveAllChanges = async (order: Order) => {
+    const payload: Record<string, any> = {};
+    const newStatus = pendingStatuses[order.id];
+    const newMsg = adminMessages[order.id];
+    const newNote = deliveryNotes[order.id];
+    if (newStatus && newStatus !== order.status) payload.status = newStatus;
+    if (newMsg !== undefined) payload.adminMessage = newMsg;
+    if (newNote !== undefined) payload.deliveryNote = newNote;
+    if (Object.keys(payload).length === 0) { toast.info("No changes to save"); return; }
     try {
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      setSavingOrder(order.id);
+      const response = await fetch(`${API_BASE}/admin/orders/${order.id}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": accessToken || "",
         },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify(payload),
       });
       if (response.ok) {
-        toast.success(`Order updated to ${STATUS_LABELS[newStatus]}`);
+        const parts: string[] = [];
+        if (payload.status) parts.push(`Status → ${STATUS_LABELS[payload.status]}`);
+        if (payload.adminMessage !== undefined) parts.push("Customer message");
+        if (payload.deliveryNote !== undefined) parts.push("Delivery note");
+        toast.success(`Saved: ${parts.join(", ")}`);
+        setPendingStatuses(prev => { const n = { ...prev }; delete n[order.id]; return n; });
+        setAdminMessages(prev => { const n = { ...prev }; delete n[order.id]; return n; });
+        setDeliveryNotes(prev => { const n = { ...prev }; delete n[order.id]; return n; });
         fetchOrders();
       } else {
         const err = await response.json().catch(() => ({}));
-        toast.error(err.error || "Failed to update order status");
-      }
-    } catch (error: any) {
-      toast.error(error.message);
-    }
-  };
-
-  // Save admin message for customer
-  const saveAdminMessage = async (orderId: string, message: string) => {
-    try {
-      setSavingMessage(orderId);
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${publicAnonKey}`,
-          "X-Custom-Auth": accessToken || "",
-        },
-        body: JSON.stringify({ adminMessage: message }),
-      });
-      if (response.ok) {
-        toast.success("Message saved — visible to customer");
-        setAdminMessages(prev => { const n = { ...prev }; delete n[orderId]; return n; });
-        fetchOrders();
-      } else {
-        const err = await response.json().catch(() => ({}));
-        toast.error(err.error || "Failed to save message");
+        toast.error(err.error || "Failed to save changes");
       }
     } catch (error: any) {
       toast.error(error.message);
     } finally {
-      setSavingMessage(null);
+      setSavingOrder(null);
     }
   };
 
+  // Check if an order has unsaved changes
+  const hasChanges = (order: Order): boolean => {
+    const statusChanged = pendingStatuses[order.id] !== undefined && pendingStatuses[order.id] !== order.status;
+    const msgChanged = adminMessages[order.id] !== undefined;
+    const noteChanged = deliveryNotes[order.id] !== undefined;
+    return statusChanged || msgChanged || noteChanged;
+  };
+
   const handleSignOut = () => { signOut(); navigate("/staff"); };
+
+  // Bulk action handlers
+  const toggleSelectAll = () => {
+    const pageOrderIds = orders.map(o => o.id);
+    const allPageSelected = pageOrderIds.length > 0 && pageOrderIds.every(id => selectedOrders.has(id));
+    if (allPageSelected) {
+      const newSet = new Set(selectedOrders);
+      pageOrderIds.forEach(id => newSet.delete(id));
+      setSelectedOrders(newSet);
+    } else {
+      setSelectedOrders(new Set([...selectedOrders, ...pageOrderIds]));
+    }
+  };
+
+  const toggleSelectOrder = (orderId: string) => {
+    const newSelected = new Set(selectedOrders);
+    if (newSelected.has(orderId)) {
+      newSelected.delete(orderId);
+    } else {
+      newSelected.add(orderId);
+    }
+    setSelectedOrders(newSelected);
+  };
+
+  const handleBulkClose = async () => {
+    if (selectedOrders.size === 0) {
+      toast.error("No orders selected");
+      return;
+    }
+    try {
+      setBulkActionLoading(true);
+      const orderIds = Array.from(selectedOrders);
+      const ordersToClose = orderIds.filter(orderId => {
+        const order = orders.find(o => o.id === orderId);
+        return order && order.status !== "cancelled";
+      });
+      const skippedCount = orderIds.length - ordersToClose.length;
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const orderId of ordersToClose) {
+        try {
+          const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${publicAnonKey}`,
+              "X-Custom-Auth": accessToken || "",
+            },
+            body: JSON.stringify({ status: "closed" }),
+          });
+          if (response.ok) successCount++;
+          else failCount++;
+        } catch {
+          failCount++;
+        }
+      }
+
+      if (successCount > 0) toast.success(`${successCount} order(s) closed successfully`);
+      if (failCount > 0) toast.error(`${failCount} order(s) failed to close`);
+      if (skippedCount > 0) toast.info(`${skippedCount} cancelled order(s) skipped`);
+      setSelectedOrders(new Set());
+      fetchOrders();
+    } catch (error) {
+      console.error("Bulk close failed:", error);
+      toast.error("Failed to close orders");
+    } finally {
+      setBulkActionLoading(false);
+    }
+  };
+
+  // Cancel order handler
+  const handleCancelOrder = async () => {
+    if (!cancelOrderTarget || !cancelReason) return;
+    try {
+      setCancelLoading(true);
+      const response = await fetch(`${API_BASE}/admin/orders/${cancelOrderTarget.id}/status`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": accessToken || "",
+        },
+        body: JSON.stringify({ status: "cancelled", cancellationReason: cancelReason }),
+      });
+      if (response.ok) {
+        toast.success("Order cancelled successfully");
+        setCancelOrderTarget(null);
+        setCancelReason("");
+        fetchOrders();
+      } else {
+        const err = await response.json().catch(() => ({}));
+        toast.error(err.error || "Failed to cancel order");
+      }
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setCancelLoading(false);
+    }
+  };
 
   if (authLoading || !staff) {
     return (
@@ -269,6 +400,7 @@ export default function StaffCashier() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => navigate("/staff/create-order")}><Plus className="w-4 h-4" /></Button>
             <Button variant="outline" size="sm" onClick={fetchOrders}><RefreshCw className="w-4 h-4" /></Button>
             <Button variant="outline" size="sm" onClick={handleSignOut}><LogOut className="w-4 h-4" /></Button>
           </div>
@@ -370,29 +502,87 @@ export default function StaffCashier() {
           </div>
         ) : (
           <div className="space-y-2">
+            {/* Bulk Select Bar — only on active tab */}
+            {activeTab === "active" && (
+              <Card className="p-3 bg-gray-50">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 justify-between">
+                  <div className="flex items-center gap-3">
+                    <Checkbox
+                      checked={orders.length > 0 && orders.every(o => selectedOrders.has(o.id))}
+                      onCheckedChange={toggleSelectAll}
+                      id="select-all-cashier"
+                    />
+                    <Label htmlFor="select-all-cashier" className="cursor-pointer text-sm">
+                      {selectedOrders.size > 0
+                        ? `${selectedOrders.size} order(s) selected`
+                        : `Select page (${orders.length})`}
+                    </Label>
+                  </div>
+
+                  {selectedOrders.size > 0 && (
+                    <div className="flex gap-2 w-full sm:w-auto">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={handleBulkClose}
+                        disabled={bulkActionLoading}
+                        className="flex-1 sm:flex-none"
+                      >
+                        {bulkActionLoading ? (
+                          <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Closing...</>
+                        ) : (
+                          <><CheckSquare className="w-4 h-4 mr-2" /> Close Selected</>
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setSelectedOrders(new Set())}
+                        disabled={bulkActionLoading}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            )}
+
             {orders.map(order => {
               const remaining = order.total - (order.paidAmount || 0);
               const isPaid = order.paymentStatus === 'paid' || remaining <= 0;
+              const cardStyle = isPaid
+                ? { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' }
+                : (STATUS_BG_STYLE[order.status] || { backgroundColor: '#f9fafb', borderColor: '#e5e7eb' });
               return (
-                <Card key={order.id} className={`p-4 ${isPaid ? 'bg-green-50/50' : ''}`}>
+                <Card key={order.id} className={`p-4 ${selectedOrders.has(order.id) ? 'ring-2 ring-offset-1' : ''} shadow-sm`} style={{ ...cardStyle, ...(selectedOrders.has(order.id) ? { ringColor: BRAND_COLOR } : {}) }}>
                   <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-sm">{order.orderNumber || getShortOrderId(order.id)}</span>
-                        <Badge className={`text-[10px] text-white ${STATUS_COLORS[order.status]}`}>
-                          {STATUS_LABELS[order.status]}
-                        </Badge>
-                      </div>
-                      <p className="text-sm mt-1">{order.itemTitle}</p>
-                      <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
-                        <Phone className="w-3 h-3" />{order.phone}
-                        <span>•</span>
-                        <Clock className="w-3 h-3" />{new Date(order.createdAt).toLocaleTimeString()}
-                        {order.deliveryMethod === 'delivery' && <><Truck className="w-3 h-3 ml-1" /> Delivery</>}
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      {activeTab === "active" && (
+                        <Checkbox
+                          checked={selectedOrders.has(order.id)}
+                          onCheckedChange={() => toggleSelectOrder(order.id)}
+                          className="mt-1"
+                        />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-sm text-gray-900">{getShortOrderId(order.orderNumber || order.id)}</span>
+                          <Badge className={`text-[10px] text-white ${STATUS_COLORS[order.status]}`}>
+                            {STATUS_LABELS[order.status]}
+                          </Badge>
+                        </div>
+                        <p className="text-sm mt-1 text-gray-800">{order.itemTitle}</p>
+                        <div className="flex items-center gap-2 text-xs text-gray-600 mt-1">
+                          <Phone className="w-3 h-3" />{order.phone}
+                          <span>•</span>
+                          <Clock className="w-3 h-3" />{new Date(order.createdAt).toLocaleTimeString()}
+                          {order.deliveryMethod === 'delivery' && <><Truck className="w-3 h-3 ml-1" /> Delivery</>}
+                        </div>
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-lg font-bold">{formatIDR(order.total)}</p>
+                      <p className="text-lg font-bold text-gray-900">{formatIDR(order.total)}</p>
                       {order.promoDiscount && order.promoDiscount > 0 && (
                         <p className="text-[10px] text-green-600">-{formatIDR(order.promoDiscount)} promo</p>
                       )}
@@ -444,7 +634,7 @@ export default function StaffCashier() {
                       {order.paymentHistory.map((ph, idx) => (
                         <div key={idx} className="flex items-center justify-between text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded">
                           <span>{formatIDR(ph.amount)} — {ph.method || 'cash'}</span>
-                          <span>{new Date(ph.date).toLocaleTimeString()}</span>
+                          <span>{ph.date && !isNaN(new Date(ph.date).getTime()) ? new Date(ph.date).toLocaleTimeString() : ph.date || '—'}</span>
                         </div>
                       ))}
                     </div>
@@ -454,8 +644,8 @@ export default function StaffCashier() {
                   {order.status !== 'cancelled' && order.status !== 'closed' && (
                     <div className="mt-3 pt-3 border-t">
                       <Label className="text-xs font-medium mb-1.5 block">Update Status</Label>
-                      <Select value={order.status} onValueChange={(v) => updateOrderStatus(order.id, v)}>
-                        <SelectTrigger className="h-8 text-xs">
+                      <Select value={pendingStatuses[order.id] ?? order.status} onValueChange={(v) => setPendingStatuses(prev => ({ ...prev, [order.id]: v }))}>
+                        <SelectTrigger className={`h-8 text-xs ${pendingStatuses[order.id] && pendingStatuses[order.id] !== order.status ? 'ring-2 ring-amber-400' : ''}`}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -480,32 +670,40 @@ export default function StaffCashier() {
                       rows={2}
                       className="text-xs resize-none mt-1"
                     />
-                    <div className="flex gap-2 mt-1.5">
-                      <Button
-                        size="sm"
-                        className="h-7 text-xs text-white"
-                        style={{ backgroundColor: BRAND_COLOR }}
-                        disabled={savingMessage === order.id || (adminMessages[order.id] === undefined && !order.adminMessage)}
-                        onClick={() => saveAdminMessage(order.id, adminMessages[order.id] ?? order.adminMessage ?? "")}
-                      >
-                        <Save className="w-3 h-3 mr-1" />
-                        {savingMessage === order.id ? "Saving..." : "Save"}
-                      </Button>
-                      {(adminMessages[order.id] ?? order.adminMessage) && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-xs text-red-600 border-red-200 hover:bg-red-50"
-                          disabled={savingMessage === order.id}
-                          onClick={() => {
-                            setAdminMessages(prev => ({ ...prev, [order.id]: "" }));
-                            saveAdminMessage(order.id, "");
-                          }}
-                        >
-                          Clear
-                        </Button>
-                      )}
-                    </div>
+                  </div>
+
+                  {/* Delivery Note for Delivery Staff */}
+                  <div className="mt-3 pt-3 border-t">
+                    <Label className="text-xs font-medium mb-1.5 flex items-center gap-1.5">
+                      <Truck className="w-3.5 h-3.5" style={{ color: BRAND_COLOR }} />
+                      Note to Delivery Guy
+                    </Label>
+                    <Textarea
+                      value={deliveryNotes[order.id] ?? order.deliveryNote ?? ""}
+                      onChange={(e) => setDeliveryNotes(prev => ({ ...prev, [order.id]: e.target.value }))}
+                      placeholder="e.g. Call before delivery, Gate code: 1234, Leave at door"
+                      rows={2}
+                      className="text-xs resize-none mt-1"
+                    />
+                  </div>
+
+                  {/* Unified Save Button */}
+                  <div className="mt-3 pt-3 border-t">
+                    <Button
+                      size="sm"
+                      className="w-full h-9 text-xs font-semibold text-white"
+                      style={{ backgroundColor: hasChanges(order) ? BRAND_COLOR : '#9ca3af' }}
+                      disabled={savingOrder === order.id || !hasChanges(order)}
+                      onClick={() => saveAllChanges(order)}
+                    >
+                      <Save className="w-3.5 h-3.5 mr-1.5" />
+                      {savingOrder === order.id ? "Saving All Changes..." : hasChanges(order) ? "Save All Changes" : "No Changes"}
+                    </Button>
+                    {hasChanges(order) && (
+                      <p className="text-[10px] text-amber-600 mt-1 text-center font-medium">
+                        You have unsaved changes
+                      </p>
+                    )}
                   </div>
 
                   {/* Share Tracking Link */}
@@ -538,6 +736,51 @@ export default function StaffCashier() {
                           WhatsApp
                         </Button>
                       </div>
+                    </div>
+                  )}
+
+                  {/* Cancel Order Button */}
+                  {order.status !== 'cancelled' && order.status !== 'closed' && (
+                    <div className="mt-3 pt-3 border-t">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full h-8 text-xs text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300"
+                        onClick={() => { setCancelOrderTarget(order); setCancelReason(""); }}
+                      >
+                        <Ban className="w-3.5 h-3.5 mr-1.5" /> Cancel Order
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Customer Rating Display */}
+                  {order.rating && (
+                    <div className="mt-3 pt-3 border-t">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Star className="w-3.5 h-3.5 text-amber-500" fill="#F59E0B" />
+                        <span className="text-xs font-semibold text-gray-700">Customer Rating</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {[1, 2, 3, 4, 5].map((s) => (
+                          <Star
+                            key={s}
+                            className="w-4 h-4"
+                            fill={s <= order.rating! ? '#F59E0B' : 'none'}
+                            stroke={s <= order.rating! ? '#F59E0B' : '#D1D5DB'}
+                          />
+                        ))}
+                        <span className="text-xs text-amber-600 font-bold ml-1">{order.rating}/5</span>
+                      </div>
+                      {order.ratingComment && (
+                        <p className="text-xs text-gray-600 italic mt-1.5 bg-amber-50 rounded-md px-2 py-1.5">
+                          "{order.ratingComment}"
+                        </p>
+                      )}
+                      {order.ratingAt && (
+                        <p className="text-[10px] text-gray-400 mt-1">
+                          {new Date(order.ratingAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      )}
                     </div>
                   )}
                 </Card>
@@ -601,6 +844,45 @@ export default function StaffCashier() {
             <Button variant="outline" onClick={() => setPaymentOrder(null)}>Cancel</Button>
             <Button onClick={handleAddPayment} disabled={paymentLoading} className="text-white" style={{ backgroundColor: BRAND_COLOR }}>
               {paymentLoading ? "Recording..." : "Record Payment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cancel Order Dialog */}
+      <Dialog open={!!cancelOrderTarget} onOpenChange={() => setCancelOrderTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <Ban className="w-5 h-5" /> Cancel Order
+            </DialogTitle>
+            <DialogDescription>
+              Order {cancelOrderTarget?.orderNumber || getShortOrderId(cancelOrderTarget?.id || '')} — {formatIDR(cancelOrderTarget?.total || 0)}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-xs text-red-700 font-medium">This action cannot be undone. The order will be marked as cancelled.</p>
+            </div>
+            <div>
+              <Label>Reason for cancellation <span className="text-red-500">*</span></Label>
+              <Textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="e.g. Customer requested cancellation, Out of stock, etc."
+                rows={3}
+                className="text-sm resize-none mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCancelOrderTarget(null)}>Go Back</Button>
+            <Button
+              onClick={handleCancelOrder}
+              disabled={cancelLoading || !cancelReason.trim()}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {cancelLoading ? "Cancelling..." : "Confirm Cancel"}
             </Button>
           </DialogFooter>
         </DialogContent>

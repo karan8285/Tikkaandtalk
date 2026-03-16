@@ -18,7 +18,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save, Ban, Star } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -38,6 +38,7 @@ import { CelebrationCategoriesAdmin } from "../components/CelebrationCategoriesA
 import { HomeLayoutAdmin } from "../components/HomeLayoutAdmin";
 import { CustomMenuAdmin } from "../components/CustomMenuAdmin";
 import { StaffManagement } from "../components/StaffManagement";
+import { CustomReportsAdmin } from "../components/CustomReportsAdmin";
 import { getShortOrderId } from "../lib/orderUtils";
 import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG } from "../lib/config";
@@ -71,6 +72,7 @@ const TAB_DEFINITIONS: { value: string; label: string; permission: string }[] = 
   { value: "settings", label: "Settings", permission: "settings" },
   { value: "health", label: "Health", permission: "health" },
   { value: "staff", label: "Staff", permission: "staff" },
+  { value: "reports", label: "Reports", permission: "reports" },
 ];
 
 export default function StaffAdmin() {
@@ -230,6 +232,10 @@ export default function StaffAdmin() {
               <TabsContent value="staff">
                 <StaffManagement accessToken={accessToken} />
               </TabsContent>
+
+              <TabsContent value="reports">
+                <CustomReportsAdmin customToken={accessToken} />
+              </TabsContent>
             </>
           )}
         </Tabs>
@@ -275,9 +281,28 @@ interface Order {
   proofOfDeliveryAt?: string;
   adminMessage?: string;
   adminMessageAt?: string;
+  deliveryNote?: string;
+  deliveryNoteAt?: string;
+  deliveryNoteBy?: string;
+  rating?: number;
+  ratingComment?: string;
+  ratingAt?: string;
 }
 
 const ORDER_STATUSES = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
+
+const STATUS_BG_STYLE: Record<string, { backgroundColor: string; borderColor: string }> = {
+  scheduled: { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' },
+  pending: { backgroundColor: '#fff7ed', borderColor: '#fed7aa' },
+  confirmed: { backgroundColor: '#f0fdfa', borderColor: '#99f6e4' },
+  cooking: { backgroundColor: '#fffbeb', borderColor: '#fde68a' },
+  ready: { backgroundColor: '#faf5ff', borderColor: '#e9d5ff' },
+  out_for_delivery: { backgroundColor: '#f0f9ff', borderColor: '#bae6fd' },
+  delivered: { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' },
+  closed: { backgroundColor: '#f3f4f6', borderColor: '#d1d5db' },
+  cancelled: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+};
+
 const STATUS_COLORS: Record<string, string> = {
   scheduled: "bg-blue-500", pending: "bg-orange-500", confirmed: "bg-teal-500",
   cooking: "bg-orange-600", ready: "bg-purple-500", out_for_delivery: "bg-orange-500",
@@ -312,8 +337,11 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const [expandedTimeline, setExpandedTimeline] = useState<string | null>(null);
 
+  // Unified local edits per order
+  const [pendingStatuses, setPendingStatuses] = useState<Record<string, string>>({});
   const [adminMessages, setAdminMessages] = useState<Record<string, string>>({});
-  const [savingMessage, setSavingMessage] = useState<string | null>(null);
+  const [deliveryNotes, setDeliveryNotes] = useState<Record<string, string>>({});
+  const [savingOrder, setSavingOrder] = useState<string | null>(null);
 
   // Payment management
   const [addPaymentOrderId, setAddPaymentOrderId] = useState<string | null>(null);
@@ -321,6 +349,11 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   const [addPaymentMethod, setAddPaymentMethod] = useState("");
   const [addPaymentNote, setAddPaymentNote] = useState("");
   const [paymentLoading, setPaymentLoading] = useState<string | null>(null);
+
+  // Cancel order
+  const [cancelOrderTarget, setCancelOrderTarget] = useState<Order | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelLoading, setCancelLoading] = useState(false);
 
   const { checkForNewOrders } = useNewOrderAlert({ label: "Admin" });
   const accessTokenRef = useRef(accessToken);
@@ -371,36 +404,70 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
     return () => clearInterval(interval);
   }, [fetchOrders]);
 
-  const updateOrderStatus = async (orderId: string, newStatus: string) => {
+  // Unified save: status + admin message + delivery note in one API call
+  const saveAllChanges = async (order: Order) => {
+    const payload: Record<string, any> = {};
+    const newStatus = pendingStatuses[order.id];
+    const newMsg = adminMessages[order.id];
+    const newNote = deliveryNotes[order.id];
+    if (newStatus && newStatus !== order.status) payload.status = newStatus;
+    if (newMsg !== undefined) payload.adminMessage = newMsg;
+    if (newNote !== undefined) payload.deliveryNote = newNote;
+    if (Object.keys(payload).length === 0) { toast.info("No changes to save"); return; }
     try {
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      setSavingOrder(order.id);
+      const response = await fetch(`${API_BASE}/admin/orders/${order.id}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (response.ok) { toast.success(`Order updated to ${STATUS_LABELS[newStatus]}`); fetchOrders(); }
-      else { const err = await response.json().catch(() => ({})); toast.error(err.error || "Failed to update order"); }
-    } catch (error: any) { toast.error(error.message); }
-  };
-
-  const saveAdminMessage = async (orderId: string, message: string) => {
-    try {
-      setSavingMessage(orderId);
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
-        body: JSON.stringify({ adminMessage: message }),
+        body: JSON.stringify(payload),
       });
       if (response.ok) {
-        toast.success("Message saved — visible to customer");
-        setAdminMessages(prev => { const n = { ...prev }; delete n[orderId]; return n; });
+        const parts: string[] = [];
+        if (payload.status) parts.push(`Status → ${STATUS_LABELS[payload.status]}`);
+        if (payload.adminMessage !== undefined) parts.push("Customer message");
+        if (payload.deliveryNote !== undefined) parts.push("Delivery note");
+        toast.success(`Saved: ${parts.join(", ")}`);
+        setPendingStatuses(prev => { const n = { ...prev }; delete n[order.id]; return n; });
+        setAdminMessages(prev => { const n = { ...prev }; delete n[order.id]; return n; });
+        setDeliveryNotes(prev => { const n = { ...prev }; delete n[order.id]; return n; });
         fetchOrders();
       } else {
         const err = await response.json().catch(() => ({}));
-        toast.error(err.error || "Failed to save message");
+        toast.error(err.error || "Failed to save changes");
       }
     } catch (error: any) { toast.error(error.message); }
-    finally { setSavingMessage(null); }
+    finally { setSavingOrder(null); }
+  };
+
+  // Check if an order has unsaved changes
+  const hasChanges = (order: Order): boolean => {
+    const statusChanged = pendingStatuses[order.id] !== undefined && pendingStatuses[order.id] !== order.status;
+    const msgChanged = adminMessages[order.id] !== undefined;
+    const noteChanged = deliveryNotes[order.id] !== undefined;
+    return statusChanged || msgChanged || noteChanged;
+  };
+
+  // Cancel order handler
+  const handleCancelOrder = async () => {
+    if (!cancelOrderTarget || !cancelReason) return;
+    try {
+      setCancelLoading(true);
+      const response = await fetch(`${API_BASE}/admin/orders/${cancelOrderTarget.id}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
+        body: JSON.stringify({ status: "cancelled", cancellationReason: cancelReason }),
+      });
+      if (response.ok) {
+        toast.success("Order cancelled successfully");
+        setCancelOrderTarget(null);
+        setCancelReason("");
+        fetchOrders();
+      } else {
+        const err = await response.json().catch(() => ({}));
+        toast.error(err.error || "Failed to cancel order");
+      }
+    } catch (error: any) { toast.error(error.message); }
+    finally { setCancelLoading(false); }
   };
 
   const handleAddPayment = async (orderId: string, amount: number, method?: string, note?: string) => {
@@ -729,7 +796,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
       {/* Orders List */}
       <div className="space-y-2">
         {orders.map(order => (
-          <Card key={order.id} className="p-4">
+          <Card key={order.id} className="p-4 shadow-sm" style={STATUS_BG_STYLE[order.status] || { backgroundColor: '#f9fafb', borderColor: '#e5e7eb' }}>
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 {orderSubTab === "active" && (
@@ -741,7 +808,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono font-bold text-sm">
+                    <span className="font-mono font-bold text-sm text-gray-900">
                       {getShortOrderId(order.orderNumber || order.id)}
                     </span>
                     <Badge className={`text-[10px] text-white ${STATUS_COLORS[order.status]}`}>
@@ -757,12 +824,12 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                       </Badge>
                     )}
                   </div>
-                  <p className="text-sm mt-1">{order.itemTitle}</p>
-                  <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
+                  <p className="text-sm mt-1 text-gray-800">{order.itemTitle}</p>
+                  <div className="flex items-center gap-2 text-xs text-gray-600 mt-1">
                     <Phone className="w-3 h-3" />{order.phone}
                     <span className="font-semibold text-gray-900">{formatIDR(order.total)}</span>
                   </div>
-                  <p className="text-[10px] text-gray-400 mt-0.5">
+                  <p className="text-[10px] text-gray-500 mt-0.5">
                     {new Date(order.createdAt).toLocaleString()}
                     {order.deliveryMethod === 'delivery' && <><Truck className="w-3 h-3 inline ml-1" /> Delivery</>}
                   </p>
@@ -771,8 +838,8 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
 
               {/* Status actions */}
               {order.status !== 'cancelled' && order.status !== 'closed' && (
-                <Select value={order.status} onValueChange={(v) => updateOrderStatus(order.id, v)}>
-                  <SelectTrigger className="w-[130px] h-8 text-xs">
+                <Select value={pendingStatuses[order.id] ?? order.status} onValueChange={(v) => setPendingStatuses(prev => ({ ...prev, [order.id]: v }))}>
+                  <SelectTrigger className={`w-[130px] h-8 text-xs ${pendingStatuses[order.id] && pendingStatuses[order.id] !== order.status ? 'ring-2 ring-amber-400' : ''}`}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -946,32 +1013,40 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                 rows={2}
                 className="text-xs resize-none mt-1"
               />
-              <div className="flex gap-2 mt-1.5">
-                <Button
-                  size="sm"
-                  className="h-7 text-xs"
-                  style={{ backgroundColor: BRAND }}
-                  disabled={savingMessage === order.id || (adminMessages[order.id] === undefined && !order.adminMessage)}
-                  onClick={() => saveAdminMessage(order.id, adminMessages[order.id] ?? order.adminMessage ?? "")}
-                >
-                  <Save className="w-3 h-3 mr-1" />
-                  {savingMessage === order.id ? "Saving..." : "Save"}
-                </Button>
-                {(adminMessages[order.id] ?? order.adminMessage) && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs text-red-600 border-red-200 hover:bg-red-50"
-                    disabled={savingMessage === order.id}
-                    onClick={() => {
-                      setAdminMessages(prev => ({ ...prev, [order.id]: "" }));
-                      saveAdminMessage(order.id, "");
-                    }}
-                  >
-                    Clear
-                  </Button>
-                )}
-              </div>
+            </div>
+
+            {/* Note to Delivery Guy */}
+            <div className="mt-3 pt-3 border-t">
+              <Label className="text-xs font-medium mb-1.5 flex items-center gap-1.5">
+                <Truck className="w-3.5 h-3.5" style={{ color: BRAND }} />
+                Note to Delivery Guy
+              </Label>
+              <Textarea
+                value={deliveryNotes[order.id] ?? order.deliveryNote ?? ""}
+                onChange={(e) => setDeliveryNotes(prev => ({ ...prev, [order.id]: e.target.value }))}
+                placeholder="e.g. Call before delivery, Gate code: 1234, Leave at door"
+                rows={2}
+                className="text-xs resize-none mt-1"
+              />
+            </div>
+
+            {/* Unified Save Button */}
+            <div className="mt-3 pt-3 border-t">
+              <Button
+                size="sm"
+                className="w-full h-9 text-xs font-semibold text-white"
+                style={{ backgroundColor: hasChanges(order) ? BRAND : '#9ca3af' }}
+                disabled={savingOrder === order.id || !hasChanges(order)}
+                onClick={() => saveAllChanges(order)}
+              >
+                <Save className="w-3.5 h-3.5 mr-1.5" />
+                {savingOrder === order.id ? "Saving All Changes..." : hasChanges(order) ? "Save All Changes" : "No Changes"}
+              </Button>
+              {hasChanges(order) && (
+                <p className="text-[10px] text-amber-600 mt-1 text-center font-medium">
+                  You have unsaved changes
+                </p>
+              )}
             </div>
 
             {/* Order Timeline */}
@@ -1049,6 +1124,51 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                 </div>
               </div>
             )}
+
+            {/* Cancel Order Button */}
+            {order.status !== 'cancelled' && order.status !== 'closed' && (
+              <div className="mt-3 pt-3 border-t">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full h-8 text-xs text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300"
+                  onClick={() => { setCancelOrderTarget(order); setCancelReason(""); }}
+                >
+                  <Ban className="w-3.5 h-3.5 mr-1.5" /> Cancel Order
+                </Button>
+              </div>
+            )}
+
+            {/* Customer Rating Display */}
+            {order.rating && (
+              <div className="mt-3 pt-3 border-t">
+                <div className="flex items-center gap-2 mb-1">
+                  <Star className="w-3.5 h-3.5 text-amber-500" fill="#F59E0B" />
+                  <span className="text-xs font-semibold text-gray-700">Customer Rating</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {[1, 2, 3, 4, 5].map((s) => (
+                    <Star
+                      key={s}
+                      className="w-4 h-4"
+                      fill={s <= order.rating! ? '#F59E0B' : 'none'}
+                      stroke={s <= order.rating! ? '#F59E0B' : '#D1D5DB'}
+                    />
+                  ))}
+                  <span className="text-xs text-amber-600 font-bold ml-1">{order.rating}/5</span>
+                </div>
+                {order.ratingComment && (
+                  <p className="text-xs text-gray-600 italic mt-1.5 bg-amber-50 rounded-md px-2 py-1.5">
+                    "{order.ratingComment}"
+                  </p>
+                )}
+                {order.ratingAt && (
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    {new Date(order.ratingAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                )}
+              </div>
+            )}
           </Card>
         ))}
 
@@ -1117,6 +1237,45 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
             </Button>
             <Button onClick={handleBulkStatusUpdate} disabled={bulkActionLoading}>
               {bulkActionLoading ? "Updating..." : "Update Status"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cancel Order Dialog */}
+      <Dialog open={!!cancelOrderTarget} onOpenChange={() => setCancelOrderTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <Ban className="w-5 h-5" /> Cancel Order
+            </DialogTitle>
+            <DialogDescription>
+              Order {cancelOrderTarget?.orderNumber || getShortOrderId(cancelOrderTarget?.id || '')} — {formatIDR(cancelOrderTarget?.total || 0)}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-xs text-red-700 font-medium">This action cannot be undone. The order will be marked as cancelled.</p>
+            </div>
+            <div>
+              <Label>Reason for cancellation <span className="text-red-500">*</span></Label>
+              <Textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="e.g. Customer requested cancellation, Out of stock, etc."
+                rows={3}
+                className="text-sm resize-none mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCancelOrderTarget(null)}>Go Back</Button>
+            <Button
+              onClick={handleCancelOrder}
+              disabled={cancelLoading || !cancelReason.trim()}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {cancelLoading ? "Cancelling..." : "Confirm Cancel"}
             </Button>
           </DialogFooter>
         </DialogContent>

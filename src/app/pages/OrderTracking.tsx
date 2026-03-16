@@ -4,11 +4,12 @@ import { useAuth } from "../lib/auth";
 import { APP_CONFIG, LOGO_ALT } from "../lib/config";
 import { Button } from "../components/ui/button";
 import { Header } from "../components/Header";
+import { Textarea } from "../components/ui/textarea";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { toast } from "sonner";
 import {
   RefreshCw, MapPin, Phone, Clock, CheckCircle2,
-  Package, CreditCard, Ticket, DollarSign, AlertCircle, Loader2, Camera, X, MessageCircle,
+  Package, CreditCard, Ticket, DollarSign, AlertCircle, Loader2, Camera, X, MessageCircle, Star,
 } from "lucide-react";
 import { formatIDR } from "../lib/currency";
 import { getRestaurantLogo } from "../lib/useRestaurantLogo";
@@ -70,6 +71,9 @@ interface Order {
   proofOfDeliveryAt?: string;
   adminMessage?: string;
   adminMessageAt?: string;
+  rating?: number;
+  ratingComment?: string;
+  ratingAt?: string;
 }
 
 const statusConfig: Record<string, { icon: string; color: string; description: string }> = {
@@ -203,6 +207,12 @@ export default function OrderTracking() {
   const [payingNow, setPayingNow] = useState(false);
   const [showPayConfirm, setShowPayConfirm] = useState(false);
 
+  // Rating state
+  const [ratingValue, setRatingValue] = useState(0);
+  const [ratingHover, setRatingHover] = useState(0);
+  const [ratingComment, setRatingComment] = useState("");
+  const [submittingRating, setSubmittingRating] = useState(false);
+
   useEffect(() => {
     if (authLoading) return;
     
@@ -258,6 +268,37 @@ export default function OrderTracking() {
 
   const handleRefresh = () => {
     fetchOrder(true);
+  };
+
+  // Handle rating submission
+  const handleSubmitRating = async () => {
+    if (!order || !user || ratingValue === 0) return;
+    try {
+      setSubmittingRating(true);
+      const response = await fetch(`${API_BASE}/orders/${order.id}/rate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          rating: ratingValue,
+          comment: ratingComment.trim(),
+        }),
+      });
+      if (response.ok) {
+        toast.success("Thank you for your feedback!");
+        fetchOrder();
+      } else {
+        const err = await response.json().catch(() => ({}));
+        toast.error(err.error || "Failed to submit rating");
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to submit rating");
+    } finally {
+      setSubmittingRating(false);
+    }
   };
 
   // Handle Midtrans Pay Now for unpaid/partial orders
@@ -405,8 +446,8 @@ export default function OrderTracking() {
     }
     
     return {
-      message: `💡 You will earn ${pointsAmount} points when order is delivered and paid`,
-      color: "#666"
+        message: `💡 You will earn ${pointsAmount} points when order is delivered and paid`,
+        color: "#666"
     };
   };
 
@@ -842,6 +883,96 @@ export default function OrderTracking() {
             {pointsStatus.message}
           </p>
         </div>
+
+        {/* Order Rating — show for delivered/closed orders */}
+        {['delivered', 'closed'].includes(order.status) && (
+          <div className="bg-white rounded-xl shadow-md p-5 mt-4">
+            <h3 className="font-semibold mb-3 flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: '#FEF3C7' }}>
+                <Star className="w-4 h-4 text-amber-500" />
+              </div>
+              {order.rating ? 'Your Rating' : 'Rate Your Order'}
+            </h3>
+
+            {order.rating ? (
+              /* Already rated — show submitted rating */
+              <div className="text-center">
+                <div className="flex justify-center gap-1.5 mb-2">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <Star
+                      key={star}
+                      className="w-8 h-8"
+                      fill={star <= order.rating! ? '#F59E0B' : 'none'}
+                      stroke={star <= order.rating! ? '#F59E0B' : '#D1D5DB'}
+                    />
+                  ))}
+                </div>
+                <p className="text-sm font-semibold text-amber-600 mb-1">
+                  {order.rating === 5 ? 'Excellent!' : order.rating === 4 ? 'Great!' : order.rating === 3 ? 'Good' : order.rating === 2 ? 'Fair' : 'Poor'}
+                </p>
+                {order.ratingComment && (
+                  <p className="text-sm text-gray-600 italic mt-2 bg-gray-50 rounded-lg p-3">
+                    "{order.ratingComment}"
+                  </p>
+                )}
+                {order.ratingAt && (
+                  <p className="text-[10px] text-gray-400 mt-2">
+                    Rated on {new Date(order.ratingAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                )}
+              </div>
+            ) : (
+              /* Not rated yet — show rating form */
+              <div className="space-y-4">
+                <div className="text-center">
+                  <p className="text-sm text-gray-500 mb-3">How was your experience?</p>
+                  <div className="flex justify-center gap-2">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        type="button"
+                        onMouseEnter={() => setRatingHover(star)}
+                        onMouseLeave={() => setRatingHover(0)}
+                        onClick={() => setRatingValue(star)}
+                        className="transition-transform hover:scale-110 active:scale-95"
+                      >
+                        <Star
+                          className="w-10 h-10"
+                          fill={star <= (ratingHover || ratingValue) ? '#F59E0B' : 'none'}
+                          stroke={star <= (ratingHover || ratingValue) ? '#F59E0B' : '#D1D5DB'}
+                        />
+                      </button>
+                    ))}
+                  </div>
+                  {ratingValue > 0 && (
+                    <p className="text-sm font-medium mt-2" style={{ color: BRAND }}>
+                      {ratingValue === 5 ? 'Excellent!' : ratingValue === 4 ? 'Great!' : ratingValue === 3 ? 'Good' : ratingValue === 2 ? 'Fair' : 'Poor'}
+                    </p>
+                  )}
+                </div>
+                <Textarea
+                  value={ratingComment}
+                  onChange={(e) => setRatingComment(e.target.value)}
+                  placeholder="Tell us more about your experience (optional)"
+                  rows={3}
+                  className="text-sm resize-none"
+                />
+                <Button
+                  onClick={handleSubmitRating}
+                  disabled={ratingValue === 0 || submittingRating}
+                  className="w-full h-11 text-sm font-semibold text-white"
+                  style={{ backgroundColor: ratingValue > 0 ? BRAND : '#9CA3AF' }}
+                >
+                  {submittingRating ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Submitting...</>
+                  ) : (
+                    <><Star className="w-4 h-4 mr-2" /> Submit Rating</>
+                  )}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Action Buttons */}
         <div className="mt-4 space-y-3">

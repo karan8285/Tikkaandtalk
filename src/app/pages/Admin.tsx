@@ -13,7 +13,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, Camera, MessageSquare, Save } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, Camera, MessageSquare, Save, Star } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -87,6 +87,9 @@ interface Order {
   scheduledAt?: string;
   adminMessage?: string;
   adminMessageAt?: string;
+  rating?: number;
+  ratingComment?: string;
+  ratingAt?: string;
 }
 
 const ORDER_STATUSES = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
@@ -2091,6 +2094,37 @@ export default function Admin() {
                                 month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" 
                               })}
                             </div>
+                          </div>
+                        )}
+
+                        {/* Customer Rating Display */}
+                        {order.rating && (
+                          <div className="pt-2 border-t">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Star className="w-3.5 h-3.5 text-amber-500" fill="#F59E0B" />
+                              <span className="text-xs font-semibold text-gray-700">Customer Rating</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              {[1, 2, 3, 4, 5].map((s) => (
+                                <Star
+                                  key={s}
+                                  className="w-4 h-4"
+                                  fill={s <= order.rating! ? '#F59E0B' : 'none'}
+                                  stroke={s <= order.rating! ? '#F59E0B' : '#D1D5DB'}
+                                />
+                              ))}
+                              <span className="text-xs text-amber-600 font-bold ml-1">{order.rating}/5</span>
+                            </div>
+                            {order.ratingComment && (
+                              <p className="text-xs text-gray-600 italic mt-1.5 bg-amber-50 rounded-md px-2 py-1.5">
+                                "{order.ratingComment}"
+                              </p>
+                            )}
+                            {order.ratingAt && (
+                              <p className="text-[10px] text-gray-400 mt-1">
+                                {new Date(order.ratingAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                              </p>
+                            )}
                           </div>
                         )}
 

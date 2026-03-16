@@ -10,7 +10,7 @@ import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Truck, Clock, Phone, MapPin, LogOut, RefreshCw, Package, CheckCircle2, Navigation, Camera, X, ImageIcon, Upload, Loader2 } from "lucide-react";
+import { Truck, Clock, Phone, MapPin, LogOut, RefreshCw, Package, CheckCircle2, Navigation, Camera, X, ImageIcon, Upload, Loader2, MessageSquare, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
@@ -32,6 +32,9 @@ interface Order {
   orderNumber?: string;
   specialInstructions?: string;
   customerName?: string;
+  deliveryNote?: string;
+  deliveryNoteAt?: string;
+  deliveryNoteBy?: string;
 }
 
 export default function StaffDelivery() {
@@ -44,6 +47,10 @@ export default function StaffDelivery() {
   const { checkForNewOrders } = useNewOrderAlert({ label: "Delivery" });
   const accessTokenRef = useRef(accessToken);
   accessTokenRef.current = accessToken;
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const ORDERS_PER_PAGE = 10;
 
   // POD (Proof of Delivery) state
   const [podModalOrder, setPodModalOrder] = useState<Order | null>(null);
@@ -218,6 +225,8 @@ export default function StaffDelivery() {
   }
 
   const displayOrders = activeTab === "ready" ? readyOrders : deliveringOrders;
+  const totalDisplayPages = Math.max(1, Math.ceil(displayOrders.length / ORDERS_PER_PAGE));
+  const paginatedDisplayOrders = displayOrders.slice((currentPage - 1) * ORDERS_PER_PAGE, currentPage * ORDERS_PER_PAGE);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -246,14 +255,14 @@ export default function StaffDelivery() {
         {/* Tabs */}
         <div className="flex rounded-lg border overflow-hidden">
           <button
-            onClick={() => setActiveTab("ready")}
+            onClick={() => { setActiveTab("ready"); setCurrentPage(1); }}
             className={`flex-1 py-2.5 text-sm font-semibold transition-all ${activeTab === "ready" ? "text-white" : "bg-white text-gray-600"}`}
             style={activeTab === "ready" ? { backgroundColor: BRAND_COLOR } : {}}
           >
             <Package className="w-4 h-4 inline mr-1" /> Ready ({readyOrders.length})
           </button>
           <button
-            onClick={() => setActiveTab("delivering")}
+            onClick={() => { setActiveTab("delivering"); setCurrentPage(1); }}
             className={`flex-1 py-2.5 text-sm font-semibold transition-all ${activeTab === "delivering" ? "text-white" : "bg-white text-gray-600"}`}
             style={activeTab === "delivering" ? { backgroundColor: BRAND_COLOR } : {}}
           >
@@ -275,10 +284,10 @@ export default function StaffDelivery() {
           </div>
         ) : (
           <div className="space-y-3">
-            {displayOrders.map(order => (
-              <Card key={order.id} className="p-4">
+            {paginatedDisplayOrders.map(order => (
+              <Card key={order.id} className="p-4 shadow-sm" style={order.status === 'ready' ? { backgroundColor: '#faf5ff', borderColor: '#e9d5ff' } : { backgroundColor: '#f0f9ff', borderColor: '#bae6fd' }}>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="font-mono font-extrabold text-2xl tracking-tight">
+                  <span className="font-mono font-extrabold text-2xl tracking-tight text-gray-900">
                     {getShortOrderId(order.orderNumber || order.id)}
                   </span>
                   <Badge className={`text-xs text-white ${order.status === 'ready' ? 'bg-purple-500' : 'bg-orange-500'}`}>
@@ -291,7 +300,7 @@ export default function StaffDelivery() {
                   <p className="text-base font-semibold text-gray-800 mb-1">{order.customerName}</p>
                 )}
 
-                <p className="text-sm font-medium mb-1">{order.itemTitle}</p>
+                <p className="text-sm font-medium mb-1 text-gray-800">{order.itemTitle}</p>
                 <p className="text-lg font-bold mb-2" style={{ color: BRAND_COLOR }}>{formatIDR(order.total)}</p>
 
                 {/* Customer Info */}
@@ -311,6 +320,23 @@ export default function StaffDelivery() {
                 {order.specialInstructions && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded px-3 py-2 mb-3">
                     <p className="text-xs text-yellow-800">{order.specialInstructions}</p>
+                  </div>
+                )}
+
+                {/* Delivery Note from Admin */}
+                {order.deliveryNote && (
+                  <div className="bg-blue-50 border border-blue-300 rounded-lg px-3 py-2.5 mb-3">
+                    <p className="text-xs font-semibold text-blue-800 flex items-center gap-1.5 mb-1">
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      Note from Admin
+                      {order.deliveryNoteBy && <span className="font-normal text-blue-600">— {order.deliveryNoteBy}</span>}
+                    </p>
+                    <p className="text-sm text-blue-900 font-medium">{order.deliveryNote}</p>
+                    {order.deliveryNoteAt && (
+                      <p className="text-[10px] text-blue-500 mt-1">
+                        {new Date(order.deliveryNoteAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -357,6 +383,23 @@ export default function StaffDelivery() {
                 )}
               </Card>
             ))}
+          </div>
+        )}
+
+        {/* Pagination */}
+        {totalDisplayPages > 1 && (
+          <div className="flex items-center justify-between pt-2">
+            <p className="text-xs text-gray-500">
+              Page {currentPage} of {totalDisplayPages} ({displayOrders.length} orders)
+            </p>
+            <div className="flex gap-1">
+              <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <Button variant="outline" size="sm" disabled={currentPage === totalDisplayPages} onClick={() => setCurrentPage(p => p + 1)}>
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
         )}
       </div>

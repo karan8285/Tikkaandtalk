@@ -8,6 +8,25 @@ import { crypto } from "https://deno.land/std@0.224.0/crypto/mod.ts";
 import { getImageForDish } from "./menu_images.tsx";
 import { SERVER_CONFIG } from "./config.ts";
 
+// Retry helper for transient connection errors (e.g. connection reset)
+async function kvRetry<T>(fn: () => Promise<T>, maxRetries = 3, delayMs = 300): Promise<T> {
+  let lastError: any;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+      const msg = String(error?.message || error);
+      const isTransient = msg.includes('connection reset') || msg.includes('connection error')
+        || msg.includes('SendRequest') || msg.includes('broken pipe') || msg.includes('ECONNRESET');
+      if (!isTransient || attempt >= maxRetries) throw error;
+      console.log(`⚠️ KV transient error (attempt ${attempt}/${maxRetries}): ${msg.substring(0, 120)}. Retrying in ${delayMs}ms...`);
+      await new Promise(r => setTimeout(r, delayMs * attempt));
+    }
+  }
+  throw lastError;
+}
+
 const app = new Hono();
 
 // Custom JWT secret for our own token system (bypasses Supabase Auth mismatch)
@@ -1001,8 +1020,8 @@ app.get("/make-server-e5e192fb/cart", async (c) => {
 
     console.log(`✅ Cart GET - Fetching cart for user: ${userAuth.userId}`);
 
-    // Get cart from KV store
-    const cart = await kv.get(`cart:${userAuth.userId}`) || [];
+    // Get cart from KV store (with retry for transient connection errors)
+    const cart = await kvRetry(() => kv.get(`cart:${userAuth.userId}`)) || [];
     
     console.log(`📥 Retrieved cart for user ${userAuth.userId}:`, cart);
     
@@ -1195,8 +1214,8 @@ app.post("/make-server-e5e192fb/cart/sync", async (c) => {
       return c.json({ error: "Cart must be an array" }, 400);
     }
 
-    // Save cart
-    await kv.set(`cart:${userId}`, cart);
+    // Save cart (with retry for transient connection errors)
+    await kvRetry(() => kv.set(`cart:${userId}`, cart));
     
     console.log(`🔄 Synced cart for user ${userId} with ${cart.length} items`);
     
@@ -1323,13 +1342,13 @@ app.post("/make-server-e5e192fb/orders", async (c) => {
 
     console.log("Storing order with ID:", orderId, "Order Number:", orderNumber);
     
-    // Store order
-    await kv.set(`order:${orderId}`, order);
+    // Store order (with retry for transient connection errors)
+    await kvRetry(() => kv.set(`order:${orderId}`, order));
 
     // Add to user's orders list (skip for guest orders)
     if (!isGuestOrder) {
       const userOrdersKey = `user_orders:${userId}`;
-      const existingOrders: string[] = (await kv.get(userOrdersKey)) || [];
+      const existingOrders: string[] = (await kvRetry(() => kv.get(userOrdersKey))) || [];
       // Deduplicate before appending to guard against race conditions
       if (!existingOrders.includes(orderId)) {
         await kv.set(userOrdersKey, [...existingOrders, orderId]);
@@ -1354,7 +1373,7 @@ app.post("/make-server-e5e192fb/orders", async (c) => {
   }
 });
 
-// Get User Orders (requires auth)
+// Get User Orders (requires auth) — with server-side pagination
 app.get("/make-server-e5e192fb/orders", async (c) => {
   try {
     // Auto-activate any scheduled orders whose time has arrived
@@ -1367,22 +1386,50 @@ app.get("/make-server-e5e192fb/orders", async (c) => {
       return c.json({ error: "User ID is required" }, 400);
     }
 
-    console.log(`GET orders - Fetching orders for user: ${userId}`);
+    // Pagination params
+    const page = Math.max(1, parseInt(c.req.query('page') || '1'));
+    const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') || '10')));
+    const filterStatus = c.req.query('filter') || 'all'; // 'all', 'active', 'closed', 'unpaid'
+
+    console.log(`GET orders - user: ${userId}, page=${page}, limit=${limit}, filter=${filterStatus}`);
 
     const userOrdersKey = `user_orders:${userId}`;
-    const orderIds = await kv.get(userOrdersKey) || [];
-    
-    console.log(`Fetching orders for user ${userId}, found ${orderIds.length} order IDs`);
+    const orderIds = await kvRetry(() => kv.get(userOrdersKey)) || [];
     
     const orders = await Promise.all(
-      orderIds.map((id: string) => kv.get(`order:${id}`))
+      orderIds.map((id: string) => kvRetry(() => kv.get(`order:${id}`)))
     );
 
     // Filter out null orders and draft orders awaiting online payment
-    const filteredOrders = orders.filter(o => o !== null && o.paymentStatus !== "awaiting_payment");
-    console.log(`Returning ${filteredOrders.length} orders (excluded awaiting_payment drafts)`);
+    let filteredOrders = orders.filter(o => o !== null && o.paymentStatus !== "awaiting_payment");
+
+    // Apply status filter
+    if (filterStatus === 'active') {
+      filteredOrders = filteredOrders.filter((o: any) => !['closed', 'cancelled'].includes(o.status));
+    } else if (filterStatus === 'closed') {
+      filteredOrders = filteredOrders.filter((o: any) => ['closed', 'cancelled'].includes(o.status));
+    } else if (filterStatus === 'unpaid') {
+      filteredOrders = filteredOrders.filter((o: any) => o.paymentStatus !== 'paid' && o.status !== 'cancelled');
+    }
+
+    // Sort by creation date (newest first)
+    filteredOrders.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const totalOrders = filteredOrders.length;
+    const totalPages = Math.max(1, Math.ceil(totalOrders / limit));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * limit;
+    const paginatedOrders = filteredOrders.slice(start, start + limit);
+
+    console.log(`Returning ${paginatedOrders.length} of ${totalOrders} orders (page ${safePage}/${totalPages})`);
     
-    return c.json({ orders: filteredOrders });
+    return c.json({ 
+      orders: paginatedOrders,
+      totalOrders,
+      totalPages,
+      page: safePage,
+      limit,
+    });
   } catch (error) {
     console.log(`Get orders error: ${error}`);
     return c.json({ error: "Failed to get orders" }, 500);
@@ -1403,7 +1450,7 @@ app.get("/make-server-e5e192fb/orders/:id", async (c) => {
     }
 
     console.log(`🔍 Fetching order from KV: order:${orderId}`);
-    const order = await kv.get(`order:${orderId}`);
+    const order = await kvRetry(() => kv.get(`order:${orderId}`));
     
     if (!order) {
       console.log(`❌ Order not found in KV store`);
@@ -2080,8 +2127,8 @@ app.get("/make-server-e5e192fb/admin/orders", async (c) => {
 
     console.log(`Admin orders: page=${page} limit=${limit} status=${statusFilter} payment=${paymentFilter} delivery=${deliveryFilter} date=${dateFilter} tab=${tabFilter} search="${searchQuery}"`);
 
-    // Get all orders from KV (exclude drafts)
-    const allOrders = await kv.getByPrefix("order:");
+    // Get all orders from KV (exclude drafts) — with retry for transient errors
+    const allOrders = await kvRetry(() => kv.getByPrefix("order:"));
     const visibleOrders = allOrders.filter((entry: any) => {
       const order = entry.value || entry;
       return order.paymentStatus !== "awaiting_payment";
@@ -2247,7 +2294,7 @@ app.get("/make-server-e5e192fb/admin/orders/count", async (c) => {
     const adminAuth = await verifyAdminAccess(accessToken);
     if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
 
-    const allOrders = await kv.getByPrefix("order:");
+    const allOrders = await kvRetry(() => kv.getByPrefix("order:"));
     const visibleOrders = allOrders.filter((entry: any) => {
       const order = entry.value || entry;
       return order.paymentStatus !== "awaiting_payment";
@@ -4858,6 +4905,55 @@ app.post("/make-server-e5e192fb/validate-cart", async (c) => {
   }
 });
 
+// Rate Order (customer submits rating after delivery)
+app.post("/make-server-e5e192fb/orders/:id/rate", async (c) => {
+  try {
+    const orderId = c.req.param('id');
+    const body = await c.req.json();
+    const { userId, rating, comment } = body;
+
+    if (!userId) {
+      return c.json({ error: "User ID is required" }, 400);
+    }
+    if (!rating || rating < 1 || rating > 5) {
+      return c.json({ error: "Rating must be between 1 and 5" }, 400);
+    }
+
+    const order = await kv.get(`order:${orderId}`);
+    if (!order) {
+      return c.json({ error: "Order not found" }, 404);
+    }
+
+    // Verify ownership
+    if (order.userId && order.userId !== userId) {
+      return c.json({ error: "Unauthorized" }, 403);
+    }
+
+    // Only allow rating on delivered/closed orders
+    if (!['delivered', 'closed'].includes(order.status)) {
+      return c.json({ error: "Order must be delivered or closed to rate" }, 400);
+    }
+
+    // Prevent re-rating
+    if (order.rating) {
+      return c.json({ error: "Order has already been rated" }, 400);
+    }
+
+    // Save rating
+    order.rating = Math.round(rating);
+    order.ratingComment = comment ? comment.trim() : '';
+    order.ratingAt = new Date().toISOString();
+
+    await kvRetry(() => kv.set(`order:${orderId}`, order));
+
+    console.log(`⭐ Order ${orderId} rated ${rating}/5 by user ${userId}`);
+    return c.json({ success: true, rating: order.rating, ratingComment: order.ratingComment });
+  } catch (error) {
+    console.log(`❌ Rate order error: ${error}`);
+    return c.json({ error: "Failed to rate order" }, 500);
+  }
+});
+
 // Cancel Order (only pending orders)
 app.post("/make-server-e5e192fb/orders/:id/cancel", async (c) => {
   try {
@@ -4875,7 +4971,7 @@ app.post("/make-server-e5e192fb/orders/:id/cancel", async (c) => {
 
     const userId = payload.userId;
     const orderId = c.req.param('id');
-    const order = await kv.get(`order:${orderId}`);
+    const order = await kvRetry(() => kv.get(`order:${orderId}`));
     
     if (!order) {
       return c.json({ error: "Order not found" }, 404);
@@ -4903,13 +4999,13 @@ app.post("/make-server-e5e192fb/orders/:id/cancel", async (c) => {
       label: 'Cancelled by Customer',
       actor: { name: 'Customer', role: 'customer' }
     });
-    await kv.set(`order:${orderId}`, order);
+    await kvRetry(() => kv.set(`order:${orderId}`, order));
     
     // Refund points if they were awarded
-    const userData = await kv.get(`user:${userId}`);
+    const userData = await kvRetry(() => kv.get(`user:${userId}`));
     if (userData && order.pointsAwarded && order.pointsEarned) {
       userData.points = Math.max(0, (userData.points || 0) - order.pointsEarned);
-      await kv.set(`user:${userId}`, userData);
+      await kvRetry(() => kv.set(`user:${userId}`, userData));
       console.log(`Refunded ${order.pointsEarned} points to user ${userId}`);
     }
     
@@ -5106,13 +5202,13 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
     const actor = { name: actorName, role: actorRole };
 
     const orderId = c.req.param('id');
-    const { status, paymentReceived, paymentDetails, cancellationReason, paymentStatus, addPayment, deliveryFee: newDeliveryFee, proofOfDeliveryUrl, adminMessage } = await c.req.json();
+    const { status, paymentReceived, paymentDetails, cancellationReason, paymentStatus, addPayment, deliveryFee: newDeliveryFee, proofOfDeliveryUrl, adminMessage, deliveryNote } = await c.req.json();
 
-    if (!status && paymentReceived === undefined && paymentStatus === undefined && !addPayment && newDeliveryFee === undefined && adminMessage === undefined) {
-      return c.json({ error: "Status, paymentStatus, addPayment, deliveryFee, or adminMessage is required" }, 400);
+    if (!status && paymentReceived === undefined && paymentStatus === undefined && !addPayment && newDeliveryFee === undefined && adminMessage === undefined && deliveryNote === undefined) {
+      return c.json({ error: "Status, paymentStatus, addPayment, deliveryFee, adminMessage, or deliveryNote is required" }, 400);
     }
 
-    const order = await kv.get(`order:${orderId}`);
+    const order = await kvRetry(() => kv.get(`order:${orderId}`));
     if (!order) {
       return c.json({ error: "Order not found" }, 404);
     }
@@ -5344,6 +5440,22 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
       }
     }
 
+    // Store delivery note (visible to delivery staff) if provided
+    if (deliveryNote !== undefined) {
+      if (typeof deliveryNote === 'string' && deliveryNote.trim()) {
+        order.deliveryNote = deliveryNote.trim();
+        order.deliveryNoteAt = now;
+        order.deliveryNoteBy = actor.name || 'Admin';
+        console.log(`🚚 Delivery note set for order ${orderId}: "${deliveryNote.trim().substring(0, 60)}..."`);
+      } else {
+        // Allow clearing the note by sending empty string
+        delete order.deliveryNote;
+        delete order.deliveryNoteAt;
+        delete order.deliveryNoteBy;
+        console.log(`🚚 Delivery note cleared for order ${orderId}`);
+      }
+    }
+
     order.updatedAt = now;
     
     // Award points if order is closed and payment received
@@ -5402,7 +5514,7 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
       console.log(`⏭️ Skipping points award - conditions not met`);
     }
     
-    await kv.set(`order:${orderId}`, order);
+    await kvRetry(() => kv.set(`order:${orderId}`, order));
 
     return c.json({ success: true, order });
   } catch (error) {
@@ -10194,6 +10306,171 @@ app.delete("/make-server-e5e192fb/admin/staff/:id", async (c) => {
     return c.json({ success: true });
   } catch (error) {
     return c.json({ error: `Failed to delete staff: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== CUSTOM REPORTS ====================
+
+// GET /reports/customer-analytics — aggregated customer analytics report (superuser only)
+app.get("/make-server-e5e192fb/reports/customer-analytics", async (c) => {
+  try {
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+
+    // Verify superuser role
+    const staffData = await kv.get(`staff:${adminAuth.userId}`);
+    if (!staffData || staffData.role !== "superuser") {
+      return c.json({ error: "Super User access required" }, 403);
+    }
+
+    // Parse query params
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const limit = parseInt(c.req.query("limit") || "10", 10);
+    const search = (c.req.query("search") || "").toLowerCase().trim();
+    const startDate = c.req.query("startDate") || "";
+    const endDate = c.req.query("endDate") || "";
+    const sortBy = c.req.query("sortBy") || "revenue"; // revenue | orders | name
+
+    console.log(`📊 [CRM Report] page=${page} limit=${limit} search="${search}" dates=${startDate}→${endDate} sort=${sortBy}`);
+
+    // Fetch all orders and users with retry
+    const rawOrders = await kvRetry(() => kv.getByPrefix("order:")) || [];
+    const allUsers = await kvRetry(() => kv.getByPrefix("user:")) || [];
+
+    // Filter out draft/awaiting payment orders and cancelled orders
+    const validOrders = rawOrders.filter((o: any) => {
+      const order = o.value || o;
+      return order.paymentStatus !== "awaiting_payment" && order.status !== "cancelled";
+    });
+
+    // Apply date filter on orders
+    let filteredOrders = validOrders;
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      filteredOrders = filteredOrders.filter((o: any) => new Date(o.createdAt) >= start);
+    }
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      filteredOrders = filteredOrders.filter((o: any) => new Date(o.createdAt) <= end);
+    }
+
+    // Build user map for quick lookup
+    const userMap: Record<string, any> = {};
+    allUsers.forEach((u: any) => { userMap[u.id] = u; });
+
+    // Aggregate orders by customer (userId or phone for guest orders)
+    const customerAgg: Record<string, {
+      userId: string | null;
+      name: string;
+      phone: string;
+      address: string;
+      tier: string;
+      totalOrders: number;
+      totalRevenue: number;
+      lastOrderDate: string;
+      totalPointsEarned: number;
+      points: number;
+    }> = {};
+
+    filteredOrders.forEach((order: any) => {
+      const key = order.userId || `guest:${order.phone || order.guestPhone || "unknown"}`;
+      if (!customerAgg[key]) {
+        const user = order.userId ? userMap[order.userId] : null;
+        const phone = order.phone || order.guestPhone || user?.phone || "";
+        const name = order.customerName || user?.name || order.guestName || "Guest";
+        const addr = order.deliveryAddress || order.address || user?.address || "";
+        const tier = user?.tier || getUserTier(user?.totalPointsEarned || 0);
+        customerAgg[key] = {
+          userId: order.userId || null,
+          name,
+          phone,
+          address: addr,
+          tier,
+          totalOrders: 0,
+          totalRevenue: 0,
+          lastOrderDate: "",
+          totalPointsEarned: user?.totalPointsEarned || 0,
+          points: user?.points || 0,
+        };
+      }
+      customerAgg[key].totalOrders += 1;
+      customerAgg[key].totalRevenue += (order.total || 0);
+      const orderDate = order.createdAt || "";
+      if (!customerAgg[key].lastOrderDate || orderDate > customerAgg[key].lastOrderDate) {
+        customerAgg[key].lastOrderDate = orderDate;
+      }
+      // Update address if this order has a more recent one
+      if (order.deliveryAddress && order.deliveryAddress.length > 5) {
+        customerAgg[key].address = order.deliveryAddress;
+      }
+    });
+
+    // Convert to array
+    let customers = Object.values(customerAgg);
+
+    // Apply search filter
+    if (search) {
+      customers = customers.filter(cust =>
+        cust.name.toLowerCase().includes(search) ||
+        cust.phone.toLowerCase().includes(search) ||
+        cust.address.toLowerCase().includes(search)
+      );
+    }
+
+    // Sort
+    if (sortBy === "orders") {
+      customers.sort((a, b) => b.totalOrders - a.totalOrders);
+    } else if (sortBy === "name") {
+      customers.sort((a, b) => a.name.localeCompare(b.name));
+    } else {
+      // Default: revenue descending
+      customers.sort((a, b) => b.totalRevenue - a.totalRevenue);
+    }
+
+    // Summary stats
+    const summaryTotalCustomers = customers.length;
+    const summaryTotalOrders = customers.reduce((s, cust) => s + cust.totalOrders, 0);
+    const summaryTotalRevenue = customers.reduce((s, cust) => s + cust.totalRevenue, 0);
+
+    // Paginate
+    const totalPages = Math.max(1, Math.ceil(customers.length / limit));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const startIdx = (safePage - 1) * limit;
+    const pageCustomers = customers.slice(startIdx, startIdx + limit);
+
+    // Add rank (1-based across full list, not just page)
+    const rankedCustomers = pageCustomers.map((cust, i) => ({
+      ...cust,
+      rank: startIdx + i + 1,
+    }));
+
+    console.log(`📊 [CRM Report] Found ${summaryTotalCustomers} customers, page ${safePage}/${totalPages}`);
+
+    return c.json({
+      customers: rankedCustomers,
+      summary: {
+        totalCustomers: summaryTotalCustomers,
+        totalOrders: summaryTotalOrders,
+        totalRevenue: summaryTotalRevenue,
+      },
+      pagination: {
+        page: safePage,
+        limit,
+        totalPages,
+        totalItems: summaryTotalCustomers,
+      },
+      // For export: send all customers (unpaginated) when export=true
+      ...(c.req.query("export") === "true" ? {
+        allCustomers: customers.map((cust, i) => ({ ...cust, rank: i + 1 })),
+      } : {}),
+    });
+  } catch (error: any) {
+    console.log(`❌ [CRM Report] Error: ${error?.message}`, error?.stack);
+    return c.json({ error: `Failed to generate CRM report: ${error?.message}` }, 500);
   }
 });
 

@@ -15,6 +15,7 @@ import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { JAKARTA_AREAS, getAreasByDistrict } from "../lib/delivery";
 import type { DeliveryZone } from "../lib/delivery";
+import { getMidtransConfig } from "../lib/midtrans";
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -160,6 +161,9 @@ export default function Order() {
   const [claimingVoucherId, setClaimingVoucherId] = useState<string | null>(null);
   const [showUnclaimedSection, setShowUnclaimedSection] = useState(false);
 
+  // Online payment availability
+  const [onlinePaymentEnabled, setOnlinePaymentEnabled] = useState(true);
+
   // Tax rate state (admin-defined)
   const [taxRate, setTaxRate] = useState<number>(11); // Default 11% PPN
 
@@ -181,6 +185,26 @@ export default function Order() {
       }
     };
     fetchTaxRate();
+  }, []);
+
+  // Fetch online payment availability from Midtrans config
+  useEffect(() => {
+    const checkOnlinePayment = async () => {
+      try {
+        const config = await getMidtransConfig();
+        const enabled = config.enabled && !!config.clientKey;
+        setOnlinePaymentEnabled(enabled);
+        if (!enabled && paymentMethod === "pay-now") {
+          setPaymentMethod("" as PaymentMethod);
+        }
+      } catch {
+        setOnlinePaymentEnabled(false);
+        if (paymentMethod === "pay-now") {
+          setPaymentMethod("" as PaymentMethod);
+        }
+      }
+    };
+    checkOnlinePayment();
   }, []);
 
   // Fetch available promo codes for logged-in users
@@ -1656,30 +1680,37 @@ export default function Order() {
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={() => { setPaymentMethod("pay-now"); if (errors.paymentMethod) setErrors((prev) => ({ ...prev, paymentMethod: undefined })); }}
-                  className={`relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 cursor-pointer transition-all ${
-                    paymentMethod === "pay-now"
-                      ? "border-[#3B82F6] bg-blue-50/80 shadow-md"
-                      : errors.paymentMethod ? "border-red-300 hover:border-red-400" : "border-gray-200 bg-white hover:border-gray-300"
+                  disabled={!onlinePaymentEnabled}
+                  onClick={() => { if (!onlinePaymentEnabled) return; setPaymentMethod("pay-now"); if (errors.paymentMethod) setErrors((prev) => ({ ...prev, paymentMethod: undefined })); }}
+                  className={`relative flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all ${
+                    !onlinePaymentEnabled
+                      ? "border-gray-200 bg-gray-100 cursor-not-allowed opacity-60"
+                      : paymentMethod === "pay-now"
+                        ? "border-[#3B82F6] bg-blue-50/80 shadow-md cursor-pointer"
+                        : errors.paymentMethod ? "border-red-300 hover:border-red-400 cursor-pointer" : "border-gray-200 bg-white hover:border-gray-300 cursor-pointer"
                   }`}
                 >
-                  {paymentMethod === "pay-now" && (
+                  {paymentMethod === "pay-now" && onlinePaymentEnabled && (
                     <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-green-500 flex items-center justify-center shadow-sm">
                       <CheckCircle2 className="w-4 h-4 text-white" />
                     </div>
                   )}
                   <CreditCard
                     className="w-7 h-7"
-                    style={{ color: paymentMethod === "pay-now" ? "#3B82F6" : "#9CA3AF" }}
+                    style={{ color: !onlinePaymentEnabled ? "#D1D5DB" : paymentMethod === "pay-now" ? "#3B82F6" : "#9CA3AF" }}
                   />
                   <span
                     className={`text-sm font-bold ${
-                      paymentMethod === "pay-now" ? "text-[#1E1B4B]" : "text-gray-500"
+                      !onlinePaymentEnabled ? "text-gray-400" : paymentMethod === "pay-now" ? "text-[#1E1B4B]" : "text-gray-500"
                     }`}
                   >
                     Pay Now
                   </span>
-                  <span className="text-[10px] text-gray-400 text-center leading-tight">GoPay, QRIS, Bank Transfer</span>
+                  {!onlinePaymentEnabled ? (
+                    <span className="text-[10px] text-red-400 text-center leading-tight font-medium">Currently not accepting online payment</span>
+                  ) : (
+                    <span className="text-[10px] text-gray-400 text-center leading-tight">GoPay, QRIS, Bank Transfer</span>
+                  )}
                 </button>
 
                 <button

@@ -7,7 +7,7 @@ import { Button } from "../components/ui/button";
 import { Header } from "../components/Header";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { toast } from "sonner";
-import { ShoppingBag, ChevronDown, ChevronUp, MapPin, Package, RotateCw, Ticket, Clock } from "lucide-react";
+import { ShoppingBag, ChevronDown, ChevronUp, MapPin, Package, RotateCw, Ticket, Clock, ChevronLeft, ChevronRight, Star } from "lucide-react";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
 
@@ -61,6 +61,9 @@ interface Order {
   promoDiscount?: number;
   promoVoucherTitle?: string;
   taxRate?: number; // New field for tax rate
+  rating?: number;
+  ratingComment?: string;
+  ratingAt?: string;
 }
 
 const statusConfig: Record<string, { color: string; bgColor: string; label: string }> = {
@@ -86,6 +89,12 @@ export default function OrderHistory() {
   const [reordering, setReordering] = useState<string | null>(null);
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
   const [orderFilter, setOrderFilter] = useState<'all' | 'unpaid'>('all');
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalOrders, setTotalOrders] = useState(0);
+  const ORDERS_PER_PAGE = 10;
 
   useEffect(() => {
     // Wait for auth to finish loading before making decisions
@@ -127,6 +136,8 @@ export default function OrderHistory() {
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
         setOrders(sortedOrders);
+        setTotalOrders(sortedOrders.length);
+        setTotalPages(Math.ceil(sortedOrders.length / ORDERS_PER_PAGE));
       }
     } catch (error) {
       console.error("Failed to fetch orders:", error);
@@ -592,7 +603,7 @@ export default function OrderHistory() {
                 <div className="grid grid-cols-2 gap-3 mb-2">
                   {/* Payment Not Received Card */}
                   <button
-                    onClick={() => setOrderFilter(orderFilter === 'unpaid' ? 'all' : 'unpaid')}
+                    onClick={() => { setOrderFilter(orderFilter === 'unpaid' ? 'all' : 'unpaid'); setCurrentPage(1); }}
                     className="rounded-xl p-4 text-left transition-all"
                     style={{
                       backgroundColor: notFullyPaidOrders.length > 0 ? '#FCE4EC' : '#F3F4F6',
@@ -613,7 +624,7 @@ export default function OrderHistory() {
                   </button>
                   {/* All Transactions Card */}
                   <button
-                    onClick={() => setOrderFilter('all')}
+                    onClick={() => { setOrderFilter('all'); setCurrentPage(1); }}
                     className="rounded-xl p-4 bg-white border border-gray-200 text-left transition-all"
                     style={{
                       borderLeft: '4px solid #6B7280',
@@ -640,7 +651,7 @@ export default function OrderHistory() {
                   Showing unpaid orders only
                 </p>
                 <button
-                  onClick={() => setOrderFilter('all')}
+                  onClick={() => { setOrderFilter('all'); setCurrentPage(1); }}
                   className="text-xs font-semibold underline"
                   style={{ color: BRAND }}
                 >
@@ -650,343 +661,413 @@ export default function OrderHistory() {
             )}
 
             {/* Order Cards */}
-            {orders
-              .filter(order => {
+            {(() => {
+              const filteredOrders = orders.filter(order => {
                 const ps = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
                 if (orderFilter === 'unpaid') return ps !== 'paid' && order.status !== 'cancelled';
                 return true;
-              })
-              .map((order) => {
-                const isExpanded = expandedOrders.has(order.id);
-                const statusInfo = statusConfig[order.status] || statusConfig.pending;
-                const pointsStatus = getPointsStatus(order);
-                const isActive = !['delivered', 'closed', 'cancelled'].includes(order.status);
-                const ps = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
-                const isPaid = ps === 'paid';
-                const isPartial = ps === 'partial';
-                const borderColor = isPaid ? '#00AA99' : isPartial ? '#F59E0B' : BRAND;
-                const badgeBg = isPaid ? '#E0F7F5' : isPartial ? '#FEF3C7' : '#FCE4EC';
-                const badgeColor = isPaid ? '#00AA99' : isPartial ? '#D97706' : BRAND;
-                const badgeLabel = isPaid ? 'Paid' : isPartial ? `Partial (Rp ${(order.paidAmount || 0).toLocaleString()})` : 'Not Paid';
-                
-                return (
-                  <div 
-                    key={order.id} 
-                    className="bg-white rounded-xl shadow-sm overflow-hidden"
-                    style={{ borderLeft: `4px solid ${borderColor}` }}
-                  >
-                    {/* Collapsed View */}
-                    <div className="p-4">
-                      {/* Row 1: Order Number + Amount */}
-                      <div className="flex items-start justify-between mb-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="font-bold text-base text-gray-900">
-                            {getShortOrderId(order.orderNumber || order.id)}
-                          </h3>
-                          <span className="text-[10px] text-muted-foreground font-normal">
-                            {order.orderNumber || order.id}
-                          </span>
-                          {order.createdByAdmin && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-800 font-medium">
-                              Restaurant
-                            </span>
-                          )}
-                        </div>
-                        <p className="font-bold text-lg" style={{ color: isPaid ? '#1F2937' : badgeColor }}>
-                          Rp {order.total?.toLocaleString()}
-                        </p>
-                      </div>
-
-                      {/* Row 2: Date + Payment Badge */}
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-xs text-gray-500">
-                          {formatDateTime(order.createdAt)}
-                        </p>
-                        <span 
-                          className="inline-block px-2.5 py-0.5 text-[11px] font-semibold rounded-full"
-                          style={{ backgroundColor: badgeBg, color: badgeColor }}
-                        >
-                          {badgeLabel}
-                        </span>
-                      </div>
-
-                      {/* Row 3: Items + Delivery + Order Status */}
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2 text-xs text-gray-500">
-                          <Package className="w-3.5 h-3.5" />
-                          <span>{order.items?.length || 1} item{(order.items?.length || 1) > 1 ? 's' : ''}</span>
-                          <span>•</span>
-                          <span className="capitalize">{order.deliveryMethod}</span>
-                        </div>
-                        <span 
-                          className="inline-block px-2.5 py-0.5 text-[11px] font-semibold rounded-full"
-                          style={{ 
-                            backgroundColor: statusInfo.bgColor,
-                            color: statusInfo.color 
-                          }}
-                        >
-                          {statusInfo.label}
-                        </span>
-                      </div>
-
-                      {/* Scheduled order banner */}
-                      {order.status === "scheduled" && order.scheduledAt && (
-                        <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
-                          <Clock className="h-4 w-4 text-blue-600 shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold text-blue-800">Scheduled Order</p>
-                            <p className="text-[11px] text-blue-600">
-                              Will be active on{" "}
-                              {new Date(order.scheduledAt).toLocaleString("en-US", {
-                                weekday: "short",
-                                month: "short",
-                                day: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </p>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Track button for active orders */}
-                      {isActive && order.status !== "scheduled" && (
-                        <button
-                          onClick={() => handleViewTracking(order.id)}
-                          className="w-full mb-2 py-1.5 text-xs font-semibold rounded-lg border transition-colors"
-                          style={{ 
-                            color: BRAND,
-                            borderColor: BRAND,
-                            backgroundColor: 'rgba(217, 26, 96, 0.03)'
-                          }}
-                        >
-                          Track Order
-                        </button>
-                      )}
-
-                      {/* Expand/Collapse Button */}
-                      <button
-                        onClick={() => toggleExpanded(order.id)}
-                        className="w-full flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-lg transition-colors"
-                        style={{ 
-                          color: BRAND,
-                          backgroundColor: 'rgba(217, 26, 96, 0.05)'
-                        }}
+              });
+              const filteredTotalPages = Math.max(1, Math.ceil(filteredOrders.length / ORDERS_PER_PAGE));
+              const safePage = Math.min(currentPage, filteredTotalPages);
+              const paginatedOrders = filteredOrders.slice((safePage - 1) * ORDERS_PER_PAGE, safePage * ORDERS_PER_PAGE);
+              
+              return (
+                <>
+                  {paginatedOrders.map((order) => {
+                    const isExpanded = expandedOrders.has(order.id);
+                    const statusInfo = statusConfig[order.status] || statusConfig.pending;
+                    const pointsStatus = getPointsStatus(order);
+                    const isActive = !['delivered', 'closed', 'cancelled'].includes(order.status);
+                    const ps = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+                    const isPaid = ps === 'paid';
+                    const isPartial = ps === 'partial';
+                    const borderColor = isPaid ? '#00AA99' : isPartial ? '#F59E0B' : BRAND;
+                    const badgeBg = isPaid ? '#E0F7F5' : isPartial ? '#FEF3C7' : '#FCE4EC';
+                    const badgeColor = isPaid ? '#00AA99' : isPartial ? '#D97706' : BRAND;
+                    const badgeLabel = isPaid ? 'Paid' : isPartial ? `Partial (Rp ${(order.paidAmount || 0).toLocaleString()})` : 'Not Paid';
+                    
+                    return (
+                      <div 
+                        key={order.id} 
+                        className="bg-white rounded-xl shadow-sm overflow-hidden"
+                        style={{ borderLeft: `4px solid ${borderColor}` }}
                       >
-                        {isExpanded ? (
-                          <>
-                            Hide Details
-                            <ChevronUp className="w-4 h-4" />
-                          </>
-                        ) : (
-                          <>
-                            View Details
-                            <ChevronDown className="w-4 h-4" />
-                          </>
-                        )}
-                      </button>
-                    </div>
-
-                    {/* Expanded View */}
-                    {isExpanded && (
-                      <div className="px-4 pb-4 pt-2 border-t space-y-4">
-                        {/* Items List */}
-                        <div>
-                          <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
-                            <Package className="w-4 h-4" style={{ color: BRAND }} />
-                            Items Ordered ({order.items?.length || 1})
-                          </h4>
-                          <div className="space-y-2">
-                            {order.items && order.items.length > 0 ? (
-                              order.items.map((item, idx) => (
-                                <div key={idx} className="flex flex-col gap-1 text-sm bg-gray-50 p-2 rounded">
-                                  <div className="flex justify-between">
-                                    <span>
-                                      {(item as any).name || item.title}
-                                      {item.category && <span className="text-muted-foreground"> ({item.category})</span>}
-                                      {' '}<span className="text-muted-foreground">× {item.quantity}</span>
-                                      {item.discountPercentage && item.discountPercentage > 0 && (
-                                        <span className="ml-2 text-xs font-semibold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
-                                          {item.discountPercentage}% OFF
-                                        </span>
-                                      )}
-                                    </span>
-                                    <span className="font-medium">Rp {(item.price * item.quantity).toLocaleString()}</span>
-                                  </div>
-                                  {item.discountPercentage && item.discountPercentage > 0 && item.originalPrice && (
-                                    <div className="text-xs text-gray-500">
-                                      Original: <span className="line-through">Rp {(item.originalPrice * item.quantity).toLocaleString()}</span>
-                                      {' → '}You saved: Rp {((item.originalPrice - item.price) * item.quantity).toLocaleString()}
-                                    </div>
-                                  )}
-                                  {(item as any).notes && (
-                                    <p className="text-xs text-blue-600 italic">Note: {(item as any).notes}</p>
-                                  )}
-                                </div>
-                              ))
-                            ) : (
-                              <div className="flex justify-between text-sm bg-gray-50 p-2 rounded">
-                                <span>{order.itemTitle}</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Payment Summary */}
-                        <div>
-                          <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
-                            <span className="text-lg">💰</span>
-                            Payment Summary
-                          </h4>
-                          <div className="space-y-1 text-sm">
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Subtotal:</span>
-                              <span>Rp {order.subtotal?.toLocaleString()}</span>
-                            </div>
-                            {(order.promoDiscount != null && order.promoDiscount > 0) && (
-                              <div className="flex justify-between">
-                                <span className="text-green-600 flex items-center gap-1">
-                                  <Ticket className="w-3 h-3" />
-                                  Promo {order.promoCode ? `(${order.promoCode})` : ''}
-                                </span>
-                                <span className="text-green-600 font-medium">-Rp {order.promoDiscount.toLocaleString()}</span>
-                              </div>
-                            )}
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Tax ({order.taxRate ? `${order.taxRate}%` : 'PPN'}):</span>
-                              <span>Rp {order.tax?.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Delivery Fee:</span>
-                              <span>
-                                {order.deliveryFee != null && order.deliveryFee >= 0 && (order.deliveryFee > 0 || order.createdByAdmin)
-                                  ? (order.deliveryFee === 0 ? <span className="text-green-600 font-medium">Free</span> : `Rp ${order.deliveryFee.toLocaleString()}`)
-                                  : <span className="text-amber-600 italic text-xs">To be calculated</span>
-                                }
+                        {/* Collapsed View */}
+                        <div className="p-4">
+                          {/* Row 1: Order Number + Amount */}
+                          <div className="flex items-start justify-between mb-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-bold text-base text-gray-900">
+                                {getShortOrderId(order.orderNumber || order.id)}
+                              </h3>
+                              <span className="text-[10px] text-muted-foreground font-normal">
+                                {order.orderNumber || order.id}
                               </span>
+                              {order.createdByAdmin && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-800 font-medium">
+                                  Restaurant
+                                </span>
+                              )}
                             </div>
-                            <div className="flex justify-between pt-2 border-t font-semibold">
-                              <span>Total:</span>
-                              <span style={{ color: BRAND }}>Rp {order.total?.toLocaleString()}</span>
-                            </div>
-                          </div>
-                          
-                          {/* Payment Details */}
-                          {order.paymentDetails && (
-                            <div className="mt-3 pt-3 border-t">
-                              <div className="text-sm font-medium mb-1 text-green-900">Payment Details:</div>
-                              <div className="text-sm bg-green-50 border border-green-200 rounded-lg p-2 text-green-800">
-                                {order.paymentDetails}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Points Status */}
-                        <div>
-                          <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
-                            <span className="text-lg">⭐</span>
-                            Points Status
-                          </h4>
-                          <p className="text-sm" style={{ color: pointsStatus.color }}>
-                            {pointsStatus.message}
-                          </p>
-                        </div>
-
-                        {/* Order Info */}
-                        {order.address && (
-                          <div>
-                            <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
-                              <MapPin className="w-4 h-4" style={{ color: BRAND }} />
-                              Delivery Address
-                            </h4>
-                            <p className="text-sm text-muted-foreground">{order.address}</p>
-                          </div>
-                        )}
-
-                        {order.specialInstructions && (
-                          <div>
-                            <h4 className="font-semibold text-sm mb-2">📝 Special Instructions</h4>
-                            <p className="text-sm text-muted-foreground">{order.specialInstructions}</p>
-                          </div>
-                        )}
-
-                        {/* Cancellation Reason (if order was cancelled by admin) */}
-                        {order.status === "cancelled" && order.cancellationReason && (
-                          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                            <h4 className="font-semibold text-sm mb-2 text-red-900">❌ Cancellation Reason</h4>
-                            <p className="text-sm text-red-800">{order.cancellationReason}</p>
-                            {order.cancelledBy === "admin" && (
-                              <p className="text-xs text-red-700 mt-1">Cancelled by Restaurant</p>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Cancellation Info for Confirmed Orders */}
-                        {!canCancelOrder(order) && ['confirmed', 'cooking', 'ready', 'out_for_delivery'].includes(order.status) && (
-                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                            <p className="text-sm text-blue-800">
-                              ℹ️ This order has been confirmed by the restaurant and cannot be cancelled. Please contact us directly if you need to make changes.
+                            <p className="font-bold text-lg" style={{ color: isPaid ? '#1F2937' : badgeColor }}>
+                              Rp {order.total?.toLocaleString()}
                             </p>
                           </div>
-                        )}
 
-                        {/* Action Buttons */}
-                        <div className="flex gap-2 pt-2">
-                          {canCancelOrder(order) && (
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={() => handleCancelOrder(order.id)}
-                              disabled={cancelling === order.id}
-                              className="flex-1"
+                          {/* Row 2: Date + Payment Badge */}
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs text-gray-500">
+                              {formatDateTime(order.createdAt)}
+                            </p>
+                            <span 
+                              className="inline-block px-2.5 py-0.5 text-[11px] font-semibold rounded-full"
+                              style={{ backgroundColor: badgeBg, color: badgeColor }}
                             >
-                              {cancelling === order.id ? "Cancelling..." : "Cancel Order"}
-                            </Button>
+                              {badgeLabel}
+                            </span>
+                          </div>
+
+                          {/* Row 3: Items + Delivery + Order Status */}
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2 text-xs text-gray-500">
+                              <Package className="w-3.5 h-3.5" />
+                              <span>{order.items?.length || 1} item{(order.items?.length || 1) > 1 ? 's' : ''}</span>
+                              <span>•</span>
+                              <span className="capitalize">{order.deliveryMethod}</span>
+                            </div>
+                            <span 
+                              className="inline-block px-2.5 py-0.5 text-[11px] font-semibold rounded-full"
+                              style={{ 
+                                backgroundColor: statusInfo.bgColor,
+                                color: statusInfo.color 
+                              }}
+                            >
+                              {statusInfo.label}
+                            </span>
+                          </div>
+
+                          {/* Scheduled order banner */}
+                          {order.status === "scheduled" && order.scheduledAt && (
+                            <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+                              <Clock className="h-4 w-4 text-blue-600 shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold text-blue-800">Scheduled Order</p>
+                                <p className="text-[11px] text-blue-600">
+                                  Will be active on{" "}
+                                  {new Date(order.scheduledAt).toLocaleString("en-US", {
+                                    weekday: "short",
+                                    month: "short",
+                                    day: "numeric",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}
+                                </p>
+                              </div>
+                            </div>
                           )}
-                          
-                          {isActive && (
-                            <Button
-                              size="sm"
+
+                          {/* Track button for active orders */}
+                          {isActive && order.status !== "scheduled" && (
+                            <button
                               onClick={() => handleViewTracking(order.id)}
-                              className="flex-1"
-                              style={{ backgroundColor: BRAND }}
+                              className="w-full mb-2 py-1.5 text-xs font-semibold rounded-lg border transition-colors"
+                              style={{ 
+                                color: BRAND,
+                                borderColor: BRAND,
+                                backgroundColor: 'rgba(217, 26, 96, 0.03)'
+                              }}
                             >
                               Track Order
-                            </Button>
+                            </button>
                           )}
-                          
+
+                          {/* Rating Display / Rate Button */}
                           {(order.status === 'delivered' || order.status === 'closed') && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleViewTracking(order.id)}
-                              className="flex-1"
-                            >
-                              View Receipt
-                            </Button>
+                            <div className="mb-2">
+                              {order.rating ? (
+                                <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+                                  <div className="flex items-center gap-0.5">
+                                    {[1, 2, 3, 4, 5].map((s) => (
+                                      <Star
+                                        key={s}
+                                        className="w-3.5 h-3.5"
+                                        fill={s <= order.rating! ? '#F59E0B' : 'none'}
+                                        stroke={s <= order.rating! ? '#F59E0B' : '#D1D5DB'}
+                                      />
+                                    ))}
+                                  </div>
+                                  <span className="text-xs font-semibold text-amber-700">
+                                    {order.rating === 5 ? 'Excellent' : order.rating === 4 ? 'Great' : order.rating === 3 ? 'Good' : order.rating === 2 ? 'Fair' : 'Poor'}
+                                  </span>
+                                  {order.ratingComment && (
+                                    <span className="text-[10px] text-amber-600 italic truncate flex-1 text-right">"{order.ratingComment}"</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => handleViewTracking(order.id)}
+                                  className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-lg border border-amber-300 text-amber-700 bg-amber-50/50 hover:bg-amber-100 transition-colors"
+                                >
+                                  <Star className="w-3.5 h-3.5" /> Rate this order
+                                </button>
+                              )}
+                            </div>
                           )}
-                          
-                          {order.status === 'closed' && (
-                            <Button
-                              size="sm"
-                              onClick={() => handleReorder(order)}
-                              disabled={reordering === order.id}
-                              className="flex-1 flex items-center justify-center gap-1"
-                              style={{ backgroundColor: BRAND }}
-                            >
-                              <RotateCw className="w-4 h-4" />
-                              {reordering === order.id ? "Reordering..." : "Reorder"}
-                            </Button>
-                          )}
+
+                          {/* Expand/Collapse Button */}
+                          <button
+                            onClick={() => toggleExpanded(order.id)}
+                            className="w-full flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-lg transition-colors"
+                            style={{ 
+                              color: BRAND,
+                              backgroundColor: 'rgba(217, 26, 96, 0.05)'
+                            }}
+                          >
+                            {isExpanded ? (
+                              <>
+                                Hide Details
+                                <ChevronUp className="w-4 h-4" />
+                              </>
+                            ) : (
+                              <>
+                                View Details
+                                <ChevronDown className="w-4 h-4" />
+                              </>
+                            )}
+                          </button>
                         </div>
+
+                        {/* Expanded View */}
+                        {isExpanded && (
+                          <div className="px-4 pb-4 pt-2 border-t space-y-4">
+                            {/* Items List */}
+                            <div>
+                              <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                                <Package className="w-4 h-4" style={{ color: BRAND }} />
+                                Items Ordered ({order.items?.length || 1})
+                              </h4>
+                              <div className="space-y-2">
+                                {order.items && order.items.length > 0 ? (
+                                  order.items.map((item, idx) => (
+                                    <div key={idx} className="flex flex-col gap-1 text-sm bg-gray-50 p-2 rounded">
+                                      <div className="flex justify-between">
+                                        <span>
+                                          {(item as any).name || item.title}
+                                          {item.category && <span className="text-muted-foreground"> ({item.category})</span>}
+                                          {' '}<span className="text-muted-foreground">× {item.quantity}</span>
+                                          {item.discountPercentage && item.discountPercentage > 0 && (
+                                            <span className="ml-2 text-xs font-semibold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
+                                              {item.discountPercentage}% OFF
+                                            </span>
+                                          )}
+                                        </span>
+                                        <span className="font-medium">Rp {(item.price * item.quantity).toLocaleString()}</span>
+                                      </div>
+                                      {item.discountPercentage && item.discountPercentage > 0 && item.originalPrice && (
+                                        <div className="text-xs text-gray-500">
+                                          Original: <span className="line-through">Rp {(item.originalPrice * item.quantity).toLocaleString()}</span>
+                                          {' → '}You saved: Rp {((item.originalPrice - item.price) * item.quantity).toLocaleString()}
+                                        </div>
+                                      )}
+                                      {(item as any).notes && (
+                                        <p className="text-xs text-blue-600 italic">Note: {(item as any).notes}</p>
+                                      )}
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="flex justify-between text-sm bg-gray-50 p-2 rounded">
+                                    <span>{order.itemTitle}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Payment Summary */}
+                            <div>
+                              <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                                <span className="text-lg">💰</span>
+                                Payment Summary
+                              </h4>
+                              <div className="space-y-1 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Subtotal:</span>
+                                  <span>Rp {order.subtotal?.toLocaleString()}</span>
+                                </div>
+                                {(order.promoDiscount != null && order.promoDiscount > 0) && (
+                                  <div className="flex justify-between">
+                                    <span className="text-green-600 flex items-center gap-1">
+                                      <Ticket className="w-3 h-3" />
+                                      Promo {order.promoCode ? `(${order.promoCode})` : ''}
+                                    </span>
+                                    <span className="text-green-600 font-medium">-Rp {order.promoDiscount.toLocaleString()}</span>
+                                  </div>
+                                )}
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Tax ({order.taxRate ? `${order.taxRate}%` : 'PPN'}):</span>
+                                  <span>Rp {order.tax?.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">Delivery Fee:</span>
+                                  <span>
+                                    {order.deliveryFee != null && order.deliveryFee >= 0 && (order.deliveryFee > 0 || order.createdByAdmin)
+                                      ? (order.deliveryFee === 0 ? <span className="text-green-600 font-medium">Free</span> : `Rp ${order.deliveryFee.toLocaleString()}`)
+                                      : <span className="text-amber-600 italic text-xs">To be calculated</span>
+                                    }
+                                  </span>
+                                </div>
+                                <div className="flex justify-between pt-2 border-t font-semibold">
+                                  <span>Total:</span>
+                                  <span style={{ color: BRAND }}>Rp {order.total?.toLocaleString()}</span>
+                                </div>
+                              </div>
+                              
+                              {/* Payment Details */}
+                              {order.paymentDetails && (
+                                <div className="mt-3 pt-3 border-t">
+                                  <div className="text-sm font-medium mb-1 text-green-900">Payment Details:</div>
+                                  <div className="text-sm bg-green-50 border border-green-200 rounded-lg p-2 text-green-800">
+                                    {order.paymentDetails}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Points Status */}
+                            <div>
+                              <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                                <span className="text-lg">⭐</span>
+                                Points Status
+                              </h4>
+                              <p className="text-sm" style={{ color: pointsStatus.color }}>
+                                {pointsStatus.message}
+                              </p>
+                            </div>
+
+                            {/* Order Info */}
+                            {order.address && (
+                              <div>
+                                <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                                  <MapPin className="w-4 h-4" style={{ color: BRAND }} />
+                                  Delivery Address
+                                </h4>
+                                <p className="text-sm text-muted-foreground">{order.address}</p>
+                              </div>
+                            )}
+
+                            {order.specialInstructions && (
+                              <div>
+                                <h4 className="font-semibold text-sm mb-2">📝 Special Instructions</h4>
+                                <p className="text-sm text-muted-foreground">{order.specialInstructions}</p>
+                              </div>
+                            )}
+
+                            {/* Cancellation Reason (if order was cancelled by admin) */}
+                            {order.status === "cancelled" && order.cancellationReason && (
+                              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                                <h4 className="font-semibold text-sm mb-2 text-red-900">❌ Cancellation Reason</h4>
+                                <p className="text-sm text-red-800">{order.cancellationReason}</p>
+                                {order.cancelledBy === "admin" && (
+                                  <p className="text-xs text-red-700 mt-1">Cancelled by Restaurant</p>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Cancellation Info for Confirmed Orders */}
+                            {!canCancelOrder(order) && ['confirmed', 'cooking', 'ready', 'out_for_delivery'].includes(order.status) && (
+                              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                <p className="text-sm text-blue-800">
+                                  ℹ️ This order has been confirmed by the restaurant and cannot be cancelled. Please contact us directly if you need to make changes.
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Action Buttons */}
+                            <div className="flex gap-2 pt-2">
+                              {canCancelOrder(order) && (
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => handleCancelOrder(order.id)}
+                                  disabled={cancelling === order.id}
+                                  className="flex-1"
+                                >
+                                  {cancelling === order.id ? "Cancelling..." : "Cancel Order"}
+                                </Button>
+                              )}
+                              
+                              {isActive && (
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleViewTracking(order.id)}
+                                  className="flex-1"
+                                  style={{ backgroundColor: BRAND }}
+                                >
+                                  Track Order
+                                </Button>
+                              )}
+                              
+                              {(order.status === 'delivered' || order.status === 'closed') && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleViewTracking(order.id)}
+                                  className="flex-1"
+                                >
+                                  View Receipt
+                                </Button>
+                              )}
+                              
+                              {order.status === 'closed' && (
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleReorder(order)}
+                                  disabled={reordering === order.id}
+                                  className="flex-1 flex items-center justify-center gap-1"
+                                  style={{ backgroundColor: BRAND }}
+                                >
+                                  <RotateCw className="w-4 h-4" />
+                                  {reordering === order.id ? "Reordering..." : "Reorder"}
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
+                    );
+                  })}
+
+                  {/* Pagination Controls */}
+                  {filteredTotalPages > 1 && (
+                    <div className="flex items-center justify-between mt-4">
+                      <button
+                        onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                        disabled={safePage <= 1}
+                        className="flex items-center gap-1 text-sm font-medium disabled:opacity-40"
+                        style={{ color: BRAND }}
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                        Previous
+                      </button>
+                      <div className="text-sm text-gray-500">
+                        Page {safePage} of {filteredTotalPages} ({filteredOrders.length})
+                      </div>
+                      <button
+                        onClick={() => setCurrentPage(Math.min(filteredTotalPages, currentPage + 1))}
+                        disabled={safePage >= filteredTotalPages}
+                        className="flex items-center gap-1 text-sm font-medium disabled:opacity-40"
+                        style={{ color: BRAND }}
+                      >
+                        Next
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
+        
       </main>
     </div>
   );
