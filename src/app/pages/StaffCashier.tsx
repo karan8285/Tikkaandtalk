@@ -12,11 +12,13 @@ import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Label } from "../components/ui/label";
+import { Textarea } from "../components/ui/textarea";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin } from "lucide-react";
+import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin, MessageSquare, Save, Filter, X, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
+import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG, BRAND_COLOR } from "../lib/config";
 import { useNewOrderAlert } from "../lib/useNewOrderAlert";
 
@@ -51,7 +53,11 @@ interface Order {
   paidAmount?: number;
   paymentHistory?: Array<{ amount: number; date: string; method?: string; note?: string }>;
   promoDiscount?: number;
+  adminMessage?: string;
+  adminMessageAt?: string;
 }
+
+const ORDER_STATUSES = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
 
 export default function StaffCashier() {
   const navigate = useNavigate();
@@ -61,6 +67,8 @@ export default function StaffCashier() {
   const [activeTab, setActiveTab] = useState<"active" | "closed">("active");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [paymentFilter, setPaymentFilter] = useState<string>("all");
+  const [deliveryFilter, setDeliveryFilter] = useState<string>("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalFiltered, setTotalFiltered] = useState(0);
@@ -71,6 +79,10 @@ export default function StaffCashier() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentLoading, setPaymentLoading] = useState(false);
+
+  // Admin messages
+  const [adminMessages, setAdminMessages] = useState<Record<string, string>>({});
+  const [savingMessage, setSavingMessage] = useState<string | null>(null);
 
   const { checkForNewOrders } = useNewOrderAlert({ label: "Cashier" });
   const accessTokenRef = useRef(accessToken);
@@ -99,7 +111,7 @@ export default function StaffCashier() {
     try {
       const params = new URLSearchParams({
         page: currentPage.toString(), limit: "15",
-        status: "all", payment: "all", delivery: "all", date: "all", tab: activeTab,
+        status: "all", payment: paymentFilter, delivery: deliveryFilter, date: "all", tab: activeTab,
       });
       if (debouncedSearch) params.set("search", debouncedSearch);
 
@@ -124,9 +136,9 @@ export default function StaffCashier() {
     } finally {
       setLoading(false);
     }
-  }, [currentPage, debouncedSearch, activeTab, checkForNewOrders]);
+  }, [currentPage, debouncedSearch, activeTab, paymentFilter, deliveryFilter, checkForNewOrders]);
 
-  useEffect(() => { if (!loading) fetchOrders(); }, [currentPage, debouncedSearch, activeTab]);
+  useEffect(() => { if (!loading) fetchOrders(); }, [currentPage, debouncedSearch, activeTab, paymentFilter, deliveryFilter]);
 
   const handleAddPayment = async () => {
     if (!paymentOrder || !paymentAmount) return;
@@ -179,6 +191,58 @@ export default function StaffCashier() {
       }
     } catch (error: any) {
       toast.error(error.message);
+    }
+  };
+
+  // Update order status
+  const updateOrderStatus = async (orderId: string, newStatus: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": accessToken || "",
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (response.ok) {
+        toast.success(`Order updated to ${STATUS_LABELS[newStatus]}`);
+        fetchOrders();
+      } else {
+        const err = await response.json().catch(() => ({}));
+        toast.error(err.error || "Failed to update order status");
+      }
+    } catch (error: any) {
+      toast.error(error.message);
+    }
+  };
+
+  // Save admin message for customer
+  const saveAdminMessage = async (orderId: string, message: string) => {
+    try {
+      setSavingMessage(orderId);
+      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": accessToken || "",
+        },
+        body: JSON.stringify({ adminMessage: message }),
+      });
+      if (response.ok) {
+        toast.success("Message saved — visible to customer");
+        setAdminMessages(prev => { const n = { ...prev }; delete n[orderId]; return n; });
+        fetchOrders();
+      } else {
+        const err = await response.json().catch(() => ({}));
+        toast.error(err.error || "Failed to save message");
+      }
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setSavingMessage(null);
     }
   };
 
@@ -251,6 +315,48 @@ export default function StaffCashier() {
 
         {/* Search */}
         <Input placeholder="Search by order #, phone..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+
+        {/* Filters Row */}
+        <div className="flex flex-wrap gap-2 items-center">
+          <div className="flex items-center gap-1.5">
+            <Filter className="w-4 h-4 text-gray-400" />
+            <span className="text-xs font-medium text-gray-500">Filters:</span>
+          </div>
+          <Select value={paymentFilter} onValueChange={(v) => { setPaymentFilter(v); setCurrentPage(1); }}>
+            <SelectTrigger className="h-8 w-[130px] text-xs">
+              <CircleDollarSign className="w-3.5 h-3.5 mr-1" />
+              <SelectValue placeholder="Payment" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all" className="text-xs">All Payments</SelectItem>
+              <SelectItem value="unpaid" className="text-xs">Unpaid</SelectItem>
+              <SelectItem value="partial" className="text-xs">Partial</SelectItem>
+              <SelectItem value="paid" className="text-xs">Paid</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={deliveryFilter} onValueChange={(v) => { setDeliveryFilter(v); setCurrentPage(1); }}>
+            <SelectTrigger className="h-8 w-[130px] text-xs">
+              <Truck className="w-3.5 h-3.5 mr-1" />
+              <SelectValue placeholder="Delivery" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all" className="text-xs">All Methods</SelectItem>
+              <SelectItem value="delivery" className="text-xs">Delivery</SelectItem>
+              <SelectItem value="pickup" className="text-xs">Pickup</SelectItem>
+              <SelectItem value="dine_in" className="text-xs">Dine In</SelectItem>
+            </SelectContent>
+          </Select>
+          {(paymentFilter !== "all" || deliveryFilter !== "all") && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs text-gray-500 hover:text-gray-700"
+              onClick={() => { setPaymentFilter("all"); setDeliveryFilter("all"); setCurrentPage(1); }}
+            >
+              <X className="w-3.5 h-3.5 mr-1" /> Clear
+            </Button>
+          )}
+        </div>
 
         {/* Orders */}
         {loading ? (
@@ -341,6 +447,97 @@ export default function StaffCashier() {
                           <span>{new Date(ph.date).toLocaleTimeString()}</span>
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {/* Order Status Update */}
+                  {order.status !== 'cancelled' && order.status !== 'closed' && (
+                    <div className="mt-3 pt-3 border-t">
+                      <Label className="text-xs font-medium mb-1.5 block">Update Status</Label>
+                      <Select value={order.status} onValueChange={(v) => updateOrderStatus(order.id, v)}>
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ORDER_STATUSES.filter(s => s !== 'cancelled').map(s => (
+                            <SelectItem key={s} value={s} className="text-xs">{STATUS_LABELS[s]}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {/* Admin Message to Customer */}
+                  <div className="mt-3 pt-3 border-t">
+                    <Label className="text-xs font-medium mb-1.5 flex items-center gap-1.5">
+                      <MessageSquare className="w-3.5 h-3.5" style={{ color: BRAND_COLOR }} />
+                      Message to Customer
+                    </Label>
+                    <Textarea
+                      value={adminMessages[order.id] ?? order.adminMessage ?? ""}
+                      onChange={(e) => setAdminMessages(prev => ({ ...prev, [order.id]: e.target.value }))}
+                      placeholder="e.g. Your order is being prepared with extra care!"
+                      rows={2}
+                      className="text-xs resize-none mt-1"
+                    />
+                    <div className="flex gap-2 mt-1.5">
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs text-white"
+                        style={{ backgroundColor: BRAND_COLOR }}
+                        disabled={savingMessage === order.id || (adminMessages[order.id] === undefined && !order.adminMessage)}
+                        onClick={() => saveAdminMessage(order.id, adminMessages[order.id] ?? order.adminMessage ?? "")}
+                      >
+                        <Save className="w-3 h-3 mr-1" />
+                        {savingMessage === order.id ? "Saving..." : "Save"}
+                      </Button>
+                      {(adminMessages[order.id] ?? order.adminMessage) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs text-red-600 border-red-200 hover:bg-red-50"
+                          disabled={savingMessage === order.id}
+                          onClick={() => {
+                            setAdminMessages(prev => ({ ...prev, [order.id]: "" }));
+                            saveAdminMessage(order.id, "");
+                          }}
+                        >
+                          Clear
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Share Tracking Link */}
+                  {order.orderNumber && (
+                    <div className="mt-3 pt-3 border-t">
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          onClick={() => {
+                            const trackingUrl = `${window.location.origin}/track/${order.orderNumber}`;
+                            navigator.clipboard.writeText(trackingUrl);
+                            toast.success("Tracking link copied!");
+                          }}
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                        >
+                          <Share2 className="w-3.5 h-3.5 mr-1" /> Copy Link
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            const trackingUrl = `${window.location.origin}/track/${order.orderNumber}`;
+                            const message = `Track your order ${order.orderNumber} here: ${trackingUrl}`;
+                            const whatsappUrl = `https://wa.me/${formatPhoneForWhatsApp(order.phone)}?text=${encodeURIComponent(message)}`;
+                            window.open(whatsappUrl, '_blank');
+                          }}
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs bg-green-50 hover:bg-green-100"
+                        >
+                          WhatsApp
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </Card>

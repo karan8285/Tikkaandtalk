@@ -298,6 +298,8 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   const [ordersPerPage] = useState(10);
   const [orderSubTab, setOrderSubTab] = useState<"active" | "closed">("active");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [paymentFilter, setPaymentFilter] = useState<string>("all");
+  const [deliveryFilter, setDeliveryFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -313,6 +315,13 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   const [adminMessages, setAdminMessages] = useState<Record<string, string>>({});
   const [savingMessage, setSavingMessage] = useState<string | null>(null);
 
+  // Payment management
+  const [addPaymentOrderId, setAddPaymentOrderId] = useState<string | null>(null);
+  const [addPaymentAmount, setAddPaymentAmount] = useState("");
+  const [addPaymentMethod, setAddPaymentMethod] = useState("");
+  const [addPaymentNote, setAddPaymentNote] = useState("");
+  const [paymentLoading, setPaymentLoading] = useState<string | null>(null);
+
   const { checkForNewOrders } = useNewOrderAlert({ label: "Admin" });
   const accessTokenRef = useRef(accessToken);
   accessTokenRef.current = accessToken;
@@ -327,7 +336,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
     try {
       const params = new URLSearchParams({
         page: currentPage.toString(), limit: ordersPerPage.toString(),
-        status: statusFilter, payment: "all", delivery: "all", date: "all", tab: orderSubTab,
+        status: statusFilter, payment: paymentFilter, delivery: deliveryFilter, date: "all", tab: orderSubTab,
       });
       if (debouncedSearch) params.set("search", debouncedSearch);
 
@@ -352,7 +361,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
     } finally {
       setLoading(false);
     }
-  }, [currentPage, ordersPerPage, statusFilter, debouncedSearch, orderSubTab, checkForNewOrders]);
+  }, [currentPage, ordersPerPage, statusFilter, paymentFilter, deliveryFilter, debouncedSearch, orderSubTab, checkForNewOrders]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
@@ -392,6 +401,44 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
       }
     } catch (error: any) { toast.error(error.message); }
     finally { setSavingMessage(null); }
+  };
+
+  const handleAddPayment = async (orderId: string, amount: number, method?: string, note?: string) => {
+    try {
+      setPaymentLoading(orderId);
+      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
+        body: JSON.stringify({ addPayment: { amount, method, note } }),
+      });
+      if (response.ok) {
+        toast.success(`Payment of ${formatIDR(amount)} recorded`);
+        fetchOrders();
+      } else {
+        const err = await response.json().catch(() => ({}));
+        toast.error(err.error || "Failed to record payment");
+      }
+    } catch (error: any) { toast.error(error.message); }
+    finally { setPaymentLoading(null); }
+  };
+
+  const handlePaymentStatusChange = async (orderId: string, newStatus: string) => {
+    try {
+      setPaymentLoading(orderId);
+      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
+        body: JSON.stringify({ paymentStatus: newStatus, paymentReceived: newStatus === 'paid' }),
+      });
+      if (response.ok) {
+        toast.success(`Payment status updated to ${newStatus}`);
+        fetchOrders();
+      } else {
+        const err = await response.json().catch(() => ({}));
+        toast.error(err.error || "Failed to update payment status");
+      }
+    } catch (error: any) { toast.error(error.message); }
+    finally { setPaymentLoading(null); }
   };
 
   // Bulk action handlers
@@ -582,6 +629,59 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
         onChange={(e) => setSearchQuery(e.target.value)}
       />
 
+      {/* Filters Row */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="flex items-center gap-1.5">
+          <Filter className="w-4 h-4 text-gray-400" />
+          <span className="text-xs font-medium text-gray-500">Filters:</span>
+        </div>
+        <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}>
+          <SelectTrigger className="h-8 w-[130px] text-xs">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" className="text-xs">All Status</SelectItem>
+            {ORDER_STATUSES.map(s => (
+              <SelectItem key={s} value={s} className="text-xs">{STATUS_LABELS[s]}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={paymentFilter} onValueChange={(v) => { setPaymentFilter(v); setCurrentPage(1); }}>
+          <SelectTrigger className="h-8 w-[130px] text-xs">
+            <CircleDollarSign className="w-3.5 h-3.5 mr-1" />
+            <SelectValue placeholder="Payment" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" className="text-xs">All Payments</SelectItem>
+            <SelectItem value="unpaid" className="text-xs">Unpaid</SelectItem>
+            <SelectItem value="partial" className="text-xs">Partial</SelectItem>
+            <SelectItem value="paid" className="text-xs">Paid</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={deliveryFilter} onValueChange={(v) => { setDeliveryFilter(v); setCurrentPage(1); }}>
+          <SelectTrigger className="h-8 w-[130px] text-xs">
+            <Truck className="w-3.5 h-3.5 mr-1" />
+            <SelectValue placeholder="Delivery" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" className="text-xs">All Methods</SelectItem>
+            <SelectItem value="delivery" className="text-xs">Delivery</SelectItem>
+            <SelectItem value="pickup" className="text-xs">Pickup</SelectItem>
+            <SelectItem value="dine_in" className="text-xs">Dine In</SelectItem>
+          </SelectContent>
+        </Select>
+        {(statusFilter !== "all" || paymentFilter !== "all" || deliveryFilter !== "all") && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs text-gray-500 hover:text-gray-700"
+            onClick={() => { setStatusFilter("all"); setPaymentFilter("all"); setDeliveryFilter("all"); setCurrentPage(1); }}
+          >
+            <X className="w-3.5 h-3.5 mr-1" /> Clear
+          </Button>
+        )}
+      </div>
+
       {/* Bulk Actions Bar — active tab only */}
       {orderSubTab === "active" && orders.length > 0 && (
         <Card className="p-4">
@@ -684,6 +784,155 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
               )}
             </div>
 
+            {/* Payment Status Management */}
+            {(() => {
+              const effectivePS = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+              const isPaid = effectivePS === 'paid';
+              const paidSoFar = order.paidAmount || 0;
+              const orderTotal = order.total || 0;
+              const remaining = orderTotal - paidSoFar;
+              return (
+                <div className="mt-3 pt-3 border-t">
+                  <Label className="text-xs font-medium mb-1.5 block">Payment Status</Label>
+                  <div className="flex gap-1.5">
+                    {(['unpaid', 'partial', 'paid'] as const).map((ps) => {
+                      const isActive = effectivePS === ps;
+                      const isLockedBecausePaid = isPaid && ps !== 'paid';
+                      const isPaidLocked = ps === 'paid' && paidSoFar < orderTotal;
+                      const isPartialLocked = ps === 'partial';
+                      const isLocked = isPaidLocked || isPartialLocked || isLockedBecausePaid;
+                      const colors = {
+                        unpaid: { bg: 'bg-red-50 border-red-300 text-red-700', active: 'bg-red-500 text-white border-red-500' },
+                        partial: { bg: 'bg-amber-50 border-amber-300 text-amber-700', active: 'bg-amber-500 text-white border-amber-500' },
+                        paid: { bg: 'bg-green-50 border-green-300 text-green-700', active: 'bg-green-500 text-white border-green-500' },
+                      };
+                      return (
+                        <button
+                          key={ps}
+                          onClick={() => { if (!isLocked) handlePaymentStatusChange(order.id, ps); }}
+                          disabled={isLocked || paymentLoading === order.id}
+                          className={`flex-1 py-1.5 px-2 text-xs font-semibold rounded-lg border transition-all ${
+                            isActive ? colors[ps].active : isLocked ? 'bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed' : colors[ps].bg
+                          }`}
+                        >
+                          {ps === 'unpaid' ? 'Unpaid' : ps === 'partial' ? 'Partial' : 'Paid'}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {isPaid && (
+                    <p className="mt-1.5 text-[10px] text-green-600 font-medium">Fully paid — payment status is locked.</p>
+                  )}
+                  {!isPaid && paidSoFar < orderTotal && order.status !== 'cancelled' && (
+                    <p className="mt-1.5 text-[10px] text-gray-500 italic">Use "Add Payment" to record payments. "Paid" unlocks when collected ≥ total.</p>
+                  )}
+
+                  {/* Paid Amount Display */}
+                  {(effectivePS === 'partial' || (paidSoFar > 0 && !isPaid)) && (
+                    <div className="mt-2 text-xs bg-amber-50 border border-amber-200 rounded-lg p-2">
+                      <span className="font-medium text-amber-800">
+                        Collected: {formatIDR(paidSoFar)} of {formatIDR(orderTotal)}
+                      </span>
+                      <span className="text-amber-600 ml-1">
+                        ({formatIDR(remaining)} remaining)
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Payment History Log */}
+                  {order.paymentHistory && order.paymentHistory.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      <div className="text-[10px] uppercase tracking-wider font-medium text-gray-500">Payment History</div>
+                      {order.paymentHistory.map((entry, idx) => (
+                        <div key={idx} className="flex items-center justify-between text-xs bg-gray-50 rounded px-2 py-1 border">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-green-600 font-semibold">+{formatIDR(entry.amount)}</span>
+                            {entry.method && <span className="text-gray-400">• {entry.method}</span>}
+                          </div>
+                          <span className="text-gray-400">{new Date(entry.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Add Payment Button / Form */}
+                  {!isPaid && order.status !== 'cancelled' && (
+                    <>
+                      {addPaymentOrderId === order.id ? (
+                        <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+                          {(() => {
+                            const enteredAmt = Number(addPaymentAmount) || 0;
+                            const exceedsRemaining = enteredAmt > remaining;
+                            return (
+                              <>
+                                <div className="flex items-center justify-between">
+                                  <div className="text-xs font-semibold text-blue-800">Add Payment</div>
+                                  <div className="text-[10px] text-blue-600 font-medium">Remaining: {formatIDR(remaining)}</div>
+                                </div>
+                                <Input
+                                  type="number"
+                                  placeholder={`Amount (max ${formatIDR(remaining)})`}
+                                  value={addPaymentAmount}
+                                  onChange={(e) => setAddPaymentAmount(e.target.value)}
+                                  max={remaining}
+                                  min={1}
+                                  className={`h-8 text-sm ${exceedsRemaining ? 'border-red-400 bg-red-50' : ''}`}
+                                />
+                                {exceedsRemaining && (
+                                  <p className="text-[10px] text-red-600 font-medium">Amount exceeds remaining balance. Max: {formatIDR(remaining)}</p>
+                                )}
+                              </>
+                            );
+                          })()}
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input type="text" placeholder="Method (Cash, Transfer)" value={addPaymentMethod} onChange={(e) => setAddPaymentMethod(e.target.value)} className="h-8 text-xs" />
+                            <Input type="text" placeholder="Note (optional)" value={addPaymentNote} onChange={(e) => setAddPaymentNote(e.target.value)} className="h-8 text-xs" />
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              className="flex-1 h-7 text-xs"
+                              disabled={!addPaymentAmount || Number(addPaymentAmount) <= 0 || Number(addPaymentAmount) > remaining || paymentLoading === order.id}
+                              onClick={async () => {
+                                const amt = Number(addPaymentAmount);
+                                if (amt > 0 && amt <= remaining) {
+                                  await handleAddPayment(order.id, amt, addPaymentMethod || undefined, addPaymentNote || undefined);
+                                  setAddPaymentOrderId(null);
+                                  setAddPaymentAmount("");
+                                  setAddPaymentMethod("");
+                                  setAddPaymentNote("");
+                                }
+                              }}
+                            >
+                              {paymentLoading === order.id ? "Saving..." : "Save Payment"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => { setAddPaymentOrderId(null); setAddPaymentAmount(""); setAddPaymentMethod(""); setAddPaymentNote(""); }}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-2 w-full h-7 text-xs border-dashed"
+                          onClick={() => { setAddPaymentOrderId(order.id); setAddPaymentAmount(""); setAddPaymentMethod(""); setAddPaymentNote(""); }}
+                        >
+                          <Banknote className="w-3.5 h-3.5 mr-1" /> Add Payment
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Admin Message to Customer */}
             <div className="mt-3 pt-3 border-t">
               <Label className="text-xs font-medium mb-1.5 flex items-center gap-1.5">
@@ -767,6 +1016,39 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
               <Clock className="w-3 h-3" />
               {expandedTimeline === order.id ? "Hide Timeline" : "View Timeline"}
             </button>
+
+            {/* Share Tracking Link */}
+            {order.orderNumber && (
+              <div className="mt-3 pt-3 border-t">
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    onClick={() => {
+                      const trackingUrl = `${window.location.origin}/track/${order.orderNumber}`;
+                      navigator.clipboard.writeText(trackingUrl);
+                      toast.success("Tracking link copied!");
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                  >
+                    <Share2 className="w-3.5 h-3.5 mr-1" /> Copy Link
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      const trackingUrl = `${window.location.origin}/track/${order.orderNumber}`;
+                      const message = `Track your order ${order.orderNumber} here: ${trackingUrl}`;
+                      const whatsappUrl = `https://wa.me/${formatPhoneForWhatsApp(order.phone)}?text=${encodeURIComponent(message)}`;
+                      window.open(whatsappUrl, '_blank');
+                    }}
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs bg-green-50 hover:bg-green-100"
+                  >
+                    WhatsApp
+                  </Button>
+                </div>
+              </div>
+            )}
           </Card>
         ))}
 
