@@ -13,7 +13,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, Camera, MessageSquare, Save } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -35,6 +35,7 @@ import { CustomMenuAdmin } from "../components/CustomMenuAdmin";
 import { getShortOrderId } from "../lib/orderUtils";
 import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG } from "../lib/config";
+import { OrderTimeline } from "../components/OrderTimeline";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -84,6 +85,8 @@ interface Order {
   promoDiscount?: number;
   promoVoucherTitle?: string;
   scheduledAt?: string;
+  adminMessage?: string;
+  adminMessageAt?: string;
 }
 
 const ORDER_STATUSES = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
@@ -147,6 +150,7 @@ export default function Admin() {
   const [addPaymentAmount, setAddPaymentAmount] = useState("");
   const [addPaymentMethod, setAddPaymentMethod] = useState("");
   const [addPaymentNote, setAddPaymentNote] = useState("");
+  const [expandedTimeline, setExpandedTimeline] = useState<string | null>(null);
 
   // Order sub-tab: "active" vs "closed"
   const [orderSubTab, setOrderSubTab] = useState<"active" | "closed">("active");
@@ -477,6 +481,51 @@ export default function Admin() {
         paymentDetails: details
       }
     }));
+  };
+
+  const handleAdminMessageChange = (orderId: string, message: string) => {
+    setOrderChanges(prev => ({
+      ...prev,
+      [orderId]: {
+        ...prev[orderId],
+        adminMessage: message
+      }
+    }));
+  };
+
+  // Quick-save just the admin message for an order
+  const saveAdminMessage = async (orderId: string, message: string) => {
+    try {
+      setSubmitting(orderId);
+      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": accessToken,
+        },
+        body: JSON.stringify({ adminMessage: message }),
+      });
+      if (response.ok) {
+        toast.success("Message saved — visible to customer");
+        setOrderChanges(prev => {
+          const newChanges = { ...prev };
+          if (newChanges[orderId]) {
+            delete newChanges[orderId].adminMessage;
+            if (Object.keys(newChanges[orderId]).length === 0) delete newChanges[orderId];
+          }
+          return newChanges;
+        });
+        fetchOrders();
+      } else {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        toast.error(`Failed to save message: ${errorData.error || response.status}`);
+      }
+    } catch (error: any) {
+      toast.error(`Failed to save message: ${error.message}`);
+    } finally {
+      setSubmitting(null);
+    }
   };
 
   const handleAddPayment = async (orderId: string, amount: number, method?: string, note?: string) => {
@@ -1622,6 +1671,47 @@ export default function Admin() {
                           </div>
                         )}
 
+                        {/* Admin Message Display (read-only on closed/cancelled) */}
+                        {order.adminMessage && (orderSubTab === "closed" || order.status === "cancelled") && (
+                          <div className="text-sm bg-blue-50 border border-blue-200 rounded-lg p-3">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-medium text-blue-900 flex items-center gap-1.5">
+                                <MessageSquare className="w-4 h-4" />
+                                Message to Customer
+                              </span>
+                              {order.adminMessageAt && (
+                                <span className="text-xs text-blue-500">
+                                  {new Date(order.adminMessageAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-blue-800">{order.adminMessage}</p>
+                          </div>
+                        )}
+
+                        {/* Proof of Delivery Display */}
+                        {(order as any).proofOfDeliveryUrl && (
+                          <div className="text-sm bg-green-50 border border-green-200 rounded-lg p-3">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="font-medium text-green-900 flex items-center gap-1.5">
+                                <Camera className="w-4 h-4" />
+                                Proof of Delivery
+                              </span>
+                              {(order as any).proofOfDeliveryAt && (
+                                <span className="text-xs text-green-600">
+                                  {new Date((order as any).proofOfDeliveryAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                </span>
+                              )}
+                            </div>
+                            <img
+                              src={(order as any).proofOfDeliveryUrl}
+                              alt="Proof of delivery"
+                              className="w-full max-h-48 object-cover rounded-md border border-green-300 cursor-pointer hover:opacity-90 transition-opacity"
+                              onClick={() => window.open((order as any).proofOfDeliveryUrl, '_blank')}
+                            />
+                          </div>
+                        )}
+
                         {/* Status Update and Payment — hidden on closed sub-tab */}
                         {orderSubTab === "active" && !["cancelled"].includes(order.status) && (
                           <div className="pt-2 border-t space-y-3">
@@ -1644,6 +1734,58 @@ export default function Admin() {
                               </Select>
                             </div>
                             
+                            {/* Admin Message to Customer */}
+                            <div>
+                              <Label className="text-sm font-medium mb-1.5 flex items-center gap-1.5">
+                                <MessageSquare className="w-3.5 h-3.5" style={{ color: BRAND }} />
+                                Message to Customer
+                              </Label>
+                              <p className="text-[10px] text-gray-500 mb-1.5">
+                                This message will be visible to the customer on their order tracking page.
+                              </p>
+                              <Textarea
+                                value={orderChanges[order.id]?.adminMessage ?? order.adminMessage ?? ""}
+                                onChange={(e) => handleAdminMessageChange(order.id, e.target.value)}
+                                placeholder="e.g. Your order is being prepared with extra care! Expected delivery by 7:30 PM."
+                                rows={2}
+                                className="text-sm resize-none"
+                              />
+                              {order.adminMessageAt && !(orderChanges[order.id]?.adminMessage !== undefined) && (
+                                <p className="text-[10px] text-gray-400 mt-1">
+                                  Last updated: {new Date(order.adminMessageAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                </p>
+                              )}
+                              <div className="flex gap-2 mt-2">
+                                <Button
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  style={{ backgroundColor: BRAND }}
+                                  disabled={submitting === order.id || (orderChanges[order.id]?.adminMessage === undefined && !order.adminMessage)}
+                                  onClick={() => {
+                                    const msg = orderChanges[order.id]?.adminMessage ?? order.adminMessage ?? "";
+                                    saveAdminMessage(order.id, msg);
+                                  }}
+                                >
+                                  <Save className="w-3 h-3 mr-1" />
+                                  {submitting === order.id ? "Saving..." : "Save Message"}
+                                </Button>
+                                {(orderChanges[order.id]?.adminMessage ?? order.adminMessage) && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs text-red-600 border-red-200 hover:bg-red-50"
+                                    disabled={submitting === order.id}
+                                    onClick={() => {
+                                      handleAdminMessageChange(order.id, "");
+                                      saveAdminMessage(order.id, "");
+                                    }}
+                                  >
+                                    Clear
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+
                             {/* Payment Status Selector */}
                             <div>
                               <Label className="text-sm font-medium mb-1.5 block">Payment Status</Label>
@@ -1824,26 +1966,33 @@ export default function Admin() {
                               )}
                             </div>
                             
-                            {/* Submit and Cancel Buttons */}
+                            {/* Save All Changes Button */}
                             {orderChanges[order.id] && (
-                              <div className="flex gap-2 pt-2">
-                                <Button
-                                  onClick={() => submitOrderChanges(order.id)}
-                                  disabled={submitting === order.id}
-                                  className="flex-1"
-                                  size="sm"
-                                >
-                                  {submitting === order.id ? "Submitting..." : "Submit Changes"}
-                                </Button>
-                                <Button
-                                  onClick={() => cancelOrderChanges(order.id)}
-                                  disabled={submitting === order.id}
-                                  variant="outline"
-                                  className="flex-1"
-                                  size="sm"
-                                >
-                                  Cancel
-                                </Button>
+                              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                                <p className="text-xs font-medium text-amber-800 flex items-center gap-1.5">
+                                  <AlertCircle className="w-3.5 h-3.5" />
+                                  You have unsaved changes
+                                </p>
+                                <div className="flex gap-2">
+                                  <Button
+                                    onClick={() => submitOrderChanges(order.id)}
+                                    disabled={submitting === order.id}
+                                    className="flex-1"
+                                    size="sm"
+                                    style={{ backgroundColor: BRAND }}
+                                  >
+                                    <Save className="w-4 h-4 mr-1.5" />
+                                    {submitting === order.id ? "Saving..." : "Save All Changes"}
+                                  </Button>
+                                  <Button
+                                    onClick={() => cancelOrderChanges(order.id)}
+                                    disabled={submitting === order.id}
+                                    variant="outline"
+                                    size="sm"
+                                  >
+                                    Discard
+                                  </Button>
+                                </div>
                               </div>
                             )}
 
@@ -1944,6 +2093,27 @@ export default function Admin() {
                             </div>
                           </div>
                         )}
+
+                        {/* Order Timeline — always visible as expandable */}
+                        <div className="pt-2 border-t">
+                          <button
+                            onClick={() => setExpandedTimeline(expandedTimeline === order.id ? null : order.id)}
+                            className="text-xs font-semibold flex items-center gap-1.5 hover:underline transition-colors"
+                            style={{ color: BRAND }}
+                          >
+                            <Clock className="w-3.5 h-3.5" />
+                            {expandedTimeline === order.id ? "Hide Order Timeline" : "View Order Timeline"}
+                          </button>
+                          {expandedTimeline === order.id && order.statusHistory && (
+                            <div className="mt-3">
+                              <OrderTimeline 
+                                statusHistory={order.statusHistory} 
+                                createdAt={order.createdAt}
+                                customerName={customer?.name}
+                              />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </Card>
                   );

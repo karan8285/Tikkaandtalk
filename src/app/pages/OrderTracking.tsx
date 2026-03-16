@@ -8,7 +8,7 @@ import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { toast } from "sonner";
 import {
   RefreshCw, MapPin, Phone, Clock, CheckCircle2,
-  Package, CreditCard, Ticket, DollarSign, AlertCircle, Loader2,
+  Package, CreditCard, Ticket, DollarSign, AlertCircle, Loader2, Camera, X, MessageCircle,
 } from "lucide-react";
 import { formatIDR } from "../lib/currency";
 import { getRestaurantLogo } from "../lib/useRestaurantLogo";
@@ -66,6 +66,10 @@ interface Order {
   promoVoucherTitle?: string;
   taxRate?: number;
   scheduledAt?: string;
+  proofOfDeliveryUrl?: string;
+  proofOfDeliveryAt?: string;
+  adminMessage?: string;
+  adminMessageAt?: string;
 }
 
 const statusConfig: Record<string, { icon: string; color: string; description: string }> = {
@@ -120,6 +124,73 @@ const statusConfig: Record<string, { icon: string; color: string; description: s
     description: 'Payment confirmed'
   }
 };
+
+/** Proof of Delivery Card — shows the delivery photo to customers */
+function ProofOfDeliveryCard({ imageUrl, deliveredAt }: { imageUrl: string; deliveredAt?: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <>
+      <div className="bg-white rounded-xl shadow-md overflow-hidden">
+        <div className="px-5 pt-4 pb-3 flex items-center justify-between">
+          <h3 className="font-semibold flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
+              <Camera className="w-4 h-4 text-green-600" />
+            </div>
+            Proof of Delivery
+          </h3>
+          {deliveredAt && (
+            <span className="text-xs text-gray-400">
+              {new Date(deliveredAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+        </div>
+        <div className="px-5 pb-4">
+          <button
+            onClick={() => setExpanded(true)}
+            className="w-full rounded-xl overflow-hidden border border-green-200 relative group"
+          >
+            <img
+              src={imageUrl}
+              alt="Proof of delivery"
+              className="w-full h-48 object-cover group-hover:scale-105 transition-transform duration-300"
+            />
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all flex items-center justify-center">
+              <span className="opacity-0 group-hover:opacity-100 bg-white/90 text-gray-700 text-xs font-semibold rounded-full px-3 py-1.5 shadow transition-opacity">
+                Tap to view full image
+              </span>
+            </div>
+          </button>
+          <p className="text-xs text-green-600 font-medium mt-2 flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            Your order was delivered successfully
+          </p>
+        </div>
+      </div>
+
+      {/* Full-screen image viewer */}
+      {expanded && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setExpanded(false)}
+        >
+          <button
+            className="absolute top-4 right-4 bg-white/20 hover:bg-white/30 rounded-full p-2 z-10"
+            onClick={() => setExpanded(false)}
+          >
+            <X className="w-6 h-6 text-white" />
+          </button>
+          <img
+            src={imageUrl}
+            alt="Proof of delivery - full size"
+            className="max-w-full max-h-full object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+    </>
+  );
+}
 
 export default function OrderTracking() {
   const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -567,6 +638,26 @@ export default function OrderTracking() {
           </div>
         </div>
 
+        {/* Admin Message to Customer */}
+        {order.adminMessage && (
+          <div className="bg-white rounded-xl shadow-md p-5 mb-4 border-l-4" style={{ borderLeftColor: BRAND }}>
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${BRAND}15` }}>
+                <MessageCircle className="w-4 h-4" style={{ color: BRAND }} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Message from Restaurant</p>
+                <p className="text-sm text-gray-800 leading-relaxed">{order.adminMessage}</p>
+                {order.adminMessageAt && (
+                  <p className="text-[10px] text-gray-400 mt-1.5">
+                    {new Date(order.adminMessageAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Order Details Card */}
         <div className="bg-white rounded-xl shadow-md p-5 mb-4">
           <h3 className="font-semibold mb-3 flex items-center gap-2">
@@ -732,6 +823,14 @@ export default function OrderTracking() {
             })}
           </div>
         </div>
+
+        {/* Proof of Delivery */}
+        {order.proofOfDeliveryUrl && (
+          <ProofOfDeliveryCard 
+            imageUrl={order.proofOfDeliveryUrl} 
+            deliveredAt={order.proofOfDeliveryAt} 
+          />
+        )}
 
         {/* Points Status */}
         <div className="bg-white rounded-xl shadow-md p-5">

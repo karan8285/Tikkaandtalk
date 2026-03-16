@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 import { Card } from "../components/ui/card";
@@ -42,36 +42,18 @@ export default function KitchenDisplay() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
+  const accessTokenRef = useRef(accessToken);
+  accessTokenRef.current = accessToken;
 
-  useEffect(() => {
-    if (authLoading) return;
-
-    if (!user) {
-      navigate("/login");
-      return;
-    }
-
-    if (!user.isAdmin) {
-      toast.error("Admin access required");
-      navigate("/");
-      return;
-    }
-
-    fetchOrders();
-
-    // Poll every 15 seconds
-    const intervalId = setInterval(fetchOrders, 15000);
-
-    return () => clearInterval(intervalId);
-  }, [user, authLoading, navigate]);
-
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async (signal?: AbortSignal) => {
+    if (!accessTokenRef.current) return;
     try {
-      const response = await fetch(`${API_BASE}/admin/orders`, {
+      const response = await fetch(`${API_BASE}/admin/orders?page=1&limit=100&status=all&payment=all&delivery=all&date=all&tab=active`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
-          "X-Custom-Auth": accessToken || "",
+          "X-Custom-Auth": accessTokenRef.current,
         },
+        signal,
       });
 
       if (response.ok) {
@@ -87,12 +69,36 @@ export default function KitchenDisplay() {
         
         setOrders(kitchenOrders);
       }
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'AbortError') return;
       console.error("Error fetching orders:", error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (!user) {
+      navigate("/login");
+      return;
+    }
+
+    if (!user.isAdmin) {
+      toast.error("Admin access required");
+      navigate("/");
+      return;
+    }
+
+    const controller = new AbortController();
+    fetchOrders(controller.signal);
+
+    // Poll every 15 seconds
+    const intervalId = setInterval(() => fetchOrders(), 15000);
+
+    return () => { controller.abort(); clearInterval(intervalId); };
+  }, [user, authLoading, navigate, fetchOrders]);
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
     try {

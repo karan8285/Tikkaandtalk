@@ -8,18 +8,20 @@
 import { useRef, useCallback } from "react";
 import { toast } from "sonner";
 
-/** Generates a pleasant two-tone "ding-ding" notification via Web Audio API */
+/** Generates a loud, urgent multi-tone alert via Web Audio API */
 function playAlertSound() {
   try {
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
 
-    const playTone = (freq: number, startTime: number, duration: number) => {
+    const playTone = (freq: number, startTime: number, duration: number, type: OscillatorType = "square") => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = "sine";
+      osc.type = type;
       osc.frequency.setValueAtTime(freq, startTime);
-      gain.gain.setValueAtTime(0.35, startTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+      // Loud volume — max safe level
+      gain.gain.setValueAtTime(1.0, startTime);
+      gain.gain.setValueAtTime(1.0, startTime + duration * 0.7);
+      gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start(startTime);
@@ -27,13 +29,24 @@ function playAlertSound() {
     };
 
     const now = ctx.currentTime;
-    // First ding
-    playTone(880, now, 0.25);        // A5
-    // Second ding (higher)
-    playTone(1174.66, now + 0.18, 0.3); // D6
+
+    // === Round 1: Urgent triple beep ===
+    playTone(1200, now, 0.15, "square");
+    playTone(1200, now + 0.22, 0.15, "square");
+    playTone(1500, now + 0.44, 0.25, "square");
+
+    // === Round 2: Repeat after short pause (makes it feel like a real alert) ===
+    playTone(1200, now + 0.9, 0.15, "square");
+    playTone(1200, now + 1.12, 0.15, "square");
+    playTone(1500, now + 1.34, 0.25, "square");
+
+    // === Round 3: Final attention-grab ===
+    playTone(1600, now + 1.8, 0.12, "sawtooth");
+    playTone(1600, now + 1.98, 0.12, "sawtooth");
+    playTone(1800, now + 2.16, 0.3, "sawtooth");
 
     // Cleanup context after sound finishes
-    setTimeout(() => ctx.close(), 1500);
+    setTimeout(() => ctx.close(), 4000);
   } catch (e) {
     // Audio not supported or blocked — silently ignore
     console.warn("Audio alert not available:", e);

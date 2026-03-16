@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
+import { useStaffAuth } from "../lib/staff-auth";
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -53,7 +54,13 @@ interface CartItem {
 
 export default function CreateCustomOrder() {
   const navigate = useNavigate();
-  const { user, accessToken, loading: authLoading } = useAuth();
+  const { user, accessToken: customerToken, loading: authLoading } = useAuth();
+  const { staff, accessToken: staffToken, loading: staffLoading } = useStaffAuth();
+  
+  // Determine which auth to use — staff auth takes priority
+  const isStaffMode = !!staff && !!staffToken;
+  const effectiveToken = isStaffMode ? staffToken : customerToken;
+  const isLoading = isStaffMode ? staffLoading : authLoading;
   
   // Auth & Loading
   const [loading, setLoading] = useState(true);
@@ -97,8 +104,15 @@ export default function CreateCustomOrder() {
 
   // Check admin access
   useEffect(() => {
-    if (authLoading) return;
+    if (isLoading) return;
     
+    // Staff auth — allow if staff is logged in with appropriate role
+    if (isStaffMode) {
+      fetchInitialData();
+      return;
+    }
+    
+    // Customer auth fallback
     if (!user) {
       navigate("/login");
       return;
@@ -111,7 +125,7 @@ export default function CreateCustomOrder() {
     }
     
     fetchInitialData();
-  }, [authLoading, user, navigate]);
+  }, [isLoading, user, staff, navigate, isStaffMode]);
 
   // Fetch all necessary data
   const fetchInitialData = async () => {
@@ -125,7 +139,7 @@ export default function CreateCustomOrder() {
       const usersRes = await fetch(`${API_BASE}/admin/users`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
-          "X-Custom-Auth": accessToken || "",
+          "X-Custom-Auth": effectiveToken || "",
         },
       });
       
@@ -393,7 +407,7 @@ export default function CreateCustomOrder() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${publicAnonKey}`,
-          "X-Custom-Auth": accessToken || "",
+          "X-Custom-Auth": effectiveToken || "",
         },
         body: JSON.stringify(orderData),
       });
@@ -499,7 +513,7 @@ export default function CreateCustomOrder() {
         {/* Back Button */}
         <Button
           variant="ghost"
-          onClick={() => navigate("/admin")}
+          onClick={() => navigate(isStaffMode ? "/staff/admin" : "/admin")}
           className="mb-4"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />

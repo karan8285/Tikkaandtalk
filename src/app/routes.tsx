@@ -37,6 +37,7 @@ const StaffAdmin = React.lazy(() => import("./pages/StaffAdmin"));
 const StaffKitchen = React.lazy(() => import("./pages/StaffKitchen"));
 const StaffDelivery = React.lazy(() => import("./pages/StaffDelivery"));
 const StaffCashier = React.lazy(() => import("./pages/StaffCashier"));
+const CreateCustomOrder = React.lazy(() => import("./pages/CreateCustomOrder"));
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -247,6 +248,10 @@ export const router = createBrowserRouter(
         {
           path: "cashier",
           element: <Lazy><StaffCashier /></Lazy>,
+        },
+        {
+          path: "create-order",
+          element: <Lazy><CreateCustomOrder /></Lazy>,
         },
         // Catch-all for staff routes
         {

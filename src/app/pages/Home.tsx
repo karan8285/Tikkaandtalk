@@ -479,7 +479,7 @@ export default function Home() {
                       {/* Circular Icon Container */}
                       <div className="relative">
                         <div
-                          className="w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center shadow-sm transition-shadow duration-200 hover:shadow-md"
+                          className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center shadow-sm transition-shadow duration-200 hover:shadow-md"
                           style={{
                             background: `linear-gradient(135deg, ${APP_CONFIG.brand.primaryColor}10, ${APP_CONFIG.brand.primaryColor}20)`,
                             border: `2px solid ${APP_CONFIG.brand.primaryColor}25`,
