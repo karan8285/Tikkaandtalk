@@ -8,10 +8,16 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
   FileBarChart2, Lock, Construction, ChevronRight,
-  ChevronLeft, Users, TrendingUp, BarChart3, UtensilsCrossed, UserCheck,
+  ChevronLeft, Users, TrendingUp, BarChart3, UtensilsCrossed, UserCheck, UserX, Star,
+  CreditCard,
 } from "lucide-react";
 import { APP_CONFIG } from "../lib/config";
 import { CRMCustomerReport } from "./CRMCustomerReport";
+import { ProductsSoldReport } from "./ProductsSoldReport";
+import { CustomerChurnReport } from "./CustomerChurnReport";
+import { RatingFeedbackReport } from "./RatingFeedbackReport";
+import { CustomerOrderTrendsReport } from "./CustomerOrderTrendsReport";
+import { CustomerPaymentReport } from "./CustomerPaymentReport";
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -44,10 +50,10 @@ const REPORT_SLOTS: ReportDefinition[] = [
   },
   {
     id: "menu-performance",
-    title: "Menu Performance",
-    description: "Best & worst sellers, average order value, and item trends.",
+    title: "Products Sold",
+    description: "Best & worst sellers ranked by quantity, category filter, and item trends.",
     icon: UtensilsCrossed,
-    status: "coming_soon",
+    status: "active",
   },
   {
     id: "staff-performance",
@@ -62,6 +68,34 @@ const REPORT_SLOTS: ReportDefinition[] = [
     description: "Consolidated view of daily sales, orders, and key metrics.",
     icon: BarChart3,
     status: "coming_soon",
+  },
+  {
+    id: "customer-churn",
+    title: "Customer Churn",
+    description: "At-risk customers who haven't ordered in 30+ days with 5+ past orders, with risk-level badges.",
+    icon: UserX,
+    status: "active",
+  },
+  {
+    id: "rating-feedback",
+    title: "Rating Feedback",
+    description: "All order ratings with star display, comments, WhatsApp reply, and rating distribution.",
+    icon: Star,
+    status: "active",
+  },
+  {
+    id: "customer-trends",
+    title: "Customer Order Trends",
+    description: "Per-customer order value line charts over time, top N by order frequency.",
+    icon: TrendingUp,
+    status: "active",
+  },
+  {
+    id: "customer-payment",
+    title: "Customer Payment",
+    description: "Track paid & unpaid orders by customer, with status filter, search, and export.",
+    icon: CreditCard,
+    status: "active",
   },
 ];
 
@@ -90,6 +124,21 @@ export function CustomReportsAdmin({ customToken }: Props) {
         {/* Render the selected report */}
         {selectedReport === "crm-customer" && (
           <CRMCustomerReport customToken={customToken} />
+        )}
+        {selectedReport === "menu-performance" && (
+          <ProductsSoldReport customToken={customToken} />
+        )}
+        {selectedReport === "customer-churn" && (
+          <CustomerChurnReport customToken={customToken} />
+        )}
+        {selectedReport === "rating-feedback" && (
+          <RatingFeedbackReport customToken={customToken} />
+        )}
+        {selectedReport === "customer-trends" && (
+          <CustomerOrderTrendsReport customToken={customToken} />
+        )}
+        {selectedReport === "customer-payment" && (
+          <CustomerPaymentReport customToken={customToken} />
         )}
       </div>
     );

@@ -10474,5 +10474,765 @@ app.get("/make-server-e5e192fb/reports/customer-analytics", async (c) => {
   }
 });
 
+// GET /reports/product-analytics — products sold report (superuser only)
+app.get("/make-server-e5e192fb/reports/product-analytics", async (c) => {
+  try {
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+
+    // Verify superuser role
+    const staffData = await kv.get(`staff:${adminAuth.userId}`);
+    if (!staffData || staffData.role !== "superuser") {
+      return c.json({ error: "Super User access required" }, 403);
+    }
+
+    // Parse query params
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const limit = parseInt(c.req.query("limit") || "10", 10);
+    const search = (c.req.query("search") || "").toLowerCase().trim();
+    const startDate = c.req.query("startDate") || "";
+    const endDate = c.req.query("endDate") || "";
+    const sortBy = c.req.query("sortBy") || "quantity"; // quantity | revenue | name
+    const category = c.req.query("category") || "all";
+    const isExport = c.req.query("export") === "true";
+
+    console.log(`📊 [Products Report] page=${page} limit=${limit} search="${search}" dates=${startDate}→${endDate} sort=${sortBy} category=${category}`);
+
+    // Fetch all orders and menu items with retry
+    const rawOrders = await kvRetry(() => kv.getByPrefix("order:")) || [];
+    const allMenuRegular = await kvRetry(() => kv.getByPrefix("menu:regular:")) || [];
+    const allMenuKids = await kvRetry(() => kv.getByPrefix("menu:kids:")) || [];
+    const allMenuSpecial = await kvRetry(() => kv.getByPrefix("menu:special:")) || [];
+
+    // Build menu lookup (by id and by name for matching)
+    const menuById: Record<string, any> = {};
+    const menuByName: Record<string, any> = {};
+    const allMenuItems = [...allMenuRegular, ...allMenuKids, ...allMenuSpecial];
+    allMenuItems.forEach((item: any) => {
+      const menuItem = item.value || item;
+      if (menuItem.id) menuById[menuItem.id] = menuItem;
+      if (menuItem.name) menuByName[menuItem.name.toLowerCase()] = menuItem;
+      if (menuItem.title) menuByName[menuItem.title.toLowerCase()] = menuItem;
+    });
+
+    // Extract all unique categories from menu items
+    const categoriesSet = new Set<string>();
+    allMenuItems.forEach((item: any) => {
+      const menuItem = item.value || item;
+      if (menuItem.category) categoriesSet.add(menuItem.category);
+    });
+    const availableCategories = Array.from(categoriesSet).sort();
+
+    // Filter out draft/cancelled orders
+    const validOrders = rawOrders.filter((o: any) => {
+      const order = o.value || o;
+      return order.paymentStatus !== "awaiting_payment" && order.status !== "cancelled";
+    });
+
+    // Apply date filter on orders
+    let filteredOrders = validOrders;
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      filteredOrders = filteredOrders.filter((o: any) => new Date(o.createdAt) >= start);
+    }
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      filteredOrders = filteredOrders.filter((o: any) => new Date(o.createdAt) <= end);
+    }
+
+    // Aggregate items from orders
+    const productAgg: Record<string, {
+      itemId: string;
+      name: string;
+      category: string;
+      image: string;
+      price: number;
+      totalQuantity: number;
+      totalRevenue: number;
+      orderCount: number;
+      lastSoldDate: string;
+    }> = {};
+
+    filteredOrders.forEach((order: any) => {
+      const items = order.items || [];
+      items.forEach((item: any) => {
+        const itemName = item.title || item.name || "Unknown Item";
+        const itemKey = (item.id || itemName).toString().toLowerCase();
+        
+        // Try to match with menu item to get category and image
+        const menuMatch = (item.id && menuById[item.id]) || menuByName[itemName.toLowerCase()];
+        
+        if (!productAgg[itemKey]) {
+          productAgg[itemKey] = {
+            itemId: item.id || itemName,
+            name: itemName,
+            category: menuMatch?.category || item.category || "Uncategorized",
+            image: menuMatch?.image || menuMatch?.imageUrl || item.image || "",
+            price: item.price || menuMatch?.price || 0,
+            totalQuantity: 0,
+            totalRevenue: 0,
+            orderCount: 0,
+            lastSoldDate: "",
+          };
+        }
+        
+        const qty = item.quantity || 1;
+        productAgg[itemKey].totalQuantity += qty;
+        productAgg[itemKey].totalRevenue += (item.price || 0) * qty;
+        productAgg[itemKey].orderCount += 1;
+        
+        const orderDate = order.createdAt || "";
+        if (!productAgg[itemKey].lastSoldDate || orderDate > productAgg[itemKey].lastSoldDate) {
+          productAgg[itemKey].lastSoldDate = orderDate;
+        }
+        
+        // Update price to latest if available
+        if (item.price) {
+          productAgg[itemKey].price = item.price;
+        }
+      });
+    });
+
+    // Convert to array
+    let products = Object.values(productAgg);
+
+    // Apply category filter
+    if (category && category !== "all") {
+      products = products.filter(p => p.category.toLowerCase() === category.toLowerCase());
+    }
+
+    // Apply search filter
+    if (search) {
+      products = products.filter(p =>
+        p.name.toLowerCase().includes(search) ||
+        p.category.toLowerCase().includes(search)
+      );
+    }
+
+    // Sort
+    if (sortBy === "revenue") {
+      products.sort((a, b) => b.totalRevenue - a.totalRevenue);
+    } else if (sortBy === "name") {
+      products.sort((a, b) => a.name.localeCompare(b.name));
+    } else {
+      // Default: quantity descending
+      products.sort((a, b) => b.totalQuantity - a.totalQuantity);
+    }
+
+    // Summary stats
+    const summaryTotalProducts = products.length;
+    const summaryTotalSold = products.reduce((s, p) => s + p.totalQuantity, 0);
+    const summaryTotalRevenue = products.reduce((s, p) => s + p.totalRevenue, 0);
+    const summaryTotalOrders = filteredOrders.length;
+
+    // Paginate
+    const totalPages = Math.max(1, Math.ceil(products.length / limit));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const startIdx = (safePage - 1) * limit;
+    const pageProducts = products.slice(startIdx, startIdx + limit);
+
+    // Add rank
+    const rankedProducts = pageProducts.map((p, i) => ({
+      ...p,
+      rank: startIdx + i + 1,
+    }));
+
+    console.log(`📊 [Products Report] Found ${summaryTotalProducts} products, ${summaryTotalSold} sold, page ${safePage}/${totalPages}`);
+
+    return c.json({
+      products: rankedProducts,
+      summary: {
+        totalProducts: summaryTotalProducts,
+        totalSold: summaryTotalSold,
+        totalRevenue: summaryTotalRevenue,
+        totalOrders: summaryTotalOrders,
+      },
+      categories: availableCategories,
+      pagination: {
+        page: safePage,
+        limit,
+        totalPages,
+        totalItems: summaryTotalProducts,
+      },
+      // For export: send all products (unpaginated) when export=true
+      ...(isExport ? {
+        allProducts: products.map((p, i) => ({ ...p, rank: i + 1 })),
+      } : {}),
+    });
+  } catch (error: any) {
+    console.log(`❌ [Products Report] Error: ${error?.message}`, error?.stack);
+    return c.json({ error: `Failed to generate Products report: ${error?.message}` }, 500);
+  }
+});
+
+// GET /reports/customer-churn — customer churn / at-risk report (superuser only)
+app.get("/make-server-e5e192fb/reports/customer-churn", async (c) => {
+  try {
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+
+    // Verify superuser role
+    const staffData = await kv.get(`staff:${adminAuth.userId}`);
+    if (!staffData || staffData.role !== "superuser") {
+      return c.json({ error: "Super User access required" }, 403);
+    }
+
+    // Parse query params
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const limit = parseInt(c.req.query("limit") || "10", 10);
+    const search = (c.req.query("search") || "").toLowerCase().trim();
+    const sortBy = c.req.query("sortBy") || "avgOrderValue"; // avgOrderValue | daysAgo | totalOrders | name
+    const minDays = parseInt(c.req.query("minDays") || "30", 10);
+    const minOrders = parseInt(c.req.query("minOrders") || "5", 10);
+    const riskLevel = c.req.query("riskLevel") || "all"; // all | warning | danger | critical
+    const isExport = c.req.query("export") === "true";
+
+    console.log(`📊 [Churn Report] page=${page} limit=${limit} search="${search}" sort=${sortBy} minDays=${minDays} minOrders=${minOrders} risk=${riskLevel}`);
+
+    // Fetch all orders and users with retry
+    const rawOrders = await kvRetry(() => kv.getByPrefix("order:")) || [];
+    const allUsers = await kvRetry(() => kv.getByPrefix("user:")) || [];
+
+    // Filter valid completed orders (not cancelled, not drafts)
+    const validOrders = rawOrders.filter((o: any) => {
+      const order = o.value || o;
+      return order.paymentStatus !== "awaiting_payment" && order.status !== "cancelled";
+    });
+
+    // Build user map
+    const userMap: Record<string, any> = {};
+    allUsers.forEach((u: any) => { userMap[u.id] = u; });
+
+    // Aggregate orders by customer
+    const now = new Date();
+    const customerAgg: Record<string, {
+      userId: string | null;
+      name: string;
+      phone: string;
+      address: string;
+      tier: string;
+      totalOrders: number;
+      totalRevenue: number;
+      lastOrderDate: string;
+      firstOrderDate: string;
+    }> = {};
+
+    validOrders.forEach((order: any) => {
+      const key = order.userId || `guest:${order.phone || order.guestPhone || "unknown"}`;
+      if (!customerAgg[key]) {
+        const user = order.userId ? userMap[order.userId] : null;
+        const phone = order.phone || order.guestPhone || user?.phone || "";
+        const name = order.customerName || user?.name || order.guestName || "Guest";
+        const addr = order.deliveryAddress || order.address || user?.address || "";
+        const tier = user?.tier || getUserTier(user?.totalPointsEarned || 0);
+        customerAgg[key] = {
+          userId: order.userId || null,
+          name,
+          phone,
+          address: addr,
+          tier,
+          totalOrders: 0,
+          totalRevenue: 0,
+          lastOrderDate: "",
+          firstOrderDate: "",
+        };
+      }
+      customerAgg[key].totalOrders += 1;
+      customerAgg[key].totalRevenue += (order.total || 0);
+      const orderDate = order.createdAt || "";
+      if (!customerAgg[key].lastOrderDate || orderDate > customerAgg[key].lastOrderDate) {
+        customerAgg[key].lastOrderDate = orderDate;
+      }
+      if (!customerAgg[key].firstOrderDate || orderDate < customerAgg[key].firstOrderDate) {
+        customerAgg[key].firstOrderDate = orderDate;
+      }
+      if (order.deliveryAddress && order.deliveryAddress.length > 5) {
+        customerAgg[key].address = order.deliveryAddress;
+      }
+    });
+
+    // Convert to churn candidates: filter by minOrders and minDays since last order
+    let churnCustomers = Object.values(customerAgg)
+      .filter(c => c.totalOrders >= minOrders)
+      .map(c => {
+        const lastDate = c.lastOrderDate ? new Date(c.lastOrderDate) : new Date(0);
+        const daysAgo = Math.floor((now.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+        const avgOrderValue = c.totalOrders > 0 ? c.totalRevenue / c.totalOrders : 0;
+        const firstDate = c.firstOrderDate ? new Date(c.firstOrderDate) : lastDate;
+        const customerLifespanDays = Math.max(1, Math.floor((lastDate.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24)));
+        // Determine risk level based on days since last order
+        let risk: string = "warning";
+        if (daysAgo >= 60) risk = "critical";
+        else if (daysAgo >= 30) risk = "danger";
+        else risk = "warning";
+        return {
+          ...c,
+          daysAgo,
+          avgOrderValue: Math.round(avgOrderValue),
+          riskLevel: risk,
+          customerLifespanDays,
+        };
+      })
+      .filter(c => c.daysAgo >= minDays);
+
+    // Apply risk level filter
+    if (riskLevel && riskLevel !== "all") {
+      churnCustomers = churnCustomers.filter(c => c.riskLevel === riskLevel);
+    }
+
+    // Apply search filter
+    if (search) {
+      churnCustomers = churnCustomers.filter(c =>
+        c.name.toLowerCase().includes(search) ||
+        c.phone.toLowerCase().includes(search) ||
+        c.address.toLowerCase().includes(search)
+      );
+    }
+
+    // Sort
+    if (sortBy === "daysAgo") {
+      churnCustomers.sort((a, b) => b.daysAgo - a.daysAgo);
+    } else if (sortBy === "totalOrders") {
+      churnCustomers.sort((a, b) => b.totalOrders - a.totalOrders);
+    } else if (sortBy === "name") {
+      churnCustomers.sort((a, b) => a.name.localeCompare(b.name));
+    } else {
+      // Default: avgOrderValue descending
+      churnCustomers.sort((a, b) => b.avgOrderValue - a.avgOrderValue);
+    }
+
+    // Summary stats
+    const summaryAtRisk = churnCustomers.length;
+    const summaryLostRevenue = churnCustomers.reduce((s, c) => s + c.totalRevenue, 0);
+    const summaryAvgDaysInactive = churnCustomers.length > 0
+      ? Math.round(churnCustomers.reduce((s, c) => s + c.daysAgo, 0) / churnCustomers.length)
+      : 0;
+    const summaryAvgOrderValue = churnCustomers.length > 0
+      ? Math.round(churnCustomers.reduce((s, c) => s + c.avgOrderValue, 0) / churnCustomers.length)
+      : 0;
+    const summaryWarning = churnCustomers.filter(c => c.riskLevel === "warning").length;
+    const summaryDanger = churnCustomers.filter(c => c.riskLevel === "danger").length;
+    const summaryCritical = churnCustomers.filter(c => c.riskLevel === "critical").length;
+
+    // Paginate
+    const totalPages = Math.max(1, Math.ceil(churnCustomers.length / limit));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const startIdx = (safePage - 1) * limit;
+    const pageCustomers = churnCustomers.slice(startIdx, startIdx + limit);
+
+    // Add rank
+    const rankedCustomers = pageCustomers.map((c, i) => ({
+      ...c,
+      rank: startIdx + i + 1,
+    }));
+
+    console.log(`📊 [Churn Report] Found ${summaryAtRisk} at-risk customers, page ${safePage}/${totalPages}`);
+
+    return c.json({
+      customers: rankedCustomers,
+      summary: {
+        atRiskCustomers: summaryAtRisk,
+        lostRevenue: summaryLostRevenue,
+        avgDaysInactive: summaryAvgDaysInactive,
+        avgOrderValue: summaryAvgOrderValue,
+        warningCount: summaryWarning,
+        dangerCount: summaryDanger,
+        criticalCount: summaryCritical,
+      },
+      pagination: {
+        page: safePage,
+        limit,
+        totalPages,
+        totalItems: summaryAtRisk,
+      },
+      ...(isExport ? {
+        allCustomers: churnCustomers.map((c, i) => ({ ...c, rank: i + 1 })),
+      } : {}),
+    });
+  } catch (error: any) {
+    console.log(`❌ [Churn Report] Error: ${error?.message}`, error?.stack);
+    return c.json({ error: `Failed to generate Churn report: ${error?.message}` }, 500);
+  }
+});
+
+// GET /reports/rating-feedback — Low Rating Feedback report (superuser only)
+app.get("/make-server-e5e192fb/reports/rating-feedback", async (c) => {
+  try {
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+
+    const staffData = await kv.get(`staff:${adminAuth.userId}`);
+    if (!staffData || staffData.role !== "superuser") {
+      return c.json({ error: "Super User access required" }, 403);
+    }
+
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const limit = parseInt(c.req.query("limit") || "10", 10);
+    const search = (c.req.query("search") || "").toLowerCase().trim();
+    const sortBy = c.req.query("sortBy") || "date";
+    const ratingFilter = c.req.query("ratingFilter") || "all";
+    const dateFrom = c.req.query("dateFrom") || "";
+    const dateTo = c.req.query("dateTo") || "";
+    const isExport = c.req.query("export") === "true";
+
+    console.log(`📊 [Rating Report] page=${page} ratingFilter=${ratingFilter} sort=${sortBy} search="${search}"`);
+
+    const rawOrders = await kvRetry(() => kv.getByPrefix("order:")) || [];
+    const allUsers = await kvRetry(() => kv.getByPrefix("user:")) || [];
+
+    const userMap: Record<string, any> = {};
+    allUsers.forEach((u: any) => { userMap[u.id] = u; });
+
+    let ratedOrders = rawOrders
+      .filter((o: any) => o.rating && typeof o.rating === "number")
+      .map((order: any) => {
+        const user = order.userId ? userMap[order.userId] : null;
+        const name = order.customerName || user?.name || order.guestName || "Guest";
+        const phone = order.phone || order.guestPhone || user?.phone || "";
+        return {
+          orderId: order.id || order.orderId || "",
+          orderNumber: order.orderNumber || "",
+          userId: order.userId || null,
+          name,
+          phone,
+          rating: order.rating,
+          comment: order.ratingComment || "",
+          ratingAt: order.ratingAt || order.createdAt || "",
+          orderDate: order.createdAt || "",
+          total: order.total || 0,
+          items: (order.items || []).map((i: any) => i.name || i.itemName || "").filter(Boolean),
+          status: order.status || "",
+          orderType: order.orderType || order.type || "",
+        };
+      });
+
+    if (ratingFilter === "lt2") {
+      ratedOrders = ratedOrders.filter(o => o.rating < 2);
+    } else if (ratingFilter === "lt3") {
+      ratedOrders = ratedOrders.filter(o => o.rating < 3);
+    } else if (ratingFilter === "lt4") {
+      ratedOrders = ratedOrders.filter(o => o.rating < 4);
+    } else if (["1", "2", "3", "4", "5"].includes(ratingFilter)) {
+      ratedOrders = ratedOrders.filter(o => o.rating === parseInt(ratingFilter));
+    }
+
+    if (dateFrom) {
+      const fromDate = new Date(dateFrom);
+      fromDate.setHours(0, 0, 0, 0);
+      ratedOrders = ratedOrders.filter(o => new Date(o.orderDate) >= fromDate);
+    }
+    if (dateTo) {
+      const toDate = new Date(dateTo);
+      toDate.setHours(23, 59, 59, 999);
+      ratedOrders = ratedOrders.filter(o => new Date(o.orderDate) <= toDate);
+    }
+
+    if (search) {
+      ratedOrders = ratedOrders.filter(o =>
+        o.name.toLowerCase().includes(search) ||
+        o.phone.toLowerCase().includes(search) ||
+        o.comment.toLowerCase().includes(search) ||
+        o.orderId.toLowerCase().includes(search)
+      );
+    }
+
+    if (sortBy === "rating") {
+      ratedOrders.sort((a, b) => a.rating - b.rating);
+    } else if (sortBy === "total") {
+      ratedOrders.sort((a, b) => b.total - a.total);
+    } else if (sortBy === "name") {
+      ratedOrders.sort((a, b) => a.name.localeCompare(b.name));
+    } else {
+      ratedOrders.sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+    }
+
+    const totalRated = ratedOrders.length;
+    const avgRating = totalRated > 0
+      ? Math.round((ratedOrders.reduce((s, o) => s + o.rating, 0) / totalRated) * 10) / 10
+      : 0;
+    const ratingDist: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    ratedOrders.forEach(o => { if (ratingDist[o.rating] !== undefined) ratingDist[o.rating]++; });
+    const withComments = ratedOrders.filter(o => o.comment && o.comment.trim().length > 0).length;
+
+    const totalPages = Math.max(1, Math.ceil(totalRated / limit));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const startIdx = (safePage - 1) * limit;
+    const pageOrders = ratedOrders.slice(startIdx, startIdx + limit);
+    const rankedOrders = pageOrders.map((o, i) => ({ ...o, rank: startIdx + i + 1 }));
+
+    console.log(`📊 [Rating Report] Found ${totalRated} rated orders, avg ${avgRating}, page ${safePage}/${totalPages}`);
+
+    return c.json({
+      orders: rankedOrders,
+      summary: { totalRated, avgRating, ratingDistribution: ratingDist, withComments },
+      pagination: { page: safePage, limit, totalPages, totalItems: totalRated },
+      ...(isExport ? { allOrders: ratedOrders.map((o, i) => ({ ...o, rank: i + 1 })) } : {}),
+    });
+  } catch (error: any) {
+    console.log(`❌ [Rating Report] Error: ${error?.message}`, error?.stack);
+    return c.json({ error: `Failed to generate Rating report: ${error?.message}` }, 500);
+  }
+});
+
+// GET /reports/customer-trends — Customer Order Trends report (superuser only)
+app.get("/make-server-e5e192fb/reports/customer-trends", async (c) => {
+  try {
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+
+    const staffData = await kv.get(`staff:${adminAuth.userId}`);
+    if (!staffData || staffData.role !== "superuser") {
+      return c.json({ error: "Super User access required" }, 403);
+    }
+
+    const topN = parseInt(c.req.query("topN") || "5", 10);
+    const period = c.req.query("period") || "30";
+    const dateFrom = c.req.query("dateFrom") || "";
+    const dateTo = c.req.query("dateTo") || "";
+    const search = (c.req.query("search") || "").toLowerCase().trim();
+
+    console.log(`📊 [Trends Report] topN=${topN} period=${period} search="${search}"`);
+
+    const rawOrders = await kvRetry(() => kv.getByPrefix("order:")) || [];
+    const allUsers = await kvRetry(() => kv.getByPrefix("user:")) || [];
+
+    const userMap: Record<string, any> = {};
+    allUsers.forEach((u: any) => { userMap[u.id] = u; });
+
+    let validOrders = rawOrders.filter((o: any) => {
+      return o.paymentStatus !== "awaiting_payment" && o.status !== "cancelled" && o.createdAt;
+    });
+
+    const now = new Date();
+    if (period !== "custom") {
+      const daysBack = parseInt(period, 10) || 30;
+      const cutoff = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
+      validOrders = validOrders.filter(o => new Date(o.createdAt) >= cutoff);
+    } else {
+      if (dateFrom) {
+        const fromDate = new Date(dateFrom);
+        fromDate.setHours(0, 0, 0, 0);
+        validOrders = validOrders.filter(o => new Date(o.createdAt) >= fromDate);
+      }
+      if (dateTo) {
+        const toDate = new Date(dateTo);
+        toDate.setHours(23, 59, 59, 999);
+        validOrders = validOrders.filter(o => new Date(o.createdAt) <= toDate);
+      }
+    }
+
+    const customerAgg: Record<string, {
+      userId: string | null;
+      name: string;
+      phone: string;
+      totalOrders: number;
+      totalRevenue: number;
+      orders: { date: string; total: number }[];
+    }> = {};
+
+    validOrders.forEach((order: any) => {
+      const key = order.userId || `guest:${order.phone || order.guestPhone || "unknown"}`;
+      if (!customerAgg[key]) {
+        const user = order.userId ? userMap[order.userId] : null;
+        const name = order.customerName || user?.name || order.guestName || "Guest";
+        const phone = order.phone || order.guestPhone || user?.phone || "";
+        customerAgg[key] = { userId: order.userId || null, name, phone, totalOrders: 0, totalRevenue: 0, orders: [] };
+      }
+      customerAgg[key].totalOrders += 1;
+      customerAgg[key].totalRevenue += (order.total || 0);
+      customerAgg[key].orders.push({ date: order.createdAt, total: order.total || 0 });
+    });
+
+    let customers = Object.values(customerAgg).filter(c => c.totalOrders >= 1);
+
+    if (search) {
+      customers = customers.filter(c =>
+        c.name.toLowerCase().includes(search) || c.phone.toLowerCase().includes(search)
+      );
+    }
+
+    customers.sort((a, b) => b.totalOrders - a.totalOrders);
+    const topCustomers = customers.slice(0, Math.min(topN, 50));
+
+    const chartData = topCustomers.map((c, i) => {
+      const sortedOrders = [...c.orders].sort((a, b) =>
+        new Date(a.date).getTime() - new Date(b.date).getTime()
+      );
+      const avgOrderValue = c.totalOrders > 0 ? Math.round(c.totalRevenue / c.totalOrders) : 0;
+      return {
+        rank: i + 1,
+        userId: c.userId,
+        name: c.name,
+        phone: c.phone,
+        totalOrders: c.totalOrders,
+        totalRevenue: c.totalRevenue,
+        avgOrderValue,
+        orders: (() => {
+          // Aggregate orders on the same day to avoid duplicate recharts keys
+          const dayMap: Record<string, { date: string; total: number }> = {};
+          sortedOrders.forEach(o => {
+            const dayKey = new Date(o.date).toISOString().slice(0, 10);
+            if (!dayMap[dayKey]) {
+              dayMap[dayKey] = { date: o.date, total: 0 };
+            }
+            dayMap[dayKey].total += o.total;
+          });
+          return Object.entries(dayMap)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([dayKey, v]) => ({
+              date: v.date,
+              dateLabel: new Date(dayKey + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }),
+              total: v.total,
+            }));
+        })(),
+      };
+    });
+
+    const totalCustomers = customers.length;
+    const totalOrders = validOrders.length;
+    const totalRevenue = validOrders.reduce((s: number, o: any) => s + (o.total || 0), 0);
+    const avgOrderValue = totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0;
+
+    console.log(`📊 [Trends Report] Found ${totalCustomers} customers, showing top ${topCustomers.length}`);
+
+    return c.json({
+      customers: chartData,
+      summary: { totalCustomers, totalOrders, totalRevenue, avgOrderValue },
+    });
+  } catch (error: any) {
+    console.log(`❌ [Trends Report] Error: ${error?.message}`, error?.stack);
+    return c.json({ error: `Failed to generate Trends report: ${error?.message}` }, 500);
+  }
+});
+
+// GET /reports/customer-payment — Customer Payment Report (superuser only)
+app.get("/make-server-e5e192fb/reports/customer-payment", async (c) => {
+  try {
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+
+    const staffData = await kv.get(`staff:${adminAuth.userId}`);
+    if (!staffData || staffData.role !== "superuser") {
+      return c.json({ error: "Super User access required" }, 403);
+    }
+
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const limit = parseInt(c.req.query("limit") || "10", 10);
+    const search = (c.req.query("search") || "").toLowerCase().trim();
+    const statusFilter = c.req.query("statusFilter") || "unpaid";
+    const dateFrom = c.req.query("dateFrom") || "";
+    const dateTo = c.req.query("dateTo") || "";
+    const isExport = c.req.query("export") === "true";
+
+    console.log(`📊 [Payment Report] page=${page} limit=${limit} status=${statusFilter} search="${search}"`);
+
+    const rawOrders = await kvRetry(() => kv.getByPrefix("order:")) || [];
+    const allUsers = await kvRetry(() => kv.getByPrefix("user:")) || [];
+
+    const userMap: Record<string, any> = {};
+    allUsers.forEach((u: any) => { userMap[u.id] = u; });
+
+    let validOrders = rawOrders.filter((o: any) => {
+      return o.paymentStatus !== "awaiting_payment" && o.status !== "cancelled" && o.createdAt;
+    });
+
+    if (dateFrom) {
+      const fromDate = new Date(dateFrom);
+      fromDate.setHours(0, 0, 0, 0);
+      validOrders = validOrders.filter((o: any) => new Date(o.createdAt) >= fromDate);
+    }
+    if (dateTo) {
+      const toDate = new Date(dateTo);
+      toDate.setHours(23, 59, 59, 999);
+      validOrders = validOrders.filter((o: any) => new Date(o.createdAt) <= toDate);
+    }
+
+    let rows = validOrders.map((order: any) => {
+      const user = order.userId ? userMap[order.userId] : null;
+      const name = order.customerName || user?.name || order.guestName || "Guest";
+      const phone = order.phone || order.guestPhone || user?.phone || "";
+      const effectivePaymentStatus = order.paymentStatus || (order.paymentReceived ? "paid" : "unpaid");
+      const paymentMethod = order.paymentMethod || "cash";
+
+      return {
+        orderId: order.id,
+        orderNumber: order.orderNumber || "",
+        name,
+        phone,
+        total: order.total || 0,
+        orderDate: order.createdAt,
+        paymentStatus: effectivePaymentStatus,
+        paymentMethod,
+        paymentReceived: !!order.paymentReceived,
+        orderType: order.orderType || "pickup",
+      };
+    });
+
+    if (statusFilter === "paid") {
+      rows = rows.filter((r: any) => r.paymentStatus === "paid");
+    } else if (statusFilter === "unpaid") {
+      rows = rows.filter((r: any) => r.paymentStatus !== "paid");
+    }
+
+    if (search) {
+      rows = rows.filter((r: any) =>
+        r.name.toLowerCase().includes(search)
+        || r.phone.toLowerCase().includes(search)
+        || (r.orderNumber || "").toLowerCase().includes(search)
+        || r.orderId.toLowerCase().includes(search)
+      );
+    }
+
+    rows.sort((a: any, b: any) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+
+    const allValid = rawOrders.filter((o: any) => o.paymentStatus !== "awaiting_payment" && o.status !== "cancelled");
+    const totalOrders = allValid.length;
+    const totalPaid = allValid.filter((o: any) => (o.paymentStatus || (o.paymentReceived ? "paid" : "unpaid")) === "paid").length;
+    const totalUnpaid = totalOrders - totalPaid;
+    const totalRevenue = allValid.reduce((s: number, o: any) => s + (o.total || 0), 0);
+    const totalUnpaidAmount = allValid
+      .filter((o: any) => (o.paymentStatus || (o.paymentReceived ? "paid" : "unpaid")) !== "paid")
+      .reduce((s: number, o: any) => s + (o.total || 0), 0);
+    const totalPaidAmount = totalRevenue - totalUnpaidAmount;
+
+    const summary = { totalOrders, totalPaid, totalUnpaid, totalRevenue, totalUnpaidAmount, totalPaidAmount };
+
+    const rankedRows = rows.map((r: any, i: number) => ({ ...r, rank: i + 1 }));
+
+    if (isExport) {
+      return c.json({ orders: rankedRows, summary, allOrders: rankedRows, pagination: { page: 1, limit: rankedRows.length, totalPages: 1, totalItems: rankedRows.length } });
+    }
+
+    const totalItems = rankedRows.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / limit));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const start = (safePage - 1) * limit;
+    const paged = rankedRows.slice(start, start + limit);
+
+    console.log(`📊 [Payment Report] Found ${totalItems} orders, page ${safePage}/${totalPages}`);
+
+    return c.json({
+      orders: paged,
+      summary,
+      pagination: { page: safePage, limit, totalPages, totalItems },
+    });
+  } catch (error: any) {
+    console.log(`❌ [Payment Report] Error: ${error?.message}`, error?.stack);
+    return c.json({ error: `Failed to generate Payment report: ${error?.message}` }, 500);
+  }
+});
+
 // Start the server
 Deno.serve(app.fetch);
