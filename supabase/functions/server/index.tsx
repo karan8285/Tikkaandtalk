@@ -11792,8 +11792,8 @@ app.get("/make-server-e5e192fb/admin/menu-search", async (c) => {
 
 // ---- Browser Push Notification Helper ----
 // web-push is loaded dynamically to prevent server crash if Node.js built-ins aren't available
-const VAPID_PUBLIC_KEY = (Deno.env.get('VAPID_PUBLIC_KEY') || '').replace(/=+$/, '');
-const VAPID_PRIVATE_KEY = (Deno.env.get('VAPID_PRIVATE_KEY') || '').replace(/=+$/, '');
+const VAPID_PUBLIC_KEY = (Deno.env.get('VAPID_PUBLIC_KEY') || '').trim().replace(/^["']+|["']+$/g, '').trim();
+const VAPID_PRIVATE_KEY = (Deno.env.get('VAPID_PRIVATE_KEY') || '').trim().replace(/^["']+|["']+$/g, '').trim();
 
 let webPushModule: any = null;
 let vapidConfigured = false;
@@ -12172,6 +12172,7 @@ app.get("/make-server-e5e192fb/push/vapid-key", (c) => {
   if (!VAPID_PUBLIC_KEY) {
     return c.json({ error: "VAPID keys not configured" }, 500);
   }
+  console.log("[VAPID] Returning public key, length:", VAPID_PUBLIC_KEY.length, "first 10:", VAPID_PUBLIC_KEY.substring(0, 10));
   return c.json({ vapidPublicKey: VAPID_PUBLIC_KEY });
 });
 

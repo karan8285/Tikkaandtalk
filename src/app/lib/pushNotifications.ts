@@ -49,9 +49,30 @@ async function getVapidPublicKey(): Promise<string | null> {
 
 /** Convert a URL-safe base64 VAPID key to a Uint8Array */
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData = atob(base64);
+  // Clean the input: remove whitespace, newlines, quotes, and any wrapping
+  let cleaned = base64String.trim().replace(/^["']+|["']+$/g, '').trim();
+  // Remove any whitespace/newlines within the string
+  cleaned = cleaned.replace(/\s+/g, '');
+  // Remove any trailing base64 padding (we'll re-add the correct amount)
+  cleaned = cleaned.replace(/=+$/, '');
+  // Strip any characters that aren't valid base64url
+  cleaned = cleaned.replace(/[^A-Za-z0-9_-]/g, '');
+
+  console.log("[Push] VAPID key cleaned length:", cleaned.length, "preview:", cleaned.substring(0, 20) + "...");
+
+  // Add correct padding
+  const padding = "=".repeat((4 - (cleaned.length % 4)) % 4);
+  // Convert URL-safe base64 to standard base64
+  const base64 = (cleaned + padding).replace(/-/g, "+").replace(/_/g, "/");
+
+  let rawData: string;
+  try {
+    rawData = atob(base64);
+  } catch (e) {
+    console.error("[Push] atob failed. base64 length:", base64.length, "base64 preview:", base64.substring(0, 30));
+    throw e;
+  }
+
   const outputArray = new Uint8Array(rawData.length);
   for (let i = 0; i < rawData.length; ++i) {
     outputArray[i] = rawData.charCodeAt(i);
