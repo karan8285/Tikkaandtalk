@@ -16,8 +16,34 @@ import { getRestaurantLogo } from "../lib/useRestaurantLogo";
 import { getShortOrderId } from "../lib/orderUtils";
 import { getWhatsAppNumber, getWhatsAppDisplay } from "../lib/whatsapp";
 import { loadSnapJs, openSnapPayment } from "../lib/midtrans";
+import { PushNotificationPrompt } from "../components/PushNotificationPrompt";
 
 const BRAND = APP_CONFIG.brand.primaryColor;
+
+// Helper to render text with clickable URLs
+function LinkifyText({ text, className }: { text: string; className?: string }) {
+  const urlRegex = /(https?:\/\/[^\s<]+)/g;
+  const parts = text.split(urlRegex);
+  return (
+    <span className={className}>
+      {parts.map((part, i) =>
+        urlRegex.test(part) ? (
+          <a
+            key={i}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 underline break-all hover:text-blue-800"
+          >
+            {part}
+          </a>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </span>
+  );
+}
 
 interface OrderItem {
   id: string;
@@ -74,6 +100,11 @@ interface Order {
   rating?: number;
   ratingComment?: string;
   ratingAt?: string;
+  customCharges?: Array<{ id: string; name: string; amount: number; addedByAdmin?: boolean }>;
+  lastModifiedAt?: string;
+  lastModifiedBy?: string;
+  remainingBalance?: number;
+  paymentMethod?: string;
 }
 
 const statusConfig: Record<string, { icon: string; color: string; description: string }> = {
@@ -200,7 +231,7 @@ export default function OrderTracking() {
   const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
   const { orderId } = useParams();
   const navigate = useNavigate();
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, accessToken } = useAuth();
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -605,6 +636,13 @@ export default function OrderTracking() {
                 </span>
               </div>
             )}
+            {order.lastModifiedAt && (
+              <div className="mt-2">
+                <span className="inline-block text-xs px-3 py-1 rounded-full bg-blue-100 text-blue-800 font-medium">
+                  Order modified by {order.lastModifiedBy || 'Admin'} on {new Date(order.lastModifiedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Current Order Status & Payment Status */}
@@ -658,21 +696,25 @@ export default function OrderTracking() {
                   <div className="text-[10px] mt-0.5" style={{ color: statusColor, opacity: 0.8 }}>
                     {subtitle}
                   </div>
-                  {ps !== 'paid' && (
-                    <button
-                      onClick={() => setShowPayConfirm(true)}
-                      disabled={payingNow}
-                      className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 rounded-full text-[11px] font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-60"
-                      style={{ backgroundColor: BRAND }}
-                    >
-                      {payingNow ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <CreditCard className="w-3 h-3" />
-                      )}
-                      {payingNow ? 'Processing...' : 'Pay Now'}
-                    </button>
-                  )}
+                  {ps !== 'paid' && (() => {
+                    const remainAmt = (order.total || 0) - (order.paidAmount || 0);
+                    const isRemaining = ps === 'partial' && (order.paidAmount || 0) > 0 && remainAmt > 0;
+                    return (
+                      <button
+                        onClick={() => setShowPayConfirm(true)}
+                        disabled={payingNow}
+                        className="inline-flex items-center gap-1.5 mt-2 px-3 py-1.5 rounded-full text-[11px] font-semibold text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-60"
+                        style={{ backgroundColor: BRAND }}
+                      >
+                        {payingNow ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <CreditCard className="w-3 h-3" />
+                        )}
+                        {payingNow ? 'Processing...' : isRemaining ? `Pay Remaining Rp ${remainAmt.toLocaleString()}` : 'Pay Now'}
+                      </button>
+                    );
+                  })()}
                 </div>
               );
             })()}
@@ -688,7 +730,9 @@ export default function OrderTracking() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Message from Restaurant</p>
-                <p className="text-sm text-gray-800 leading-relaxed">{order.adminMessage}</p>
+                <p className="text-sm text-gray-800 leading-relaxed">
+                  <LinkifyText text={order.adminMessage} />
+                </p>
                 {order.adminMessageAt && (
                   <p className="text-[10px] text-gray-400 mt-1.5">
                     {new Date(order.adminMessageAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
@@ -698,6 +742,9 @@ export default function OrderTracking() {
             </div>
           </div>
         )}
+
+        {/* Push Notification Prompt */}
+        <PushNotificationPrompt userId={user?.id} accessToken={accessToken} />
 
         {/* Order Details Card */}
         <div className="bg-white rounded-xl shadow-md p-5 mb-4">
@@ -710,9 +757,15 @@ export default function OrderTracking() {
             {order.items.map((item, index) => (
               <div key={index}>
                 <div className="flex justify-between text-sm">
-                  <span>
+                  <span className="flex items-center gap-1.5">
                     {(item as any).name || item.title}
                     {item.category && <span className="text-muted-foreground"> ({item.category})</span>}
+                    {(item as any).addedByAdmin && (
+                      <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">Added by Admin</span>
+                    )}
+                    {(item as any).modifiedByAdmin && !(item as any).addedByAdmin && (
+                      <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">Modified</span>
+                    )}
                   </span>
                   <span className="text-muted-foreground">Qty: {item.quantity}</span>
                 </div>
@@ -721,6 +774,22 @@ export default function OrderTracking() {
                 )}
               </div>
             ))}
+
+            {/* Custom Charges */}
+            {order.customCharges && order.customCharges.length > 0 && (
+              <div className="pt-2 border-t border-dashed">
+                <p className="text-[10px] uppercase tracking-wider text-purple-500 font-semibold mb-1.5">Additional Charges</p>
+                {order.customCharges.map((charge) => (
+                  <div key={charge.id} className="flex justify-between text-sm">
+                    <span className="flex items-center gap-1.5">
+                      {charge.name}
+                      <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">Added by Admin</span>
+                    </span>
+                    <span className="text-purple-700 font-medium">Rp {charge.amount.toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {order.address && (
@@ -759,24 +828,66 @@ export default function OrderTracking() {
               <span className="text-muted-foreground">Tax (PPN{order.taxRate ? ` ${order.taxRate}%` : ''})</span>
               <span>Rp {(order.tax || 0).toLocaleString()}</span>
             </div>
-            {order.deliveryMethod === 'delivery' && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Delivery Fee</span>
-                <span className={
-                  order.deliveryFee != null && order.deliveryFee >= 0 && (order.deliveryFee > 0 || order.createdByAdmin)
-                    ? (order.deliveryFee === 0 ? "text-green-600 font-medium" : "")
-                    : "text-amber-600 italic text-xs"
-                }>
-                  {order.deliveryFee != null && order.deliveryFee >= 0 && (order.deliveryFee > 0 || order.createdByAdmin)
-                    ? (order.deliveryFee === 0 ? "Free" : `Rp ${order.deliveryFee.toLocaleString()}`)
-                    : "To be Calculated"}
-                </span>
-              </div>
-            )}
+            {order.deliveryMethod === 'delivery' && (() => {
+              const feeKnown = order.deliveryFee != null && order.deliveryFee >= 0 &&
+                (order.deliveryFee > 0 || order.createdByAdmin || order.lastModifiedAt ||
+                 ['ready', 'out_for_delivery', 'delivered', 'closed'].includes(order.status));
+              return (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Delivery Fee</span>
+                  <span className={
+                    feeKnown
+                      ? (order.deliveryFee === 0 ? "text-green-600 font-medium" : "")
+                      : "text-amber-600 italic text-xs"
+                  }>
+                    {feeKnown
+                      ? (order.deliveryFee === 0 ? "Free" : `Rp ${order.deliveryFee!.toLocaleString()}`)
+                      : "To be Calculated"}
+                  </span>
+                </div>
+              );
+            })()}
+            {order.customCharges && order.customCharges.length > 0 && (() => {
+              const chargesTotal = order.customCharges.reduce((sum, ch) => sum + (ch.amount || 0), 0);
+              return (
+                <div className="flex justify-between">
+                  <span className="text-purple-600">Custom Charges</span>
+                  <span className="text-purple-600 font-medium">+Rp {chargesTotal.toLocaleString()}</span>
+                </div>
+              );
+            })()}
             <div className="flex justify-between pt-1.5 border-t font-bold text-lg" style={{ color: BRAND }}>
               <span>Total</span>
               <span>Rp {order.total.toLocaleString()}</span>
             </div>
+            {/* Remaining Balance after modification */}
+            {(() => {
+              const ps = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
+              const paidAmt = order.paidAmount || 0;
+              const remaining = (order.total || 0) - paidAmt;
+              if (ps === 'partial' && paidAmt > 0 && remaining > 0 && order.lastModifiedAt) {
+                return (
+                  <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <AlertCircle className="w-4 h-4 text-amber-600" />
+                      <span className="text-xs font-semibold text-amber-800">Order Modified — Remaining Balance</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-amber-700">Already Paid</span>
+                      <span className="text-green-600 font-medium">Rp {paidAmt.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm font-bold mt-1">
+                      <span className="text-amber-800">Remaining</span>
+                      <span className="text-red-600">Rp {remaining.toLocaleString()}</span>
+                    </div>
+                    <p className="text-[10px] text-amber-600 mt-1">
+                      Modified by {order.lastModifiedBy || 'Admin'} on {new Date(order.lastModifiedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  </div>
+                );
+              }
+              return null;
+            })()}
           </div>
 
           {/* Payment Details Display */}

@@ -24,10 +24,11 @@ import {
   ArrowLeft,
   CreditCard,
   RefreshCw,
-  Ticket
+  Ticket,
 } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { loadSnapJs, openSnapPayment } from "../lib/midtrans";
+import { PushNotificationPrompt } from "../components/PushNotificationPrompt";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -42,7 +43,7 @@ const Receipt = ({ className }: { className?: string }) => (
 export default function OrderSuccess() {
   const navigate = useNavigate();
   const { orderId } = useParams();
-  const { user, loading: authLoading, signUp, refreshProfile } = useAuth();
+  const { user, loading: authLoading, signUp, refreshProfile, accessToken } = useAuth();
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -51,14 +52,13 @@ export default function OrderSuccess() {
   const [renderError, setRenderError] = useState<string | null>(null);
   const [retryingPayment, setRetryingPayment] = useState(false);
   
-  // Close dialog if user logs in (no auto-popup — user must tap the banner)
-  // MUST be called before any conditional returns (Rules of Hooks)
+  // Close dialog if user logs in
   useEffect(() => {
     if (user && showAccountDialog) {
       setShowAccountDialog(false);
     }
   }, [user, showAccountDialog]);
-  
+
   // Fetch order data when component mounts
   useEffect(() => {
     const fetchOrder = async () => {
@@ -305,24 +305,24 @@ export default function OrderSuccess() {
     await new Promise(resolve => setTimeout(resolve, 300));
     
     // Get the fresh access token from localStorage
-    const accessToken = localStorage.getItem("accessToken");
+    const freshAccessToken = localStorage.getItem("accessToken");
     const userData = localStorage.getItem("user");
     const userName = userData ? JSON.parse(userData).name : "there";
     
     console.log(`📊 DEBUG - Pre-link check:`);
-    console.log(`  - accessToken exists: ${!!accessToken}`);
-    console.log(`  - accessToken (first 50 chars): ${accessToken?.substring(0, 50)}...`);
-    console.log(`  - accessToken length: ${accessToken?.length}`);
-    console.log(`  - accessToken is valid JWT format: ${accessToken?.split('.').length === 3}`);
+    console.log(`  - accessToken exists: ${!!freshAccessToken}`);
+    console.log(`  - accessToken (first 50 chars): ${freshAccessToken?.substring(0, 50)}...`);
+    console.log(`  - accessToken length: ${freshAccessToken?.length}`);
+    console.log(`  - accessToken is valid JWT format: ${freshAccessToken?.split('.').length === 3}`);
     console.log(`  - order exists: ${!!order}`);
     console.log(`  - order.id: ${order?.id}`);
     console.log(`  - Full order object:`, order);
     
-    if (accessToken && order?.id) {
+    if (freshAccessToken && order?.id) {
       try {
         console.log("🔗 Attempting to link guest order to new user account...");
         console.log(`🔗 Order ID: ${order.id}`);
-        console.log(`🔗 Access Token (first 30 chars): ${accessToken.substring(0, 30)}...`);
+        console.log(`🔗 Access Token (first 30 chars): ${freshAccessToken.substring(0, 30)}...`);
         console.log(`🔗 API URL: ${API_BASE}/link-guest-order`);
         
         // Show loading toast
@@ -334,7 +334,7 @@ export default function OrderSuccess() {
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${publicAnonKey}`,
-            "X-Custom-Auth": accessToken, // Send custom JWT in X-Custom-Auth header
+            "X-Custom-Auth": freshAccessToken, // Send custom JWT in X-Custom-Auth header
           },
           body: JSON.stringify({ orderId: order.id }),
         });
@@ -358,7 +358,7 @@ export default function OrderSuccess() {
           // Refresh the order data to show updated userId
           const orderResponse = await fetch(`${API_BASE}/orders/${order.id}?userId=${newUserId}`, {
             headers: {
-              Authorization: `Bearer ${accessToken}`,
+              Authorization: `Bearer ${freshAccessToken}`,
             },
           });
           
@@ -743,6 +743,9 @@ export default function OrderSuccess() {
           <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5 ml-1" />
         </Button>
 
+        {/* ===== PUSH NOTIFICATION PROMPT ===== */}
+        <PushNotificationPrompt userId={user?.id} accessToken={accessToken} />
+        
         {/* ===== SECTION 6: Order Summary (collapsible feel) ===== */}
         <div className="w-full bg-white rounded-xl shadow-sm p-3 sm:p-4 mb-3 sm:mb-4">
           <div className="flex items-center gap-2 mb-3">

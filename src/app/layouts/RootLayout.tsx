@@ -7,6 +7,8 @@ import { usePresence } from "../lib/presence";
 import { useDeviceSize } from "../lib/useDeviceSize";
 import { APP_CONFIG } from "../lib/config";
 import { GlobalMascot } from "../components/GlobalMascot";
+import { NotificationProvider } from "../lib/notifications";
+import { NotificationMascot } from "../components/NotificationMascot";
 import { cacheRestaurantLogo, notifyLogoUpdate, notifyBrandingFetched, isBrandingFetched } from "../lib/useRestaurantLogo";
 import { cacheRestaurantMascot, notifyMascotUpdate } from "../lib/useRestaurantMascot";
 import { setWhatsAppConfig } from "../lib/whatsapp";
@@ -115,13 +117,16 @@ export default function RootLayout() {
     <AuthProvider>
       <CartProvider>
         <MascotProvider>
-          <DocumentTitle />
-          <PresenceTracker />
-          <BrandingPrefetch />
-          <AdaptiveShell>
-            <Outlet />
-            <GlobalMascot />
-          </AdaptiveShell>
+          <NotificationProvider>
+            <DocumentTitle />
+            <PresenceTracker />
+            <BrandingPrefetch />
+            <AdaptiveShell>
+              <Outlet />
+              <GlobalMascot />
+              <NotificationMascot />
+            </AdaptiveShell>
+          </NotificationProvider>
         </MascotProvider>
       </CartProvider>
     </AuthProvider>

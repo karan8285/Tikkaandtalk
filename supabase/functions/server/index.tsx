@@ -5516,6 +5516,21 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
     
     await kvRetry(() => kv.set(`order:${orderId}`, order));
 
+    // Push notification to customer for relevant events (non-blocking)
+    try {
+      if (status) {
+        await pushOrderNotification(order, 'status_change');
+      }
+      if (adminMessage && typeof adminMessage === 'string' && adminMessage.trim()) {
+        await pushOrderNotification(order, 'admin_message', adminMessage.trim());
+      }
+      if ((addPayment || paymentStatus === 'paid' || paymentReceived === true) && order.paymentStatus === 'paid' && !status) {
+        await pushOrderNotification(order, 'payment_received');
+      }
+    } catch (notifErr: any) {
+      console.log(`⚠️ Non-critical: notification push failed: ${notifErr?.message}`);
+    }
+
     return c.json({ success: true, order });
   } catch (error) {
     console.error(`❌ Update order status error:`, error);
@@ -7131,6 +7146,8 @@ app.post("/make-server-e5e192fb/admin/orders/bulk-update", async (c) => {
         }
         
         await kv.set(`order:${orderId}`, order);
+        // Push notification for bulk status change (non-blocking)
+        try { await pushOrderNotification(order, 'status_change'); } catch {}
         results.push({ orderId, success: true, oldStatus, newStatus: status });
       } catch (err) {
         results.push({ orderId, success: false, error: err.message });
@@ -7915,6 +7932,7 @@ app.get("/make-server-e5e192fb/track/:orderNumber", async (c) => {
       itemTitle: order.itemTitle,
       subtotal: order.subtotal,
       tax: order.tax,
+      taxRate: order.taxRate,
       deliveryFee: order.deliveryFee,
       total: order.total,
       deliveryMethod: order.deliveryMethod,
@@ -7923,7 +7941,42 @@ app.get("/make-server-e5e192fb/track/:orderNumber", async (c) => {
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       estimatedDelivery: order.estimatedDelivery,
-      // Don't expose: phone, customerName, userId, admin notes, payment details
+      // Promo info
+      promoCode: order.promoCode,
+      promoDiscount: order.promoDiscount,
+      promoVoucherTitle: order.promoVoucherTitle,
+      // Custom charges from admin modifications
+      customCharges: order.customCharges,
+      lastModifiedAt: order.lastModifiedAt,
+      lastModifiedBy: order.lastModifiedBy,
+      // Payment info (safe to expose to order holder)
+      paymentStatus: order.paymentStatus,
+      paymentReceived: order.paymentReceived,
+      paidAmount: order.paidAmount,
+      remainingBalance: order.remainingBalance,
+      paymentDetails: order.paymentDetails,
+      paymentMethod: order.paymentMethod,
+      paymentHistory: order.paymentHistory,
+      // Cancellation info
+      cancellationReason: order.cancellationReason,
+      cancelledBy: order.cancelledBy,
+      // Admin message
+      adminMessage: order.adminMessage,
+      adminMessageAt: order.adminMessageAt,
+      // Points
+      pointsAwarded: order.pointsAwarded,
+      pointsEarned: order.pointsEarned,
+      // Rating
+      rating: order.rating,
+      ratingComment: order.ratingComment,
+      ratingAt: order.ratingAt,
+      // Admin-created flag
+      createdByAdmin: order.createdByAdmin,
+      // Delivery note
+      noteToDelivery: order.noteToDelivery,
+      // Scheduled
+      scheduledFor: order.scheduledFor,
+      // Don't expose: phone, customerName, userId, internal admin notes
     };
     
     return c.json({ order: publicOrderData });
@@ -11231,6 +11284,948 @@ app.get("/make-server-e5e192fb/reports/customer-payment", async (c) => {
   } catch (error: any) {
     console.log(`❌ [Payment Report] Error: ${error?.message}`, error?.stack);
     return c.json({ error: `Failed to generate Payment report: ${error?.message}` }, 500);
+  }
+});
+
+// GET /reports/revenue-breakdown — Revenue Breakdown report (superuser only)
+app.get("/make-server-e5e192fb/reports/revenue-breakdown", async (c) => {
+  try {
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+    const staffData = await kv.get(`staff:${adminAuth.userId}`);
+    if (!staffData || staffData.role !== "superuser") return c.json({ error: "Super User access required" }, 403);
+
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const limit = parseInt(c.req.query("limit") || "10", 10);
+    const search = (c.req.query("search") || "").toLowerCase().trim();
+    const groupBy = c.req.query("groupBy") || "paymentMethod";
+    const dateFrom = c.req.query("dateFrom") || "";
+    const dateTo = c.req.query("dateTo") || "";
+    const isExport = c.req.query("export") === "true";
+
+    console.log(`📊 [Revenue Report] groupBy=${groupBy} search="${search}"`);
+
+    const rawOrders = await kvRetry(() => kv.getByPrefix("order:")) || [];
+    let validOrders = rawOrders.filter((o: any) => o.paymentStatus !== "awaiting_payment" && o.status !== "cancelled" && o.createdAt);
+    if (dateFrom) { const fd = new Date(dateFrom); fd.setHours(0,0,0,0); validOrders = validOrders.filter((o: any) => new Date(o.createdAt) >= fd); }
+    if (dateTo) { const td = new Date(dateTo); td.setHours(23,59,59,999); validOrders = validOrders.filter((o: any) => new Date(o.createdAt) <= td); }
+
+    const agg: Record<string, { label: string; orders: number; revenue: number; avgOrder: number; paidCount: number; unpaidCount: number }> = {};
+    validOrders.forEach((order: any) => {
+      let key = "";
+      if (groupBy === "paymentMethod") { key = order.paymentMethod || "cash"; }
+      else if (groupBy === "orderType") { key = order.orderType || order.deliveryMethod || "pickup"; }
+      else if (groupBy === "category") {
+        const items = order.items || []; const cats = new Set<string>();
+        items.forEach((item: any) => { cats.add(item.category || "Uncategorized"); });
+        if (cats.size === 0) cats.add("Uncategorized");
+        const perCat = (order.total || 0) / cats.size;
+        const ps = order.paymentStatus || (order.paymentReceived ? "paid" : "unpaid");
+        cats.forEach(cat => {
+          if (!agg[cat]) agg[cat] = { label: cat, orders: 0, revenue: 0, avgOrder: 0, paidCount: 0, unpaidCount: 0 };
+          agg[cat].orders += 1; agg[cat].revenue += perCat;
+          if (ps === "paid") agg[cat].paidCount += 1; else agg[cat].unpaidCount += 1;
+        });
+        return;
+      }
+      if (!key) key = "unknown";
+      if (!agg[key]) agg[key] = { label: key, orders: 0, revenue: 0, avgOrder: 0, paidCount: 0, unpaidCount: 0 };
+      agg[key].orders += 1; agg[key].revenue += (order.total || 0);
+      const ps = order.paymentStatus || (order.paymentReceived ? "paid" : "unpaid");
+      if (ps === "paid") agg[key].paidCount += 1; else agg[key].unpaidCount += 1;
+    });
+
+    let rows = Object.values(agg).map(r => ({ ...r, avgOrder: r.orders > 0 ? Math.round(r.revenue / r.orders) : 0 }));
+    rows.sort((a, b) => b.revenue - a.revenue);
+    if (search) rows = rows.filter(r => r.label.toLowerCase().includes(search));
+    const rankedRows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
+
+    const totalRevenue = validOrders.reduce((s: number, o: any) => s + (o.total || 0), 0);
+    const totalOrders = validOrders.length;
+    const avgOrderValue = totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0;
+    const topGroup = rankedRows.length > 0 ? rankedRows[0].label : "-";
+    const summary = { totalRevenue, totalOrders, avgOrderValue, topGroup, groupCount: rankedRows.length };
+
+    if (isExport) return c.json({ rows: rankedRows, summary, allRows: rankedRows, pagination: { page: 1, limit: rankedRows.length, totalPages: 1, totalItems: rankedRows.length } });
+
+    const totalItems = rankedRows.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / limit));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const paged = rankedRows.slice((safePage - 1) * limit, (safePage - 1) * limit + limit);
+    return c.json({ rows: paged, summary, pagination: { page: safePage, limit, totalPages, totalItems } });
+  } catch (error: any) {
+    console.log(`❌ [Revenue Report] Error: ${error?.message}`, error?.stack);
+    return c.json({ error: `Failed to generate Revenue report: ${error?.message}` }, 500);
+  }
+});
+
+// GET /reports/staff-performance — Staff Performance report (superuser only)
+app.get("/make-server-e5e192fb/reports/staff-performance", async (c) => {
+  try {
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+    const staffCheck = await kv.get(`staff:${adminAuth.userId}`);
+    if (!staffCheck || staffCheck.role !== "superuser") return c.json({ error: "Super User access required" }, 403);
+
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const limit = parseInt(c.req.query("limit") || "10", 10);
+    const search = (c.req.query("search") || "").toLowerCase().trim();
+    const dateFrom = c.req.query("dateFrom") || "";
+    const dateTo = c.req.query("dateTo") || "";
+    const isExport = c.req.query("export") === "true";
+
+    const rawOrders = await kvRetry(() => kv.getByPrefix("order:")) || [];
+    const allStaffList = await kvRetry(() => kv.getByPrefix("staff:")) || [];
+
+    let validOrders = rawOrders.filter((o: any) => o.paymentStatus !== "awaiting_payment" && o.createdAt);
+    if (dateFrom) { const fd = new Date(dateFrom); fd.setHours(0,0,0,0); validOrders = validOrders.filter((o: any) => new Date(o.createdAt) >= fd); }
+    if (dateTo) { const td = new Date(dateTo); td.setHours(23,59,59,999); validOrders = validOrders.filter((o: any) => new Date(o.createdAt) <= td); }
+
+    const staffAgg: Record<string, { staffId: string; name: string; role: string; phone: string; ordersHandled: number; statusChanges: number; totalRevenueHandled: number; avgHandlingTimeMinutes: number; handlingTimes: number[]; cancellations: number; deliveries: number; payments: number; }> = {};
+
+    validOrders.forEach((order: any) => {
+      const history = order.statusHistory || [];
+      const orderCreatedAt = new Date(order.createdAt).getTime();
+      const staffNames = new Set<string>();
+
+      history.forEach((entry: any) => {
+        if (!entry.actor || !entry.actor.name || entry.actor.role === "customer" || entry.actor.role === "system") return;
+        const actorName = entry.actor.name;
+        const matchingStaff = allStaffList.find((s: any) => s.name === actorName);
+        if (!staffAgg[actorName]) {
+          staffAgg[actorName] = { staffId: matchingStaff?.id || "unknown", name: actorName, role: matchingStaff?.role || entry.actor.role || "staff", phone: matchingStaff?.phone || "", ordersHandled: 0, statusChanges: 0, totalRevenueHandled: 0, avgHandlingTimeMinutes: 0, handlingTimes: [], cancellations: 0, deliveries: 0, payments: 0 };
+        }
+        staffAgg[actorName].statusChanges += 1;
+        if (entry.status === "cancelled") staffAgg[actorName].cancellations += 1;
+        if (entry.status === "delivered" || entry.status === "out_for_delivery") staffAgg[actorName].deliveries += 1;
+        if (entry.status === "payment_received") staffAgg[actorName].payments += 1;
+        if (entry.timestamp) {
+          const diffMins = Math.round((new Date(entry.timestamp).getTime() - orderCreatedAt) / 60000);
+          if (diffMins >= 0 && diffMins < 1440) staffAgg[actorName].handlingTimes.push(diffMins);
+        }
+        staffNames.add(actorName);
+      });
+      staffNames.forEach(name => { if (staffAgg[name]) { staffAgg[name].ordersHandled += 1; staffAgg[name].totalRevenueHandled += (order.total || 0); } });
+    });
+
+    let rows = Object.values(staffAgg).map(s => {
+      const avgTime = s.handlingTimes.length > 0 ? Math.round(s.handlingTimes.reduce((a, b) => a + b, 0) / s.handlingTimes.length) : 0;
+      return { ...s, avgHandlingTimeMinutes: avgTime, handlingTimes: undefined };
+    });
+    rows.sort((a, b) => b.ordersHandled - a.ordersHandled);
+    if (search) rows = rows.filter(r => r.name.toLowerCase().includes(search) || r.role.toLowerCase().includes(search) || r.phone.includes(search));
+    const rankedRows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
+
+    const totalStaff = rankedRows.length;
+    const totalStatusChanges = rankedRows.reduce((s, r) => s + r.statusChanges, 0);
+    const totalOrdersHandled = rankedRows.reduce((s, r) => s + r.ordersHandled, 0);
+    const topPerformer = rankedRows.length > 0 ? rankedRows[0].name : "-";
+    const summary = { totalStaff, totalStatusChanges, totalOrdersHandled, topPerformer };
+
+    if (isExport) return c.json({ staff: rankedRows, summary, allStaff: rankedRows, pagination: { page: 1, limit: rankedRows.length, totalPages: 1, totalItems: rankedRows.length } });
+
+    const totalItems = rankedRows.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / limit));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const paged = rankedRows.slice((safePage - 1) * limit, (safePage - 1) * limit + limit);
+    return c.json({ staff: paged, summary, pagination: { page: safePage, limit, totalPages, totalItems } });
+  } catch (error: any) {
+    console.log(`❌ [Staff Report] Error: ${error?.message}`, error?.stack);
+    return c.json({ error: `Failed to generate Staff report: ${error?.message}` }, 500);
+  }
+});
+
+// GET /reports/daily-summary — Daily Summary report (superuser only)
+app.get("/make-server-e5e192fb/reports/daily-summary", async (c) => {
+  try {
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+    const staffCheck2 = await kv.get(`staff:${adminAuth.userId}`);
+    if (!staffCheck2 || staffCheck2.role !== "superuser") return c.json({ error: "Super User access required" }, 403);
+
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const limit = parseInt(c.req.query("limit") || "10", 10);
+    const search = (c.req.query("search") || "").toLowerCase().trim();
+    const dateFrom = c.req.query("dateFrom") || "";
+    const dateTo = c.req.query("dateTo") || "";
+    const isExport = c.req.query("export") === "true";
+
+    const rawOrders = await kvRetry(() => kv.getByPrefix("order:")) || [];
+    let validOrders = rawOrders.filter((o: any) => o.paymentStatus !== "awaiting_payment" && o.status !== "cancelled" && o.createdAt);
+    if (dateFrom) { const fd = new Date(dateFrom); fd.setHours(0,0,0,0); validOrders = validOrders.filter((o: any) => new Date(o.createdAt) >= fd); }
+    if (dateTo) { const td = new Date(dateTo); td.setHours(23,59,59,999); validOrders = validOrders.filter((o: any) => new Date(o.createdAt) <= td); }
+
+    const dayAgg: Record<string, { date: string; totalOrders: number; totalRevenue: number; paidOrders: number; unpaidOrders: number; paidAmount: number; unpaidAmount: number; deliveryOrders: number; pickupOrders: number; uniqueCustomers: Set<string>; itemsSold: number; itemCounts: Record<string, number>; hourCounts: Record<number, number>; }> = {};
+
+    validOrders.forEach((order: any) => {
+      const d = new Date(order.createdAt);
+      const dayKey = d.toISOString().slice(0, 10);
+      if (!dayAgg[dayKey]) dayAgg[dayKey] = { date: dayKey, totalOrders: 0, totalRevenue: 0, paidOrders: 0, unpaidOrders: 0, paidAmount: 0, unpaidAmount: 0, deliveryOrders: 0, pickupOrders: 0, uniqueCustomers: new Set(), itemsSold: 0, itemCounts: {}, hourCounts: {} };
+      const day = dayAgg[dayKey];
+      day.totalOrders += 1; day.totalRevenue += (order.total || 0);
+      const ps = order.paymentStatus || (order.paymentReceived ? "paid" : "unpaid");
+      if (ps === "paid") { day.paidOrders += 1; day.paidAmount += (order.total || 0); } else { day.unpaidOrders += 1; day.unpaidAmount += (order.total || 0); }
+      const ot = order.orderType || order.deliveryMethod || "pickup";
+      if (ot === "delivery") day.deliveryOrders += 1; else day.pickupOrders += 1;
+      day.uniqueCustomers.add(order.userId || order.phone || order.guestPhone || "guest");
+      (order.items || []).forEach((item: any) => { const qty = item.quantity || 1; day.itemsSold += qty; const n = item.name || "Unknown"; day.itemCounts[n] = (day.itemCounts[n] || 0) + qty; });
+      day.hourCounts[d.getHours()] = (day.hourCounts[d.getHours()] || 0) + 1;
+    });
+
+    let rows = Object.values(dayAgg).map(day => {
+      let topItem = "-"; let topItemCount = 0;
+      Object.entries(day.itemCounts).forEach(([name, count]) => { if (count > topItemCount) { topItem = name; topItemCount = count; } });
+      let peakHour = 0; let peakHourCount = 0;
+      Object.entries(day.hourCounts).forEach(([h, count]) => { if (count > peakHourCount) { peakHour = parseInt(h); peakHourCount = count; } });
+      const dateObj = new Date(day.date + "T00:00:00");
+      return {
+        date: day.date,
+        dateLabel: dateObj.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" }),
+        dayOfWeek: dateObj.toLocaleDateString("en-US", { weekday: "long" }),
+        totalOrders: day.totalOrders, totalRevenue: Math.round(day.totalRevenue),
+        avgOrder: day.totalOrders > 0 ? Math.round(day.totalRevenue / day.totalOrders) : 0,
+        paidOrders: day.paidOrders, unpaidOrders: day.unpaidOrders,
+        paidAmount: Math.round(day.paidAmount), unpaidAmount: Math.round(day.unpaidAmount),
+        deliveryOrders: day.deliveryOrders, pickupOrders: day.pickupOrders,
+        uniqueCustomers: day.uniqueCustomers.size, itemsSold: day.itemsSold,
+        topItem, topItemCount,
+        peakHour: `${String(peakHour).padStart(2, "0")}:00`, peakHourOrders: peakHourCount,
+      };
+    });
+    rows.sort((a, b) => b.date.localeCompare(a.date));
+    if (search) rows = rows.filter(r => r.dateLabel.toLowerCase().includes(search) || r.dayOfWeek.toLowerCase().includes(search) || r.topItem.toLowerCase().includes(search));
+    const rankedRows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
+
+    const totalDays = rankedRows.length;
+    const grandTotalRevenue = rankedRows.reduce((s, r) => s + r.totalRevenue, 0);
+    const grandTotalOrders = rankedRows.reduce((s, r) => s + r.totalOrders, 0);
+    const avgDailyRevenue = totalDays > 0 ? Math.round(grandTotalRevenue / totalDays) : 0;
+    const avgDailyOrders = totalDays > 0 ? Math.round(grandTotalOrders / totalDays) : 0;
+    const bestDay = rankedRows.length > 0 ? [...rankedRows].sort((a, b) => b.totalRevenue - a.totalRevenue)[0] : null;
+    const summary = { totalDays, grandTotalRevenue, grandTotalOrders, avgDailyRevenue, avgDailyOrders, bestDayDate: bestDay?.dateLabel || "-", bestDayRevenue: bestDay?.totalRevenue || 0 };
+
+    if (isExport) return c.json({ days: rankedRows, summary, allDays: rankedRows, pagination: { page: 1, limit: rankedRows.length, totalPages: 1, totalItems: rankedRows.length } });
+
+    const totalItems = rankedRows.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / limit));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const paged = rankedRows.slice((safePage - 1) * limit, (safePage - 1) * limit + limit);
+    return c.json({ days: paged, summary, pagination: { page: safePage, limit, totalPages, totalItems } });
+  } catch (error: any) {
+    console.log(`❌ [Daily Summary] Error: ${error?.message}`, error?.stack);
+    return c.json({ error: `Failed to generate Daily Summary: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== ADMIN: MODIFY ORDER (Add/Remove/Edit Items & Custom Charges) ====================
+app.post("/make-server-e5e192fb/admin/orders/:id/modify", async (c) => {
+  try {
+    const accessToken = c.req.header('X-Custom-Auth') || c.req.header('Authorization')?.split(' ')[1];
+    if (!accessToken) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) {
+      return c.json({ error: "Admin access required" }, 403);
+    }
+
+    // Check role: only superuser, manager, cashier can modify
+    const tokenPayload = await verifyToken(accessToken);
+    let actorName = "Admin";
+    let actorRole = "admin";
+    if (tokenPayload?.staffRole) {
+      const staffData = await kv.get(`staff:${tokenPayload.userId}`);
+      if (staffData) {
+        actorName = staffData.name || "Staff";
+        actorRole = staffData.role || "staff";
+        if (!['superuser', 'manager', 'cashier'].includes(staffData.role)) {
+          return c.json({ error: "Only Super User, Manager, or Cashier can modify orders" }, 403);
+        }
+      }
+    } else if (tokenPayload?.userId) {
+      const userData = await kv.get(`user:${tokenPayload.userId}`);
+      if (userData) {
+        actorName = userData.name || "Admin";
+        actorRole = userData.isAdmin ? "admin" : "user";
+      }
+    }
+    const actor = { name: actorName, role: actorRole };
+
+    const orderId = c.req.param('id');
+    const { items, customCharges, removedItems, modifiedItems, addedItems } = await c.req.json();
+
+    const order = await kvRetry(() => kv.get(`order:${orderId}`));
+    if (!order) {
+      return c.json({ error: "Order not found" }, 404);
+    }
+
+    if (order.status === 'closed' || order.status === 'cancelled') {
+      return c.json({ error: `Cannot modify a ${order.status} order` }, 400);
+    }
+
+    const now = new Date().toISOString();
+    if (!order.statusHistory) order.statusHistory = [];
+    if (!order.modificationHistory) order.modificationHistory = [];
+
+    const oldTotal = order.total || 0;
+
+    // Update items array (full replacement from frontend)
+    if (items && Array.isArray(items)) {
+      order.items = items;
+    }
+
+    // Update custom charges
+    if (customCharges && Array.isArray(customCharges)) {
+      order.customCharges = customCharges;
+    }
+
+    // Recalculate totals
+    const newSubtotal = (order.items || []).reduce((sum: number, item: any) => {
+      return sum + (item.price || 0) * (item.quantity || 1);
+    }, 0);
+
+    const chargesTotal = (order.customCharges || []).reduce((sum: number, ch: any) => {
+      return sum + (ch.amount || 0);
+    }, 0);
+
+    const taxRate = order.taxRate || (order.subtotal > 0 ? ((order.tax || 0) / order.subtotal) * 100 : 0);
+    const newTax = Math.round(newSubtotal * (taxRate / 100));
+    const promoDiscount = order.promoDiscount || 0;
+    const deliveryFee = order.deliveryFee || 0;
+    const newTotal = Math.round(newSubtotal - promoDiscount + newTax + deliveryFee + chargesTotal);
+
+    order.subtotal = newSubtotal;
+    order.tax = newTax;
+    order.total = newTotal;
+
+    // Update itemTitle
+    const itemNames = (order.items || []).map((item: any) => {
+      const qty = item.quantity > 1 ? ` x${item.quantity}` : '';
+      return `${item.title || item.name}${qty}`;
+    });
+    if ((order.customCharges || []).length > 0) {
+      itemNames.push(`+${order.customCharges.length} charge(s)`);
+    }
+    order.itemTitle = itemNames.join(', ');
+
+    // Build modification record
+    const modRecord: any = {
+      id: crypto.randomUUID(),
+      timestamp: now,
+      actor,
+      previousTotal: oldTotal,
+      newTotal: newTotal,
+      difference: newTotal - oldTotal,
+      changes: [],
+    };
+
+    if (removedItems && Array.isArray(removedItems)) {
+      removedItems.forEach((ri: any) => {
+        modRecord.changes.push({ type: 'removed', name: ri.title || ri.name, price: ri.price, quantity: ri.quantity });
+      });
+    }
+    if (addedItems && Array.isArray(addedItems)) {
+      addedItems.forEach((ai: any) => {
+        modRecord.changes.push({ type: 'added', name: ai.title || ai.name, price: ai.price, quantity: ai.quantity, isCustom: ai.addedByAdmin || false });
+      });
+    }
+    if (modifiedItems && Array.isArray(modifiedItems)) {
+      modifiedItems.forEach((mi: any) => {
+        modRecord.changes.push({ type: 'modified', name: mi.title || mi.name, details: mi.details || 'Quantity or price changed' });
+      });
+    }
+
+    order.modificationHistory.push(modRecord);
+
+    // Add timeline entry
+    const diffAmt = newTotal - oldTotal;
+    const diffStr = diffAmt > 0
+      ? `+Rp ${diffAmt.toLocaleString()}`
+      : diffAmt < 0
+        ? `-Rp ${Math.abs(diffAmt).toLocaleString()}`
+        : 'no change';
+    order.statusHistory.push({
+      status: 'order_modified',
+      timestamp: now,
+      label: `Order modified by ${actorName} (${diffStr})`,
+      actor,
+    });
+
+    // Handle payment impact
+    const paidAmount = order.paidAmount || 0;
+    if (paidAmount > 0 && newTotal > paidAmount) {
+      order.paymentStatus = 'partial';
+      order.paymentReceived = false;
+      order.remainingBalance = newTotal - paidAmount;
+      order.statusHistory.push({
+        status: 'payment_adjustment',
+        timestamp: now,
+        label: `Remaining balance: Rp ${(newTotal - paidAmount).toLocaleString()} (order modified)`,
+        actor,
+      });
+    } else if (paidAmount > 0 && paidAmount >= newTotal) {
+      order.paymentStatus = 'paid';
+      order.paymentReceived = true;
+      order.remainingBalance = 0;
+    }
+
+    order.lastModifiedAt = now;
+    order.lastModifiedBy = actorName;
+    order.updatedAt = now;
+
+    await kvSetWithRetry(`order:${orderId}`, order);
+
+    console.log(`✏️ Order ${orderId} modified by ${actorName}. Old: Rp ${oldTotal}, New: Rp ${newTotal}, Diff: ${diffStr}`);
+
+    // Push modification notification to customer (non-blocking)
+    try {
+      await pushOrderNotification(order, 'order_modified',
+        `Your order has been modified by ${actorName}. Total changed: ${diffStr}. Please check the updated details.`
+      );
+    } catch (notifErr: any) {
+      console.log(`⚠️ Non-critical: modification notification push failed: ${notifErr?.message}`);
+    }
+
+    return c.json({
+      success: true,
+      order,
+      modification: modRecord,
+      message: `Order modified successfully. Total changed by ${diffStr}.`,
+    });
+  } catch (error: any) {
+    console.log(`❌ [ORDER-MODIFY] Error: ${error?.message}`, error?.stack);
+    return c.json({ error: `Failed to modify order: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== ADMIN: SEARCH MENU ITEMS (for order modification) ====================
+app.get("/make-server-e5e192fb/admin/menu-search", async (c) => {
+  try {
+    const accessToken = c.req.header('X-Custom-Auth') || c.req.header('Authorization')?.split(' ')[1];
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+
+    const query = (c.req.query('q') || '').toLowerCase().trim();
+
+    const [regularItems, specialItems, kidsItems, flashItems] = await Promise.all([
+      kvGetByPrefixWithRetry("regular_menu:"),
+      kvGetByPrefixWithRetry("todays_special:"),
+      kvGetByPrefixWithRetry("kids_menu:"),
+      kvGetByPrefixWithRetry("flash_sale:"),
+    ]);
+
+    const allItems: any[] = [];
+
+    regularItems.forEach((item: any) => {
+      if (item.isAvailable !== false) {
+        allItems.push({
+          id: item.id,
+          title: item.name || item.title,
+          price: item.price,
+          category: item.category || 'Regular Menu',
+          image: item.image,
+          source: 'regular',
+        });
+      }
+    });
+
+    specialItems.forEach((item: any) => {
+      allItems.push({
+        id: `special-${item.id}`,
+        title: item.title || item.name,
+        price: item.discountedPrice || item.price,
+        category: "Today's Special",
+        image: item.image,
+        source: 'special',
+      });
+    });
+
+    kidsItems.forEach((item: any) => {
+      if (item.available !== false) {
+        allItems.push({
+          id: `kids-${item.id}`,
+          title: item.name || item.title,
+          price: item.price,
+          category: 'Kids Menu',
+          image: item.image,
+          source: 'kids',
+        });
+      }
+    });
+
+    flashItems.forEach((item: any) => {
+      if (item.active) {
+        allItems.push({
+          id: `flash-${item.id}`,
+          title: item.title || item.name,
+          price: item.salePrice || item.price,
+          category: 'Flash Sale',
+          image: item.image,
+          source: 'flash',
+        });
+      }
+    });
+
+    const filtered = query
+      ? allItems.filter(item =>
+          (item.title || '').toLowerCase().includes(query) ||
+          (item.category || '').toLowerCase().includes(query)
+        )
+      : allItems;
+
+    return c.json({ items: filtered.slice(0, 50), total: filtered.length });
+  } catch (error: any) {
+    console.log(`❌ [MENU-SEARCH] Error: ${error?.message}`);
+    return c.json({ error: `Menu search failed: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== NOTIFICATION SYSTEM ====================
+
+// ---- Browser Push Notification Helper ----
+// web-push is loaded dynamically to prevent server crash if Node.js built-ins aren't available
+const VAPID_PUBLIC_KEY = (Deno.env.get('VAPID_PUBLIC_KEY') || '').replace(/=+$/, '');
+const VAPID_PRIVATE_KEY = (Deno.env.get('VAPID_PRIVATE_KEY') || '').replace(/=+$/, '');
+
+let webPushModule: any = null;
+let vapidConfigured = false;
+
+// Lazy-load web-push on first use
+async function getWebPush(): Promise<any> {
+  if (webPushModule) return webPushModule;
+  try {
+    const mod = await import("npm:web-push@3.6.7");
+    webPushModule = mod.default || mod;
+    if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && !vapidConfigured) {
+      webPushModule.setVapidDetails(
+        'mailto:admin@tikka-n-talk.app',
+        VAPID_PUBLIC_KEY,
+        VAPID_PRIVATE_KEY
+      );
+      vapidConfigured = true;
+      console.log('✅ VAPID keys configured for browser push notifications');
+    }
+    return webPushModule;
+  } catch (err: any) {
+    console.log(`⚠️ web-push module failed to load: ${err?.message?.substring(0, 200)}. Browser push disabled.`);
+    return null;
+  }
+}
+
+/**
+ * Send browser push notification to all registered devices of a user.
+ * Non-blocking — failures are logged but do not throw.
+ */
+async function sendBrowserPush(userId: string, payload: {
+  title: string;
+  body: string;
+  url?: string;
+  icon?: string;
+  tag?: string;
+}): Promise<void> {
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  try {
+    const wp = await getWebPush();
+    if (!wp || !vapidConfigured) return;
+
+    const subsKey = `push_subs:${userId}`;
+    const subscriptions: any[] = (await kvRetry(() => kv.get(subsKey))) || [];
+    if (subscriptions.length === 0) return;
+
+    const pushPayload = JSON.stringify({
+      title: payload.title,
+      body: payload.body,
+      url: payload.url || '/',
+      icon: payload.icon,
+      tag: payload.tag || `tikka-${Date.now()}`,
+    });
+
+    const failedEndpoints: string[] = [];
+
+    await Promise.allSettled(
+      subscriptions.map(async (sub: any) => {
+        try {
+          await wp.sendNotification(sub, pushPayload);
+        } catch (err: any) {
+          if (err?.statusCode === 410 || err?.statusCode === 404) {
+            failedEndpoints.push(sub.endpoint);
+            console.log(`🗑️ Removing expired push subscription for user ${userId}`);
+          } else {
+            console.log(`⚠️ Browser push failed for user ${userId}: ${err?.message?.substring(0, 120)}`);
+          }
+        }
+      })
+    );
+
+    // Clean up expired subscriptions
+    if (failedEndpoints.length > 0) {
+      const cleaned = subscriptions.filter((s: any) => !failedEndpoints.includes(s.endpoint));
+      await kvRetry(() => kv.set(subsKey, cleaned));
+    }
+
+    console.log(`📲 Browser push sent to ${subscriptions.length - failedEndpoints.length}/${subscriptions.length} device(s) for user ${userId}`);
+  } catch (err: any) {
+    console.log(`⚠️ sendBrowserPush error for ${userId}: ${err?.message?.substring(0, 150)}`);
+  }
+}
+
+// Helper: Push a notification to a user's notification list (max 100, FIFO)
+async function pushNotification(userId: string, notif: {
+  type: string;
+  title: string;
+  message: string;
+  url?: string;
+  orderId?: string;
+  orderNumber?: string;
+}): Promise<void> {
+  try {
+    const key = `notifications:${userId}`;
+    const existing = (await kvRetry(() => kv.get(key))) || [];
+    const newNotif = {
+      id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+      ...notif,
+      read: false,
+      createdAt: new Date().toISOString(),
+    };
+    const updated = [newNotif, ...existing].slice(0, 100);
+    await kvRetry(() => kv.set(key, updated));
+    console.log(`🔔 Pushed notification to user ${userId}: "${notif.title}" (type: ${notif.type})`);
+
+    // Also send browser push notification (non-blocking)
+    const pushUrl = notif.orderId ? `/orders/${notif.orderId}` : (notif.url || '/notifications');
+    sendBrowserPush(userId, {
+      title: notif.title,
+      body: notif.message,
+      url: pushUrl,
+      tag: `tikka-${notif.type}-${Date.now()}`,
+    }).catch(() => {});
+  } catch (err: any) {
+    console.log(`⚠️ Failed to push notification to ${userId}: ${err?.message}`);
+  }
+}
+
+// Helper: Push notification for order events
+async function pushOrderNotification(order: any, eventType: string, extraMessage?: string): Promise<void> {
+  if (!order?.userId) return;
+  const shortId = getShortOrderIdServer(order.orderNumber || order.id);
+  let title = '';
+  let message = '';
+  let type = 'order_update';
+
+  switch (eventType) {
+    case 'status_change': {
+      const statusLabels: Record<string, string> = {
+        pending: 'Order Received', confirmed: 'Order Confirmed', cooking: 'Being Prepared',
+        ready: 'Ready for Pickup', out_for_delivery: 'Out for Delivery', delivered: 'Order Delivered',
+        closed: 'Order Completed', cancelled: 'Order Cancelled',
+      };
+      const label = statusLabels[order.status] || order.status;
+      title = `Order ${shortId} — ${label}`;
+      if (order.status === 'confirmed') message = 'Your order has been confirmed and will be prepared soon!';
+      else if (order.status === 'cooking') message = 'Our chef is now preparing your delicious meal!';
+      else if (order.status === 'ready') message = order.deliveryMethod === 'delivery' ? 'Your order is ready and waiting for delivery pickup!' : 'Your order is ready! Please come to collect it.';
+      else if (order.status === 'out_for_delivery') message = 'Your order is on its way to you!';
+      else if (order.status === 'delivered') message = 'Your order has been delivered. Enjoy your meal!';
+      else if (order.status === 'closed') message = 'Your order is complete. Thank you for ordering!';
+      else if (order.status === 'cancelled') { message = order.cancellationReason ? `Your order has been cancelled. Reason: ${order.cancellationReason}` : 'Your order has been cancelled.'; type = 'order_cancelled'; }
+      else message = `Your order status has been updated to: ${label}`;
+      break;
+    }
+    case 'admin_message':
+      title = `Message for Order ${shortId}`; message = extraMessage || 'You have a new message from the restaurant.'; type = 'admin_message'; break;
+    case 'order_modified':
+      title = `Order ${shortId} Modified`; message = extraMessage || 'Your order has been modified by the restaurant. Please check the updated details.'; type = 'order_modified'; break;
+    case 'payment_received':
+      title = `Payment Received — ${shortId}`; message = 'Your payment has been received. Thank you!'; break;
+    default:
+      title = `Order ${shortId} Updated`; message = extraMessage || 'Your order has been updated.';
+  }
+
+  await pushNotification(order.userId, { type, title, message, orderId: order.id, orderNumber: shortId });
+}
+
+// GET: Fetch notifications for a user
+app.get("/make-server-e5e192fb/notifications/:userId", async (c) => {
+  try {
+    const userId = c.req.param('userId');
+    if (!userId) return c.json({ error: "userId required" }, 400);
+    await processScheduledNotifications();
+    const notifs = (await kvRetry(() => kv.get(`notifications:${userId}`))) || [];
+    return c.json({ notifications: notifs });
+  } catch (error: any) {
+    console.log(`❌ Get notifications error: ${error?.message}`);
+    return c.json({ error: `Failed to get notifications: ${error?.message}` }, 500);
+  }
+});
+
+// POST: Mark a specific notification as read
+app.post("/make-server-e5e192fb/notifications/:userId/read", async (c) => {
+  try {
+    const userId = c.req.param('userId');
+    const { notificationId } = await c.req.json();
+    if (!userId || !notificationId) return c.json({ error: "userId and notificationId required" }, 400);
+    const key = `notifications:${userId}`;
+    const notifs = (await kvRetry(() => kv.get(key))) || [];
+    const updated = notifs.map((n: any) => n.id === notificationId ? { ...n, read: true } : n);
+    await kvRetry(() => kv.set(key, updated));
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log(`❌ Mark notification read error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// POST: Mark all notifications as read
+app.post("/make-server-e5e192fb/notifications/:userId/read-all", async (c) => {
+  try {
+    const userId = c.req.param('userId');
+    if (!userId) return c.json({ error: "userId required" }, 400);
+    const key = `notifications:${userId}`;
+    const notifs = (await kvRetry(() => kv.get(key))) || [];
+    const updated = notifs.map((n: any) => ({ ...n, read: true }));
+    await kvRetry(() => kv.set(key, updated));
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log(`❌ Mark all read error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// POST: Clear all notifications
+app.post("/make-server-e5e192fb/notifications/:userId/clear", async (c) => {
+  try {
+    const userId = c.req.param('userId');
+    if (!userId) return c.json({ error: "userId required" }, 400);
+    await kvRetry(() => kv.set(`notifications:${userId}`, []));
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log(`❌ Clear notifications error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// Helper: Process scheduled notifications whose time has come
+async function processScheduledNotifications(): Promise<void> {
+  try {
+    const scheduled = (await kvRetry(() => kv.get('scheduled_notifications'))) || [];
+    if (scheduled.length === 0) return;
+    const now = new Date();
+    const remaining: any[] = [];
+    let processedCount = 0;
+    for (const sn of scheduled) {
+      if (new Date(sn.scheduledAt) <= now) {
+        await deliverAdminNotification(sn);
+        const adminLog = (await kvRetry(() => kv.get('admin_notification_log'))) || [];
+        const updatedLog = adminLog.map((l: any) => l.id === sn.logId ? { ...l, status: 'sent', sentAt: now.toISOString() } : l);
+        await kvRetry(() => kv.set('admin_notification_log', updatedLog));
+        processedCount++;
+      } else {
+        remaining.push(sn);
+      }
+    }
+    if (processedCount > 0) {
+      await kvRetry(() => kv.set('scheduled_notifications', remaining));
+      console.log(`⏰ Processed ${processedCount} scheduled notification(s)`);
+    }
+  } catch (err: any) {
+    console.log(`⚠️ processScheduledNotifications error: ${err?.message}`);
+  }
+}
+
+// Helper: Deliver an admin notification (broadcast or targeted)
+async function deliverAdminNotification(notifData: any): Promise<number> {
+  const { type, title, message, url, targetPhone } = notifData;
+  let recipientCount = 0;
+  if (type === 'broadcast') {
+    const allUsers = await kvRetry(() => kv.getByPrefix("user:"));
+    for (const user of (allUsers || [])) {
+      if (!user.id || user.isAdmin) continue;
+      await pushNotification(user.id, { type: 'admin_broadcast', title, message, url });
+      recipientCount++;
+    }
+    console.log(`📢 Broadcast notification sent to ${recipientCount} user(s)`);
+  } else if (type === 'targeted' && targetPhone) {
+    const allUsers = await kvRetry(() => kv.getByPrefix("user:"));
+    const targetDigits = phoneToDigits(targetPhone);
+    const targetUser = (allUsers || []).find((u: any) => {
+      const uDigits = phoneToDigits(u.phone || '');
+      return uDigits === targetDigits || uDigits.endsWith(targetDigits) || targetDigits.endsWith(uDigits);
+    });
+    if (targetUser) {
+      await pushNotification(targetUser.id, { type: 'admin_targeted', title, message, url });
+      recipientCount = 1;
+      console.log(`📨 Targeted notification sent to ${targetUser.name || targetUser.phone}`);
+    } else {
+      console.log(`⚠️ Target user not found for phone: ${targetPhone}`);
+    }
+  }
+  return recipientCount;
+}
+
+// Admin: GET sent notification history
+app.get("/make-server-e5e192fb/admin/notifications", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(token);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+    const log = (await kvRetry(() => kv.get('admin_notification_log'))) || [];
+    log.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return c.json({ notifications: log });
+  } catch (error: any) {
+    console.log(`❌ Get admin notifications error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: POST create and send a notification
+app.post("/make-server-e5e192fb/admin/notifications", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(token);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+    const { type, title, message, url, targetPhone, scheduledAt } = await c.req.json();
+    if (!type || !title || !message) return c.json({ error: "type, title, and message are required" }, 400);
+    if (type === 'targeted' && !targetPhone) return c.json({ error: "targetPhone is required for targeted notifications" }, 400);
+
+    const now = new Date().toISOString();
+    const logId = `adminnotif_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const logEntry: any = { id: logId, type, title, message, url: url || undefined, targetPhone: targetPhone || undefined, createdAt: now, status: 'sent' };
+
+    // If scheduled for the future
+    if (scheduledAt) {
+      const schedTime = new Date(scheduledAt);
+      if (schedTime > new Date()) {
+        logEntry.status = 'scheduled';
+        logEntry.scheduledAt = scheduledAt;
+        const scheduled = (await kvRetry(() => kv.get('scheduled_notifications'))) || [];
+        scheduled.push({ logId, type, title, message, url, targetPhone, scheduledAt });
+        await kvRetry(() => kv.set('scheduled_notifications', scheduled));
+        const log = (await kvRetry(() => kv.get('admin_notification_log'))) || [];
+        log.unshift(logEntry);
+        await kvRetry(() => kv.set('admin_notification_log', log.slice(0, 200)));
+        console.log(`⏰ Notification scheduled for ${scheduledAt}`);
+        return c.json({ success: true, status: 'scheduled', scheduledAt });
+      }
+    }
+
+    // Send immediately
+    const recipientCount = await deliverAdminNotification({ type, title, message, url, targetPhone });
+    logEntry.sentAt = now;
+    logEntry.recipientCount = recipientCount;
+
+    if (type === 'targeted' && targetPhone) {
+      const allUsers = await kvRetry(() => kv.getByPrefix("user:"));
+      const targetDigits = phoneToDigits(targetPhone);
+      const targetUser = (allUsers || []).find((u: any) => {
+        const uDigits = phoneToDigits(u.phone || '');
+        return uDigits === targetDigits || uDigits.endsWith(targetDigits) || targetDigits.endsWith(uDigits);
+      });
+      if (targetUser) logEntry.targetName = targetUser.name || targetUser.phone;
+    }
+
+    const log = (await kvRetry(() => kv.get('admin_notification_log'))) || [];
+    log.unshift(logEntry);
+    await kvRetry(() => kv.set('admin_notification_log', log.slice(0, 200)));
+    return c.json({ success: true, recipientCount });
+  } catch (error: any) {
+    console.log(`❌ Create admin notification error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: DELETE a notification log entry
+app.delete("/make-server-e5e192fb/admin/notifications/:id", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(token);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+    const notifId = c.req.param('id');
+    const log = (await kvRetry(() => kv.get('admin_notification_log'))) || [];
+    await kvRetry(() => kv.set('admin_notification_log', log.filter((l: any) => l.id !== notifId)));
+    const scheduled = (await kvRetry(() => kv.get('scheduled_notifications'))) || [];
+    const updatedScheduled = scheduled.filter((s: any) => s.logId !== notifId);
+    if (updatedScheduled.length !== scheduled.length) {
+      await kvRetry(() => kv.set('scheduled_notifications', updatedScheduled));
+    }
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log(`❌ Delete admin notification error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== PUSH NOTIFICATION ENDPOINTS ====================
+
+// GET: Return the VAPID public key so the frontend can subscribe
+app.get("/make-server-e5e192fb/push/vapid-key", (c) => {
+  if (!VAPID_PUBLIC_KEY) {
+    return c.json({ error: "VAPID keys not configured" }, 500);
+  }
+  return c.json({ vapidPublicKey: VAPID_PUBLIC_KEY });
+});
+
+// POST: Store a push subscription for a user (multi-device support)
+app.post("/make-server-e5e192fb/push/subscribe", async (c) => {
+  try {
+    const { userId, subscription } = await c.req.json();
+    if (!userId || !subscription?.endpoint) {
+      return c.json({ error: "userId and subscription with endpoint required" }, 400);
+    }
+
+    const subsKey = `push_subs:${userId}`;
+    const existing: any[] = (await kvRetry(() => kv.get(subsKey))) || [];
+
+    // Avoid duplicates by endpoint
+    const alreadyExists = existing.some((s: any) => s.endpoint === subscription.endpoint);
+    if (alreadyExists) {
+      console.log(`📲 Push subscription already exists for user ${userId}, updating...`);
+      const updated = existing.map((s: any) =>
+        s.endpoint === subscription.endpoint ? subscription : s
+      );
+      await kvRetry(() => kv.set(subsKey, updated));
+    } else {
+      // Max 10 devices per user
+      const updated = [subscription, ...existing].slice(0, 10);
+      await kvRetry(() => kv.set(subsKey, updated));
+      console.log(`📲 New push subscription added for user ${userId} (total: ${updated.length} device(s))`);
+    }
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log(`❌ Push subscribe error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// POST: Remove a push subscription for a user
+app.post("/make-server-e5e192fb/push/unsubscribe", async (c) => {
+  try {
+    const { userId, endpoint } = await c.req.json();
+    if (!userId || !endpoint) {
+      return c.json({ error: "userId and endpoint required" }, 400);
+    }
+
+    const subsKey = `push_subs:${userId}`;
+    const existing: any[] = (await kvRetry(() => kv.get(subsKey))) || [];
+    const updated = existing.filter((s: any) => s.endpoint !== endpoint);
+    await kvRetry(() => kv.set(subsKey, updated));
+
+    console.log(`📲 Push subscription removed for user ${userId} (remaining: ${updated.length})`);
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log(`❌ Push unsubscribe error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
   }
 });
 

@@ -4,9 +4,10 @@ import { useAuth } from "../lib/auth";
 import { useMascot } from "../lib/mascot-context";
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
-import { User, Smartphone, Award, LogOut, ShieldCheck, Key, Bot } from "lucide-react";
+import { User, Smartphone, Award, LogOut, ShieldCheck, Key, Bot, Bell, BellOff } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { APP_CONFIG } from "../lib/config";
+import { isPushSupported, subscribeToPush, unsubscribeFromPush, isCurrentlySubscribed } from "../lib/pushNotifications";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -15,6 +16,9 @@ export default function Profile() {
   const { user, signOut, loading, refreshProfile, accessToken } = useAuth();
   const { isMascotVisible, hideMascot, showMascot } = useMascot();
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushToggling, setPushToggling] = useState(false);
 
   useEffect(() => {
     // Refresh profile on mount to get latest points
@@ -22,6 +26,34 @@ export default function Profile() {
       refreshProfile();
     }
   }, [loading, user, accessToken]);
+
+  // Check push notification status
+  useEffect(() => {
+    if (!user) return;
+    const supported = isPushSupported();
+    setPushSupported(supported);
+    if (supported) {
+      isCurrentlySubscribed().then(setPushEnabled);
+    }
+  }, [user]);
+
+  const handleTogglePush = async () => {
+    if (!user || pushToggling) return;
+    setPushToggling(true);
+    try {
+      if (pushEnabled) {
+        const success = await unsubscribeFromPush(user.id, accessToken || undefined);
+        if (success) setPushEnabled(false);
+      } else {
+        const success = await subscribeToPush(user.id, accessToken || undefined);
+        if (success) setPushEnabled(true);
+      }
+    } catch (err) {
+      console.error("[Profile] Push toggle error:", err);
+    } finally {
+      setPushToggling(false);
+    }
+  };
 
   const handleSignOut = async () => {
     console.log("🚪 Sign out clicked");
@@ -180,6 +212,43 @@ export default function Profile() {
                   className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200"
                   style={{
                     transform: isMascotVisible ? "translateX(20px)" : "translateX(0)",
+                  }}
+                />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Push Notifications */}
+        {pushSupported && (
+          <div className="bg-white rounded-xl shadow-md p-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {pushEnabled ? (
+                  <Bell className="w-5 h-5" style={{ color: APP_CONFIG.brand.primaryColor }} />
+                ) : (
+                  <BellOff className="w-5 h-5 text-gray-400" />
+                )}
+                <div>
+                  <p className="font-medium text-sm">Push Notifications</p>
+                  <p className="text-xs text-muted-foreground">
+                    {pushEnabled ? "Order updates & alerts on your device" : "Disabled — no browser alerts"}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleTogglePush}
+                disabled={pushToggling}
+                className="relative w-11 h-6 rounded-full transition-colors duration-200 disabled:opacity-50"
+                style={{
+                  backgroundColor: pushEnabled ? APP_CONFIG.brand.primaryColor : "#D1D5DB",
+                }}
+                aria-label={pushEnabled ? "Disable push notifications" : "Enable push notifications"}
+              >
+                <span
+                  className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200"
+                  style={{
+                    transform: pushEnabled ? "translateX(20px)" : "translateX(0)",
                   }}
                 />
               </button>

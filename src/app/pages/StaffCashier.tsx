@@ -15,13 +15,14 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin, MessageSquare, Save, Filter, X, Share2, CheckSquare, Loader2, Ban, Plus, Star } from "lucide-react";
+import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin, MessageSquare, Save, Filter, X, Share2, CheckSquare, Loader2, Ban, Plus, Star, Edit3 } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
 import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG, BRAND_COLOR } from "../lib/config";
 import { useNewOrderAlert } from "../lib/useNewOrderAlert";
+import { OrderModifyDialog } from "../components/OrderModifyDialog";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -62,6 +63,14 @@ interface Order {
   rating?: number;
   ratingComment?: string;
   ratingAt?: string;
+  lastModifiedAt?: string;
+  lastModifiedBy?: string;
+  customCharges?: Array<{ id: string; name: string; amount: number; addedByAdmin?: boolean }>;
+  remainingBalance?: number;
+  paymentMethod?: string;
+  promoCode?: string;
+  taxRate?: number;
+  modificationHistory?: any[];
 }
 
 const ORDER_STATUSES = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
@@ -113,6 +122,9 @@ export default function StaffCashier() {
   const [cancelOrderTarget, setCancelOrderTarget] = useState<Order | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelLoading, setCancelLoading] = useState(false);
+
+  // Modify order
+  const [modifyOrderTarget, setModifyOrderTarget] = useState<Order | null>(null);
 
   const { checkForNewOrders } = useNewOrderAlert({ label: "Cashier" });
   const accessTokenRef = useRef(accessToken);
@@ -739,6 +751,26 @@ export default function StaffCashier() {
                     </div>
                   )}
 
+                  {/* Modify Order Button */}
+                  {order.status !== 'cancelled' && order.status !== 'closed' && (
+                    <div className="mt-3 pt-3 border-t">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full h-8 text-xs border-blue-200 hover:bg-blue-50 hover:border-blue-300"
+                        style={{ color: BRAND_COLOR }}
+                        onClick={() => setModifyOrderTarget(order)}
+                      >
+                        <Edit3 className="w-3.5 h-3.5 mr-1.5" /> Modify Order (Add/Remove Items)
+                      </Button>
+                      {order.lastModifiedAt && (
+                        <p className="text-[10px] text-gray-400 mt-1 text-center">
+                          Last modified by {order.lastModifiedBy || 'Admin'} on {new Date(order.lastModifiedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Cancel Order Button */}
                   {order.status !== 'cancelled' && order.status !== 'closed' && (
                     <div className="mt-3 pt-3 border-t">
@@ -887,6 +919,17 @@ export default function StaffCashier() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Modify Order Dialog */}
+      {modifyOrderTarget && (
+        <OrderModifyDialog
+          order={modifyOrderTarget}
+          open={!!modifyOrderTarget}
+          onOpenChange={(open) => { if (!open) setModifyOrderTarget(null); }}
+          accessToken={accessToken}
+          onModified={() => { setModifyOrderTarget(null); fetchOrders(); }}
+        />
+      )}
     </div>
   );
 }

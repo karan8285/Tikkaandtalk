@@ -1,3 +1,5 @@
+import { useState, useEffect } from "react";
+import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, RefreshCw, CheckCircle2, Package, MapPin, Ticket, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../components/ui/button";
@@ -55,6 +57,9 @@ interface Order {
   promoDiscount?: number;
   promoVoucherTitle?: string;
   taxRate?: number;
+  customCharges?: Array<{ id: string; name: string; amount: number; addedByAdmin?: boolean }>;
+  lastModifiedAt?: string;
+  lastModifiedBy?: string;
 }
 
 const statusConfig: Record<string, { icon: string; color: string; description: string }> = {
@@ -416,9 +421,12 @@ export default function TrackOrder() {
               order.items.map((item, index) => (
                 <div key={index}>
                   <div className="flex justify-between text-sm">
-                    <span>
+                    <span className="flex items-center gap-1.5">
                       {item.name || item.title}
                       {item.category && <span className="text-muted-foreground"> ({item.category})</span>}
+                      {(item as any).addedByAdmin && (
+                        <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">Added by Admin</span>
+                      )}
                     </span>
                     <span className="text-muted-foreground">Qty: {item.quantity}</span>
                   </div>
@@ -429,6 +437,22 @@ export default function TrackOrder() {
               ))
             ) : (
               <div className="text-sm">{order.itemTitle}</div>
+            )}
+
+            {/* Custom Charges */}
+            {order.customCharges && order.customCharges.length > 0 && (
+              <div className="pt-2 border-t border-dashed">
+                <p className="text-[10px] uppercase tracking-wider text-purple-500 font-semibold mb-1.5">Additional Charges</p>
+                {order.customCharges.map((charge) => (
+                  <div key={charge.id} className="flex justify-between text-sm">
+                    <span className="flex items-center gap-1.5">
+                      {charge.name}
+                      <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">Added by Admin</span>
+                    </span>
+                    <span className="text-purple-700 font-medium">Rp {charge.amount.toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 
@@ -469,18 +493,44 @@ export default function TrackOrder() {
               <span className="text-muted-foreground">Tax (PPN{order.taxRate ? ` ${order.taxRate}%` : ''})</span>
               <span>Rp {(order.tax || 0).toLocaleString()}</span>
             </div>
-            {order.deliveryMethod === 'delivery' && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Delivery Fee</span>
-                <span className={(order.deliveryFee || 0) > 0 ? "" : "text-amber-600 italic text-xs"}>
-                  {(order.deliveryFee || 0) > 0 ? `Rp ${order.deliveryFee.toLocaleString()}` : "To be Calculated"}
-                </span>
-              </div>
-            )}
+            {order.deliveryMethod === 'delivery' && (() => {
+              const feeKnown = order.deliveryFee != null && order.deliveryFee >= 0 &&
+                (order.deliveryFee > 0 || order.lastModifiedAt ||
+                 ['ready', 'out_for_delivery', 'delivered', 'closed'].includes(order.status));
+              return (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Delivery Fee</span>
+                  <span className={
+                    feeKnown
+                      ? (order.deliveryFee === 0 ? "text-green-600 font-medium" : "")
+                      : "text-amber-600 italic text-xs"
+                  }>
+                    {feeKnown
+                      ? (order.deliveryFee === 0 ? "Free" : `Rp ${order.deliveryFee!.toLocaleString()}`)
+                      : "To be Calculated"}
+                  </span>
+                </div>
+              );
+            })()}
+            {order.customCharges && order.customCharges.length > 0 && (() => {
+              const chargesTotal = order.customCharges.reduce((sum, ch) => sum + (ch.amount || 0), 0);
+              return (
+                <div className="flex justify-between">
+                  <span className="text-purple-600">Custom Charges</span>
+                  <span className="text-purple-600 font-medium">+Rp {chargesTotal.toLocaleString()}</span>
+                </div>
+              );
+            })()}
             <div className="flex justify-between pt-1.5 border-t font-bold text-lg" style={{ color: BRAND }}>
               <span>Total</span>
               <span>Rp {order.total.toLocaleString()}</span>
             </div>
+            {/* Modification notice */}
+            {order.lastModifiedAt && (
+              <p className="text-[10px] text-blue-600 mt-1 text-center">
+                Order modified by {order.lastModifiedBy || 'Admin'} on {new Date(order.lastModifiedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </p>
+            )}
           </div>
 
           {/* Payment Details Display */}

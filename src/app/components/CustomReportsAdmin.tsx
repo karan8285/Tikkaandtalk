@@ -18,6 +18,9 @@ import { CustomerChurnReport } from "./CustomerChurnReport";
 import { RatingFeedbackReport } from "./RatingFeedbackReport";
 import { CustomerOrderTrendsReport } from "./CustomerOrderTrendsReport";
 import { CustomerPaymentReport } from "./CustomerPaymentReport";
+import { RevenueBreakdownReport } from "./RevenueBreakdownReport";
+import { StaffPerformanceReport } from "./StaffPerformanceReport";
+import { DailySummaryReport } from "./DailySummaryReport";
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -30,7 +33,7 @@ interface ReportDefinition {
 }
 
 /**
- * Report slots — add new entries here as reports are built.
+ * Report slots �� add new entries here as reports are built.
  * Set status to "active" once the report is implemented.
  */
 const REPORT_SLOTS: ReportDefinition[] = [
@@ -46,7 +49,7 @@ const REPORT_SLOTS: ReportDefinition[] = [
     title: "Revenue Breakdown",
     description: "Revenue split by payment method, delivery type, and category.",
     icon: TrendingUp,
-    status: "coming_soon",
+    status: "active",
   },
   {
     id: "menu-performance",
@@ -60,14 +63,14 @@ const REPORT_SLOTS: ReportDefinition[] = [
     title: "Staff Performance",
     description: "Order handling times, delivery metrics, and staff activity log.",
     icon: UserCheck,
-    status: "coming_soon",
+    status: "active",
   },
   {
     id: "daily-summary",
     title: "Daily Summary Report",
     description: "Consolidated view of daily sales, orders, and key metrics.",
     icon: BarChart3,
-    status: "coming_soon",
+    status: "active",
   },
   {
     id: "customer-churn",
@@ -139,6 +142,15 @@ export function CustomReportsAdmin({ customToken }: Props) {
         )}
         {selectedReport === "customer-payment" && (
           <CustomerPaymentReport customToken={customToken} />
+        )}
+        {selectedReport === "revenue-breakdown" && (
+          <RevenueBreakdownReport customToken={customToken} />
+        )}
+        {selectedReport === "staff-performance" && (
+          <StaffPerformanceReport customToken={customToken} />
+        )}
+        {selectedReport === "daily-summary" && (
+          <DailySummaryReport customToken={customToken} />
         )}
       </div>
     );

@@ -14,6 +14,7 @@ import { Badge } from "../components/ui/badge";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Mascot } from "../components/Mascot";
 import { useMascot } from "../lib/mascot-context";
+import { NotificationBell } from "../components/NotificationBell";
 
 interface MenuCounts {
   todaysSpecial: number;
@@ -326,20 +327,25 @@ export default function Home() {
           )}
           
           {/* Cart Icon */}
-          <button
-            onClick={() => navigate("/cart")}
-            className="relative p-2.5 -mr-2"
-          >
-            <ShoppingCart className="w-6 sm:w-7 h-6 sm:h-7" style={{ color: APP_CONFIG.brand.primaryColor }} />
-            {totalItems > 0 && (
-              <span
-                className="absolute -top-1 -right-1 w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center text-white"
-                style={{ backgroundColor: APP_CONFIG.brand.primaryColor }}
-              >
-                {totalItems}
-              </span>
-            )}
-          </button>
+          <div className="flex items-center gap-1">
+            <div style={{ color: APP_CONFIG.brand.primaryColor }}>
+              <NotificationBell />
+            </div>
+            <button
+              onClick={() => navigate("/cart")}
+              className="relative p-2.5 -mr-2"
+            >
+              <ShoppingCart className="w-6 sm:w-7 h-6 sm:h-7" style={{ color: APP_CONFIG.brand.primaryColor }} />
+              {totalItems > 0 && (
+                <span
+                  className="absolute -top-1 -right-1 w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center text-white"
+                  style={{ backgroundColor: APP_CONFIG.brand.primaryColor }}
+                >
+                  {totalItems}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 

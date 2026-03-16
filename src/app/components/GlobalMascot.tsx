@@ -23,6 +23,7 @@ function getPageFromRoute(pathname: string): MascotPage | null {
     "/debug",
     "/test-auth",
     "/guest-order-tracking",
+    "/notifications",
   ];
 
   for (const pattern of skipPatterns) {

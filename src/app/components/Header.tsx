@@ -4,6 +4,7 @@ import { ArrowLeft, ShoppingCart } from "lucide-react";
 import { useCart } from "../lib/cart";
 import { useRestaurantLogo } from "../lib/useRestaurantLogo";
 import { LOGO_ALT, APP_CONFIG } from "../lib/config";
+import { NotificationBell } from "./NotificationBell";
 
 interface HeaderProps {
   showBack?: boolean;
@@ -59,18 +60,21 @@ export function Header({ showBack = false, title, showCart = true, rightContent,
           )}
         </div>
         {rightContent || (showCart && (
-          <button
-            onClick={() => navigate("/cart")}
-            className="relative p-2 hover:bg-white/10 rounded-lg transition-colors"
-            aria-label="View cart"
-          >
-            <ShoppingCart className="w-5 h-5" />
-            {totalItems > 0 && (
-              <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                {totalItems}
-              </span>
-            )}
-          </button>
+          <div className="flex items-center gap-0.5">
+            <NotificationBell />
+            <button
+              onClick={() => navigate("/cart")}
+              className="relative p-2 hover:bg-white/10 rounded-lg transition-colors"
+              aria-label="View cart"
+            >
+              <ShoppingCart className="w-5 h-5" />
+              {totalItems > 0 && (
+                <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                  {totalItems}
+                </span>
+              )}
+            </button>
+          </div>
         ))}
       </div>
     </header>

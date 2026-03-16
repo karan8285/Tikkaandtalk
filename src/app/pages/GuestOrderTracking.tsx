@@ -713,7 +713,12 @@ export default function GuestOrderTracking() {
                       />
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-xs truncate">{item.name || item.title}</p>
+                      <p className="font-medium text-xs truncate">
+                        {item.name || item.title}
+                        {item.addedByAdmin && (
+                          <span className="inline-block text-[8px] ml-1 px-1 py-0 rounded bg-blue-100 text-blue-700 font-medium">Admin</span>
+                        )}
+                      </p>
                       {item.notes && (
                         <p className="text-[10px] text-blue-600 italic truncate">Note: {item.notes}</p>
                       )}
@@ -724,6 +729,25 @@ export default function GuestOrderTracking() {
                     </p>
                   </div>
                 ))}
+
+                {/* Custom Charges */}
+                {order.customCharges && order.customCharges.length > 0 && (
+                  <div className="pt-2 border-t border-dashed space-y-1.5">
+                    {order.customCharges.map((charge: any) => (
+                      <div key={charge.id} className="flex items-center gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-xs truncate">
+                            {charge.name}
+                            <span className="inline-block text-[8px] ml-1 px-1 py-0 rounded bg-purple-100 text-purple-700 font-medium">Charge</span>
+                          </p>
+                        </div>
+                        <p className="font-semibold text-xs whitespace-nowrap text-purple-700">
+                          {formatIDR(charge.amount)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="space-y-1">
                 <div className="flex justify-between text-xs">
@@ -743,14 +767,25 @@ export default function GuestOrderTracking() {
                   <span className="text-muted-foreground">Tax (PPN{order.taxRate ? ` ${order.taxRate}%` : ''})</span>
                   <span>{formatIDR(order.tax)}</span>
                 </div>
-                {isDelivery && (
-                  <div className="flex justify-between text-xs">
-                    <span className="text-muted-foreground">Delivery Fee</span>
-                    <span className={(order.deliveryFee || 0) > 0 ? "" : "text-amber-600"}>
-                      {(order.deliveryFee || 0) > 0 ? `Rp ${order.deliveryFee.toLocaleString()}` : "To be Calculated"}
-                    </span>
-                  </div>
-                )}
+                {isDelivery && (() => {
+                  const feeKnown = order.deliveryFee != null && order.deliveryFee >= 0 &&
+                    (order.deliveryFee > 0 || order.lastModifiedAt ||
+                     ['ready', 'out_for_delivery', 'delivered', 'closed'].includes(order.status));
+                  return (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Delivery Fee</span>
+                      <span className={
+                        feeKnown
+                          ? (order.deliveryFee === 0 ? "text-green-600 font-medium" : "")
+                          : "text-amber-600"
+                      }>
+                        {feeKnown
+                          ? (order.deliveryFee === 0 ? "Free" : `Rp ${order.deliveryFee.toLocaleString()}`)
+                          : "To be Calculated"}
+                      </span>
+                    </div>
+                  );
+                })()}
                 <div className="flex justify-between text-sm font-bold pt-1.5 mt-1 border-t">
                   <span>Total</span>
                   <span className="text-primary">{formatIDR(order.total)}</span>

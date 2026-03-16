@@ -18,7 +18,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save, Ban, Star } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save, Ban, Star, Edit3 } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -39,11 +39,13 @@ import { HomeLayoutAdmin } from "../components/HomeLayoutAdmin";
 import { CustomMenuAdmin } from "../components/CustomMenuAdmin";
 import { StaffManagement } from "../components/StaffManagement";
 import { CustomReportsAdmin } from "../components/CustomReportsAdmin";
+import { NotificationsAdmin } from "../components/NotificationsAdmin";
 import { getShortOrderId } from "../lib/orderUtils";
 import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG } from "../lib/config";
 import { useNewOrderAlert } from "../lib/useNewOrderAlert";
 import { OrderTimeline } from "../components/OrderTimeline";
+import { OrderModifyDialog } from "../components/OrderModifyDialog";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -69,6 +71,7 @@ const TAB_DEFINITIONS: { value: string; label: string; permission: string }[] = 
   { value: "custom-menus", label: "Custom", permission: "custom" },
   { value: "insights", label: "Insights", permission: "insights" },
   { value: "payments", label: "Payments", permission: "payments" },
+  { value: "notifications", label: "Notifs", permission: "notifications" },
   { value: "settings", label: "Settings", permission: "settings" },
   { value: "health", label: "Health", permission: "health" },
   { value: "staff", label: "Staff", permission: "staff" },
@@ -219,6 +222,10 @@ export default function StaffAdmin() {
             <PaymentGatewayAdmin customToken={accessToken} />
           </TabsContent>
 
+          <TabsContent value="notifications">
+            <NotificationsAdmin customToken={accessToken} />
+          </TabsContent>
+
           {role === 'superuser' && (
             <>
               <TabsContent value="settings">
@@ -287,6 +294,11 @@ interface Order {
   rating?: number;
   ratingComment?: string;
   ratingAt?: string;
+  lastModifiedAt?: string;
+  lastModifiedBy?: string;
+  customCharges?: Array<{ id: string; name: string; amount: number; addedByAdmin?: boolean }>;
+  remainingBalance?: number;
+  modificationHistory?: any[];
 }
 
 const ORDER_STATUSES = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
@@ -354,6 +366,9 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   const [cancelOrderTarget, setCancelOrderTarget] = useState<Order | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelLoading, setCancelLoading] = useState(false);
+
+  // Modify order
+  const [modifyOrderTarget, setModifyOrderTarget] = useState<Order | null>(null);
 
   const { checkForNewOrders } = useNewOrderAlert({ label: "Admin" });
   const accessTokenRef = useRef(accessToken);
@@ -1125,6 +1140,26 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
               </div>
             )}
 
+            {/* Modify Order Button */}
+            {order.status !== 'cancelled' && order.status !== 'closed' && (
+              <div className="mt-3 pt-3 border-t">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full h-8 text-xs border-blue-200 hover:bg-blue-50 hover:border-blue-300"
+                  style={{ color: BRAND }}
+                  onClick={() => setModifyOrderTarget(order)}
+                >
+                  <Edit3 className="w-3.5 h-3.5 mr-1.5" /> Modify Order (Add/Remove Items)
+                </Button>
+                {order.lastModifiedAt && (
+                  <p className="text-[10px] text-gray-400 mt-1 text-center">
+                    Last modified by {order.lastModifiedBy || 'Admin'} on {new Date(order.lastModifiedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Cancel Order Button */}
             {order.status !== 'cancelled' && order.status !== 'closed' && (
               <div className="mt-3 pt-3 border-t">
@@ -1280,6 +1315,17 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Modify Order Dialog */}
+      {modifyOrderTarget && (
+        <OrderModifyDialog
+          order={modifyOrderTarget}
+          open={!!modifyOrderTarget}
+          onOpenChange={(open) => { if (!open) setModifyOrderTarget(null); }}
+          accessToken={accessToken}
+          onModified={() => { setModifyOrderTarget(null); fetchOrders(); }}
+        />
+      )}
     </div>
   );
 }

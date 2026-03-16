@@ -5,7 +5,7 @@
 import { 
   Clock, ShoppingCart, CheckCircle2, Flame, UtensilsCrossed, Truck, Package, 
   XCircle, CreditCard, CalendarClock, DollarSign, User, Shield, ChefHat, 
-  Bike, Settings
+  Bike, Settings, Edit3, AlertTriangle
 } from "lucide-react";
 import { BRAND_COLOR } from "../lib/config";
 
@@ -39,6 +39,8 @@ const STATUS_ICON_MAP: Record<string, any> = {
   payment_received: CreditCard,
   delivery_fee_set: DollarSign,
   scheduled: CalendarClock,
+  order_modified: Edit3,
+  payment_adjustment: AlertTriangle,
 };
 
 const STATUS_COLOR_MAP: Record<string, string> = {
@@ -53,6 +55,8 @@ const STATUS_COLOR_MAP: Record<string, string> = {
   payment_received: "bg-emerald-500",
   delivery_fee_set: "bg-indigo-500",
   scheduled: "bg-blue-400",
+  order_modified: "bg-blue-600",
+  payment_adjustment: "bg-amber-500",
 };
 
 const ROLE_ICON_MAP: Record<string, any> = {
