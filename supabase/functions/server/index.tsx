@@ -1311,11 +1311,11 @@ app.post("/make-server-e5e192fb/orders", async (c) => {
       }] : [],
       pointsAwarded: false,
       statusHistory: isAlreadyPaid ? [
-        { status: "pending", timestamp: now, label: "Order Created" },
-        { status: "payment_received", timestamp: now, label: "Payment received via Midtrans" },
-        { status: "confirmed", timestamp: now, label: "Order auto-confirmed (payment received)" },
+        { status: "pending", timestamp: now, label: "Order Created", actor: { name: "Customer", role: "customer" } },
+        { status: "payment_received", timestamp: now, label: "Payment received via Midtrans", actor: { name: "System", role: "system" } },
+        { status: "confirmed", timestamp: now, label: "Order auto-confirmed (payment received)", actor: { name: "System", role: "system" } },
       ] : [
-        { status: "pending", timestamp: now, label: "Order Created" }
+        { status: "pending", timestamp: now, label: "Order Created", actor: { name: "Customer", role: "customer" } }
       ],
       createdAt: now,
       updatedAt: now,
@@ -2021,7 +2021,8 @@ async function activateScheduledOrders(): Promise<number> {
               {
                 status: "pending",
                 timestamp: now.toISOString(),
-                label: "Scheduled order activated"
+                label: "Scheduled order activated",
+                actor: { name: "System", role: "system" }
               }
             ],
             auditLog: [
@@ -4899,7 +4900,8 @@ app.post("/make-server-e5e192fb/orders/:id/cancel", async (c) => {
     order.statusHistory.push({ 
       status: 'cancelled', 
       timestamp: order.cancelledAt, 
-      label: 'Cancelled' 
+      label: 'Cancelled by Customer',
+      actor: { name: 'Customer', role: 'customer' }
     });
     await kv.set(`order:${orderId}`, order);
     
@@ -5084,11 +5086,30 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
       return c.json({ error: "Admin access required" }, 403);
     }
 
-    const orderId = c.req.param('id');
-    const { status, paymentReceived, paymentDetails, cancellationReason, paymentStatus, addPayment, deliveryFee: newDeliveryFee } = await c.req.json();
+    // Resolve actor info (who is performing this action)
+    let actorName = "Admin";
+    let actorRole = "admin";
+    const tokenPayload = await verifyToken(accessToken);
+    if (tokenPayload?.staffRole) {
+      const staffData = await kv.get(`staff:${tokenPayload.userId}`);
+      if (staffData) {
+        actorName = staffData.name || "Staff";
+        actorRole = staffData.role || "staff";
+      }
+    } else if (tokenPayload?.userId) {
+      const userData = await kv.get(`user:${tokenPayload.userId}`);
+      if (userData) {
+        actorName = userData.name || "Admin";
+        actorRole = userData.isAdmin ? "admin" : "user";
+      }
+    }
+    const actor = { name: actorName, role: actorRole };
 
-    if (!status && paymentReceived === undefined && paymentStatus === undefined && !addPayment && newDeliveryFee === undefined) {
-      return c.json({ error: "Status, paymentStatus, addPayment, or deliveryFee is required" }, 400);
+    const orderId = c.req.param('id');
+    const { status, paymentReceived, paymentDetails, cancellationReason, paymentStatus, addPayment, deliveryFee: newDeliveryFee, proofOfDeliveryUrl, adminMessage } = await c.req.json();
+
+    if (!status && paymentReceived === undefined && paymentStatus === undefined && !addPayment && newDeliveryFee === undefined && adminMessage === undefined) {
+      return c.json({ error: "Status, paymentStatus, addPayment, deliveryFee, or adminMessage is required" }, 400);
     }
 
     const order = await kv.get(`order:${orderId}`);
@@ -5123,7 +5144,8 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
       order.statusHistory.push({ 
         status: 'cancelled', 
         timestamp: now, 
-        label: 'Cancelled by Admin' 
+        label: `Cancelled by ${actorName}`,
+        actor 
       });
       order.updatedAt = now;
       
@@ -5175,7 +5197,7 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
         order.paymentStatus = "paid";
         order.paymentReceived = true;
         if (!order.statusHistory.find((h: any) => h.status === 'payment_received')) {
-          order.statusHistory.push({ status: 'payment_received', timestamp: now, label: 'Payment Received' });
+          order.statusHistory.push({ status: 'payment_received', timestamp: now, label: 'Payment Received', actor });
         }
       } else {
         order.paymentStatus = "partial";
@@ -5205,7 +5227,7 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
         order.paymentReceived = true;
         order.paidAmount = order.total || 0;
         if (!order.statusHistory.find((h: any) => h.status === 'payment_received')) {
-          order.statusHistory.push({ status: 'payment_received', timestamp: now, label: 'Payment Received' });
+          order.statusHistory.push({ status: 'payment_received', timestamp: now, label: 'Payment Received', actor });
         }
       } else if (paymentStatus === "unpaid") {
         order.paymentReceived = false;
@@ -5225,7 +5247,8 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
         order.statusHistory.push({ 
           status: 'payment_received', 
           timestamp: now, 
-          label: 'Payment Received' 
+          label: 'Payment Received',
+          actor 
         });
       }
     }
@@ -5261,7 +5284,8 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
             order.statusHistory.push({ 
               status: intermediateStatus, 
               timestamp: now, 
-              label 
+              label,
+              actor 
             });
           }
         }
@@ -5272,7 +5296,8 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
           order.statusHistory.push({ 
             status, 
             timestamp: now, 
-            label 
+            label,
+            actor 
           });
         }
       }
@@ -5294,7 +5319,28 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
       order.total = parseFloat(order.total.toFixed(2));
       console.log(`📦 Delivery fee updated for order ${orderId}: Rp ${oldDeliveryFee} -> Rp ${newDeliveryFee}, new total: Rp ${order.total}`);
       if (!order.statusHistory.find((h: any) => h.status === 'delivery_fee_set')) {
-        order.statusHistory.push({ status: 'delivery_fee_set', timestamp: now, label: `Delivery Fee: Rp ${newDeliveryFee.toLocaleString()}` });
+        order.statusHistory.push({ status: 'delivery_fee_set', timestamp: now, label: `Delivery Fee: Rp ${newDeliveryFee.toLocaleString()}`, actor });
+      }
+    }
+
+    // Store proof of delivery URL if provided
+    if (proofOfDeliveryUrl && typeof proofOfDeliveryUrl === 'string') {
+      order.proofOfDeliveryUrl = proofOfDeliveryUrl;
+      order.proofOfDeliveryAt = now;
+      console.log(`📸 Proof of delivery stored for order ${orderId}: ${proofOfDeliveryUrl.substring(0, 80)}...`);
+    }
+
+    // Store admin message (visible to customer) if provided
+    if (adminMessage !== undefined) {
+      if (typeof adminMessage === 'string' && adminMessage.trim()) {
+        order.adminMessage = adminMessage.trim();
+        order.adminMessageAt = now;
+        console.log(`💬 Admin message set for order ${orderId}: "${adminMessage.trim().substring(0, 60)}..."`);
+      } else {
+        // Allow clearing the message by sending empty string
+        delete order.adminMessage;
+        delete order.adminMessageAt;
+        console.log(`💬 Admin message cleared for order ${orderId}`);
       }
     }
 
@@ -6233,6 +6279,126 @@ app.post("/make-server-e5e192fb/admin/delete-menu-video", async (c) => {
 });
 
 // ==================== END MENU VIDEO UPLOAD & DELETE ====================
+
+// ==================== PROOF OF DELIVERY UPLOAD ====================
+
+// Upload proof of delivery image (delivery staff only)
+app.post("/make-server-e5e192fb/delivery/upload-pod", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required - no token provided" }, 401);
+    }
+
+    // Verify staff access
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Staff access required" }, 401);
+    }
+
+    // Verify it's delivery staff (or superuser/manager)
+    const tokenPayload = await verifyToken(token);
+    if (tokenPayload?.staffRole) {
+      const allowedRoles = ['delivery', 'superuser', 'manager'];
+      if (!allowedRoles.includes(tokenPayload.staffRole)) {
+        return c.json({ error: "Delivery role required to upload proof of delivery" }, 403);
+      }
+    }
+
+    const formData = await c.req.formData();
+    const file = formData.get("image") as File | null;
+    const orderId = formData.get("orderId") as string | null;
+
+    if (!file) {
+      return c.json({ error: "No file provided. Send an 'image' field in multipart form data." }, 400);
+    }
+    if (!orderId) {
+      return c.json({ error: "No orderId provided." }, 400);
+    }
+
+    // Validate file type
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      return c.json({ error: `Invalid file type: ${file.type}. Allowed: PNG, JPG, WebP.` }, 400);
+    }
+
+    // Validate file size (max 10MB for POD photos)
+    if (file.size > 10 * 1024 * 1024) {
+      return c.json({ error: "File too large. Maximum size is 10MB." }, 400);
+    }
+
+    // Verify order exists and is out_for_delivery
+    const order = await kv.get(`order:${orderId}`);
+    if (!order) {
+      return c.json({ error: "Order not found" }, 404);
+    }
+    if (order.status !== 'out_for_delivery') {
+      return c.json({ error: `Cannot upload POD for order with status '${order.status}'. Order must be 'out_for_delivery'.` }, 400);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    // Ensure bucket exists
+    if (!logoBucketReady) {
+      await ensureLogoBucket();
+      if (!logoBucketReady) {
+        return c.json({ error: "Storage bucket could not be created. Please try again." }, 500);
+      }
+    }
+
+    // Determine file extension
+    const extMap: Record<string, string> = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/jpg": "jpg",
+      "image/webp": "webp",
+    };
+    const ext = extMap[file.type] || "jpg";
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    const filePath = `pod-images/${orderId}-${timestamp}-${random}.${ext}`;
+
+    // Upload the file
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    console.log(`📸 Uploading POD image for order ${orderId}: ${filePath}, size: ${uint8.length} bytes`);
+
+    const { data, error } = await supabase.storage.from(LOGO_BUCKET).upload(filePath, uint8, {
+      contentType: file.type,
+      upsert: false,
+    });
+
+    if (error) {
+      console.error("❌ POD image upload failed:", JSON.stringify(error));
+      return c.json({ error: `Failed to upload POD image: ${error.message}` }, 500);
+    }
+
+    console.log("✅ POD image uploaded:", data.path);
+
+    // Generate a signed URL with long expiry (10 years)
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(LOGO_BUCKET)
+      .createSignedUrl(filePath, 315360000);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("❌ Failed to create signed URL for POD:", signedUrlError);
+      return c.json({ error: "Image uploaded but failed to generate URL." }, 500);
+    }
+
+    const imageUrl = signedUrlData.signedUrl;
+    console.log("✅ POD signed URL generated:", imageUrl.substring(0, 100) + "...");
+
+    return c.json({ success: true, imageUrl, path: filePath, size: file.size });
+  } catch (error) {
+    console.error("Upload POD error:", error);
+    return c.json({ error: `Failed to upload proof of delivery: ${error}` }, 500);
+  }
+});
+
+// ==================== END PROOF OF DELIVERY UPLOAD ====================
 
 // Serve logo (public fallback — redirects to signed URL)
 app.get("/make-server-e5e192fb/logo", async (c) => {

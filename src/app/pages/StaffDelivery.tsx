@@ -1,15 +1,16 @@
 /**
  * StaffDelivery — Simplified delivery dashboard.
  * Shows orders ready for pickup and out for delivery.
+ * Includes Proof of Delivery (POD) photo upload when marking as delivered.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { useStaffAuth, ROLE_LABELS } from "../lib/staff-auth";
 import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Truck, Clock, Phone, MapPin, LogOut, RefreshCw, Package, CheckCircle2, Navigation } from "lucide-react";
+import { Truck, Clock, Phone, MapPin, LogOut, RefreshCw, Package, CheckCircle2, Navigation, Camera, X, ImageIcon, Upload, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
@@ -41,24 +42,22 @@ export default function StaffDelivery() {
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"ready" | "delivering">("ready");
   const { checkForNewOrders } = useNewOrderAlert({ label: "Delivery" });
+  const accessTokenRef = useRef(accessToken);
+  accessTokenRef.current = accessToken;
 
-  useEffect(() => {
-    if (authLoading) return;
-    if (!staff) { navigate("/staff"); return; }
-    if (staff.role !== 'delivery' && staff.role !== 'superuser' && staff.role !== 'manager') {
-      toast.error("Delivery access required");
-      navigate("/staff");
-      return;
-    }
-    fetchOrders();
-    const interval = setInterval(fetchOrders, 15000);
-    return () => clearInterval(interval);
-  }, [staff, authLoading, navigate]);
+  // POD (Proof of Delivery) state
+  const [podModalOrder, setPodModalOrder] = useState<Order | null>(null);
+  const [podImage, setPodImage] = useState<File | null>(null);
+  const [podPreview, setPodPreview] = useState<string | null>(null);
+  const [podUploading, setPodUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async (signal?: AbortSignal) => {
+    if (!accessTokenRef.current) return;
     try {
       const response = await fetch(`${API_BASE}/admin/orders?page=1&limit=100&status=all&payment=all&delivery=delivery&date=all&tab=active`, {
-        headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken || "" },
+        headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessTokenRef.current },
+        signal,
       });
       if (response.ok) {
         const data = await response.json();
@@ -71,16 +70,35 @@ export default function StaffDelivery() {
         
         setOrders(deliveryOrders);
       }
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'AbortError') return;
       console.error("Failed to fetch delivery orders:", error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [checkForNewOrders]);
 
-  const updateStatus = async (orderId: string, newStatus: string) => {
+  useEffect(() => {
+    if (authLoading) return;
+    if (!staff) { navigate("/staff"); return; }
+    if (staff.role !== 'delivery' && staff.role !== 'superuser' && staff.role !== 'manager') {
+      toast.error("Delivery access required");
+      navigate("/staff");
+      return;
+    }
+    const controller = new AbortController();
+    fetchOrders(controller.signal);
+    const interval = setInterval(() => fetchOrders(), 15000);
+    return () => { controller.abort(); clearInterval(interval); };
+  }, [staff, authLoading, navigate, fetchOrders]);
+
+  const updateStatus = async (orderId: string, newStatus: string, proofOfDeliveryUrl?: string) => {
     try {
       setUpdatingStatus(orderId);
+      const body: any = { status: newStatus };
+      if (proofOfDeliveryUrl) {
+        body.proofOfDeliveryUrl = proofOfDeliveryUrl;
+      }
       const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
         method: "POST",
         headers: {
@@ -88,18 +106,101 @@ export default function StaffDelivery() {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": accessToken || "",
         },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify(body),
       });
       if (response.ok) {
         toast.success(`Order marked as ${newStatus === 'out_for_delivery' ? 'Picked Up' : 'Delivered'}`);
         fetchOrders();
       } else {
-        toast.error("Failed to update order");
+        const err = await response.json().catch(() => null);
+        toast.error(err?.error || "Failed to update order");
       }
     } catch (error) {
       toast.error("Failed to update order");
     } finally {
       setUpdatingStatus(null);
+    }
+  };
+
+  // Open the POD modal for a specific order
+  const openPodModal = (order: Order) => {
+    setPodModalOrder(order);
+    setPodImage(null);
+    setPodPreview(null);
+  };
+
+  // Close the POD modal
+  const closePodModal = () => {
+    setPodModalOrder(null);
+    setPodImage(null);
+    setPodPreview(null);
+    setPodUploading(false);
+  };
+
+  // Handle file selection
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate type
+    if (!["image/png", "image/jpeg", "image/jpg", "image/webp"].includes(file.type)) {
+      toast.error("Please select a JPG, PNG, or WebP image");
+      return;
+    }
+    // Validate size (10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("Image too large. Maximum 10MB.");
+      return;
+    }
+
+    setPodImage(file);
+    const reader = new FileReader();
+    reader.onloadend = () => setPodPreview(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  // Upload POD image and mark as delivered
+  const handleDeliverWithPod = async () => {
+    if (!podModalOrder) return;
+
+    setPodUploading(true);
+    let podUrl: string | undefined;
+
+    try {
+      // Step 1: Upload POD image if provided
+      if (podImage) {
+        const formData = new FormData();
+        formData.append("image", podImage);
+        formData.append("orderId", podModalOrder.id);
+
+        const uploadRes = await fetch(`${API_BASE}/delivery/upload-pod`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            "X-Custom-Auth": accessToken || "",
+          },
+          body: formData,
+        });
+
+        if (!uploadRes.ok) {
+          const err = await uploadRes.json().catch(() => null);
+          toast.error(err?.error || "Failed to upload delivery photo");
+          setPodUploading(false);
+          return;
+        }
+
+        const uploadData = await uploadRes.json();
+        podUrl = uploadData.imageUrl;
+        console.log("POD uploaded:", podUrl?.substring(0, 80));
+      }
+
+      // Step 2: Mark as delivered (with POD URL if available)
+      await updateStatus(podModalOrder.id, "delivered", podUrl);
+      closePodModal();
+    } catch (error) {
+      console.error("POD delivery error:", error);
+      toast.error("Failed to complete delivery");
+      setPodUploading(false);
     }
   };
 
@@ -209,7 +310,7 @@ export default function StaffDelivery() {
 
                 {order.specialInstructions && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded px-3 py-2 mb-3">
-                    <p className="text-xs text-yellow-800">📝 {order.specialInstructions}</p>
+                    <p className="text-xs text-yellow-800">{order.specialInstructions}</p>
                   </div>
                 )}
 
@@ -237,16 +338,21 @@ export default function StaffDelivery() {
                     onClick={() => updateStatus(order.id, 'out_for_delivery')}
                     disabled={updatingStatus === order.id}
                   >
-                    {updatingStatus === order.id ? "Updating..." : "🏍️ Pick Up for Delivery"}
+                    {updatingStatus === order.id ? "Updating..." : "Pick Up for Delivery"}
                   </Button>
                 )}
                 {order.status === 'out_for_delivery' && (
                   <Button
                     className="w-full text-white font-semibold bg-green-600 hover:bg-green-700"
-                    onClick={() => updateStatus(order.id, 'delivered')}
+                    onClick={() => openPodModal(order)}
                     disabled={updatingStatus === order.id}
                   >
-                    {updatingStatus === order.id ? "Updating..." : "✅ Mark as Delivered"}
+                    {updatingStatus === order.id ? "Updating..." : (
+                      <span className="flex items-center justify-center gap-2">
+                        <Camera className="w-5 h-5" />
+                        Mark as Delivered
+                      </span>
+                    )}
                   </Button>
                 )}
               </Card>
@@ -254,6 +360,162 @@ export default function StaffDelivery() {
           </div>
         )}
       </div>
+
+      {/* ===== Proof of Delivery Modal ===== */}
+      {podModalOrder && (
+        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center" onClick={closePodModal}>
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div
+            className="relative bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 duration-300 max-h-[92vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="px-5 pt-5 pb-3 border-b flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Confirm Delivery</h3>
+                <p className="text-sm text-gray-500">
+                  Order {getShortOrderId(podModalOrder.orderNumber || podModalOrder.id)}
+                  {podModalOrder.customerName && <> &middot; {podModalOrder.customerName}</>}
+                </p>
+              </div>
+              <button onClick={closePodModal} className="p-2 rounded-full hover:bg-gray-100">
+                <X className="w-5 h-5 text-gray-400" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              {/* POD Info */}
+              <div className="bg-green-50 border border-green-200 rounded-xl p-3">
+                <p className="text-sm font-semibold text-green-800 flex items-center gap-2">
+                  <Camera className="w-4 h-4" />
+                  Upload Proof of Delivery
+                </p>
+                <p className="text-xs text-green-600 mt-1">
+                  Take a photo of the delivered order at the customer's location. This will be visible to the customer.
+                </p>
+              </div>
+
+              {/* Image Upload Area */}
+              <div>
+                {!podPreview ? (
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full border-2 border-dashed border-gray-300 rounded-xl p-8 flex flex-col items-center gap-3 hover:border-green-400 hover:bg-green-50/50 transition-all active:scale-[0.98]"
+                  >
+                    <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">
+                      <Camera className="w-8 h-8 text-green-600" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-semibold text-gray-700">Tap to take photo or select</p>
+                      <p className="text-xs text-gray-400 mt-1">JPG, PNG, WebP &middot; Max 10MB</p>
+                    </div>
+                  </button>
+                ) : (
+                  <div className="relative rounded-xl overflow-hidden border-2 border-green-300">
+                    <img
+                      src={podPreview}
+                      alt="Proof of delivery preview"
+                      className="w-full h-64 object-cover"
+                    />
+                    <div className="absolute top-2 right-2 flex gap-2">
+                      <button
+                        onClick={() => {
+                          setPodImage(null);
+                          setPodPreview(null);
+                          if (fileInputRef.current) fileInputRef.current.value = "";
+                        }}
+                        className="bg-red-500 text-white rounded-full p-1.5 shadow-lg hover:bg-red-600"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-3 py-2">
+                      <p className="text-xs text-white font-medium flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Photo ready &middot; {(podImage!.size / 1024).toFixed(0)} KB
+                      </p>
+                    </div>
+                    {/* Retake button */}
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="absolute bottom-2 right-2 bg-white/90 text-gray-700 text-xs font-semibold rounded-full px-3 py-1.5 shadow-md flex items-center gap-1 hover:bg-white"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      Retake
+                    </button>
+                  </div>
+                )}
+
+                {/* Hidden file input — capture=environment opens rear camera on mobile */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
+                  capture="environment"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+              </div>
+
+              {/* Order Summary */}
+              <div className="bg-gray-50 rounded-xl p-3 space-y-1.5">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Order</span>
+                  <span className="font-semibold">{getShortOrderId(podModalOrder.orderNumber || podModalOrder.id)}</span>
+                </div>
+                {podModalOrder.customerName && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500">Customer</span>
+                    <span className="font-medium">{podModalOrder.customerName}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Amount</span>
+                  <span className="font-bold" style={{ color: BRAND_COLOR }}>{formatIDR(podModalOrder.total)}</span>
+                </div>
+                {podModalOrder.address && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500 shrink-0">Address</span>
+                    <span className="text-right ml-2 text-gray-700 text-xs">{podModalOrder.address}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-4 border-t bg-white space-y-2">
+              <Button
+                className="w-full h-12 text-base font-bold text-white bg-green-600 hover:bg-green-700 disabled:opacity-60"
+                onClick={handleDeliverWithPod}
+                disabled={podUploading}
+              >
+                {podUploading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Uploading & Confirming...
+                  </span>
+                ) : podImage ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Upload className="w-5 h-5" />
+                    Confirm Delivery with Photo
+                  </span>
+                ) : (
+                  <span className="flex items-center justify-center gap-2">
+                    <CheckCircle2 className="w-5 h-5" />
+                    Confirm Delivery without Photo
+                  </span>
+                )}
+              </Button>
+              {!podImage && (
+                <p className="text-[11px] text-center text-amber-600 font-medium">
+                  We recommend uploading a photo as proof of delivery
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@
  * StaffCashier — Simplified orders & payments dashboard for cashier role.
  * Shows all active orders with payment status management.
  */
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { useStaffAuth } from "../lib/staff-auth";
 import { Card } from "../components/ui/card";
@@ -73,6 +73,8 @@ export default function StaffCashier() {
   const [paymentLoading, setPaymentLoading] = useState(false);
 
   const { checkForNewOrders } = useNewOrderAlert({ label: "Cashier" });
+  const accessTokenRef = useRef(accessToken);
+  accessTokenRef.current = accessToken;
 
   useEffect(() => {
     if (authLoading) return;
@@ -83,9 +85,9 @@ export default function StaffCashier() {
       return;
     }
     fetchOrders();
-    const interval = setInterval(fetchOrders, 15000);
+    const interval = setInterval(() => fetchOrders(), 15000);
     return () => clearInterval(interval);
-  }, [staff, authLoading, navigate]);
+  }, [staff, authLoading, navigate, fetchOrders]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery), 400);
@@ -93,6 +95,7 @@ export default function StaffCashier() {
   }, [searchQuery]);
 
   const fetchOrders = useCallback(async () => {
+    if (!accessTokenRef.current) return;
     try {
       const params = new URLSearchParams({
         page: currentPage.toString(), limit: "15",
@@ -101,7 +104,7 @@ export default function StaffCashier() {
       if (debouncedSearch) params.set("search", debouncedSearch);
 
       const response = await fetch(`${API_BASE}/admin/orders?${params}`, {
-        headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken || "" },
+        headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessTokenRef.current },
       });
       if (response.ok) {
         const data = await response.json();
@@ -121,7 +124,7 @@ export default function StaffCashier() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken, currentPage, debouncedSearch, activeTab]);
+  }, [currentPage, debouncedSearch, activeTab, checkForNewOrders]);
 
   useEffect(() => { if (!loading) fetchOrders(); }, [currentPage, debouncedSearch, activeTab]);
 

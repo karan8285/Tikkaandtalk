@@ -18,7 +18,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -42,6 +42,7 @@ import { getShortOrderId } from "../lib/orderUtils";
 import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG } from "../lib/config";
 import { useNewOrderAlert } from "../lib/useNewOrderAlert";
+import { OrderTimeline } from "../components/OrderTimeline";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -270,6 +271,10 @@ interface Order {
   promoDiscount?: number;
   promoVoucherTitle?: string;
   scheduledAt?: string;
+  proofOfDeliveryUrl?: string;
+  proofOfDeliveryAt?: string;
+  adminMessage?: string;
+  adminMessageAt?: string;
 }
 
 const ORDER_STATUSES = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
@@ -285,6 +290,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: StaffRole }) {
+  const navigate = useNavigate();
   const [orders, setOrders] = useState<Order[]>([]);
   const [totalFiltered, setTotalFiltered] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -302,8 +308,14 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   const [bulkStatusDialog, setBulkStatusDialog] = useState(false);
   const [bulkStatus, setBulkStatus] = useState<string>("closed");
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [expandedTimeline, setExpandedTimeline] = useState<string | null>(null);
+
+  const [adminMessages, setAdminMessages] = useState<Record<string, string>>({});
+  const [savingMessage, setSavingMessage] = useState<string | null>(null);
 
   const { checkForNewOrders } = useNewOrderAlert({ label: "Admin" });
+  const accessTokenRef = useRef(accessToken);
+  accessTokenRef.current = accessToken;
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery), 400);
@@ -311,6 +323,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   }, [searchQuery]);
 
   const fetchOrders = useCallback(async () => {
+    if (!accessTokenRef.current) return;
     try {
       const params = new URLSearchParams({
         page: currentPage.toString(), limit: ordersPerPage.toString(),
@@ -319,7 +332,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
       if (debouncedSearch) params.set("search", debouncedSearch);
 
       const response = await fetch(`${API_BASE}/admin/orders?${params}`, {
-        headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
+        headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessTokenRef.current },
       });
       if (response.ok) {
         const data = await response.json();
@@ -339,7 +352,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
     } finally {
       setLoading(false);
     }
-  }, [accessToken, currentPage, ordersPerPage, statusFilter, debouncedSearch, orderSubTab]);
+  }, [currentPage, ordersPerPage, statusFilter, debouncedSearch, orderSubTab, checkForNewOrders]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
@@ -359,6 +372,26 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
       if (response.ok) { toast.success(`Order updated to ${STATUS_LABELS[newStatus]}`); fetchOrders(); }
       else { const err = await response.json().catch(() => ({})); toast.error(err.error || "Failed to update order"); }
     } catch (error: any) { toast.error(error.message); }
+  };
+
+  const saveAdminMessage = async (orderId: string, message: string) => {
+    try {
+      setSavingMessage(orderId);
+      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
+        body: JSON.stringify({ adminMessage: message }),
+      });
+      if (response.ok) {
+        toast.success("Message saved — visible to customer");
+        setAdminMessages(prev => { const n = { ...prev }; delete n[orderId]; return n; });
+        fetchOrders();
+      } else {
+        const err = await response.json().catch(() => ({}));
+        toast.error(err.error || "Failed to save message");
+      }
+    } catch (error: any) { toast.error(error.message); }
+    finally { setSavingMessage(null); }
   };
 
   // Bulk action handlers
@@ -495,6 +528,35 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
         </Card>
       </div>
 
+      {/* Quick Action Buttons */}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="default"
+          size="sm"
+          onClick={() => navigate("/staff/kitchen")}
+          className="bg-orange-600 hover:bg-orange-700"
+        >
+          <ChefHat className="w-4 h-4 mr-2" />
+          Kitchen
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          onClick={() => navigate("/staff/create-order")}
+        >
+          <Plus className="w-4 h-4 mr-2" />
+          Create Order
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => fetchOrders()}
+        >
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Refresh
+        </Button>
+      </div>
+
       {/* Sub-tabs */}
       <div className="flex rounded-lg border overflow-hidden">
         <button
@@ -621,6 +683,90 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                 </Select>
               )}
             </div>
+
+            {/* Admin Message to Customer */}
+            <div className="mt-3 pt-3 border-t">
+              <Label className="text-xs font-medium mb-1.5 flex items-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5" style={{ color: BRAND }} />
+                Message to Customer
+              </Label>
+              <Textarea
+                value={adminMessages[order.id] ?? order.adminMessage ?? ""}
+                onChange={(e) => setAdminMessages(prev => ({ ...prev, [order.id]: e.target.value }))}
+                placeholder="e.g. Your order is being prepared with extra care!"
+                rows={2}
+                className="text-xs resize-none mt-1"
+              />
+              <div className="flex gap-2 mt-1.5">
+                <Button
+                  size="sm"
+                  className="h-7 text-xs"
+                  style={{ backgroundColor: BRAND }}
+                  disabled={savingMessage === order.id || (adminMessages[order.id] === undefined && !order.adminMessage)}
+                  onClick={() => saveAdminMessage(order.id, adminMessages[order.id] ?? order.adminMessage ?? "")}
+                >
+                  <Save className="w-3 h-3 mr-1" />
+                  {savingMessage === order.id ? "Saving..." : "Save"}
+                </Button>
+                {(adminMessages[order.id] ?? order.adminMessage) && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs text-red-600 border-red-200 hover:bg-red-50"
+                    disabled={savingMessage === order.id}
+                    onClick={() => {
+                      setAdminMessages(prev => ({ ...prev, [order.id]: "" }));
+                      saveAdminMessage(order.id, "");
+                    }}
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* Order Timeline */}
+            {expandedTimeline === order.id && order.statusHistory && (
+              <div className="mt-3 pt-3 border-t">
+                <p className="text-xs font-semibold text-gray-500 mb-3 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5" /> ORDER TIMELINE
+                </p>
+
+                {/* Proof of Delivery in timeline */}
+                {order.proofOfDeliveryUrl && (
+                  <div className="mb-3 bg-green-50 border border-green-200 rounded-lg p-3">
+                    <p className="text-xs font-semibold text-green-800 flex items-center gap-1.5 mb-2">
+                      <Camera className="w-3.5 h-3.5" />
+                      Proof of Delivery
+                      {order.proofOfDeliveryAt && (
+                        <span className="font-normal text-green-600 ml-auto">
+                          {new Date(order.proofOfDeliveryAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      )}
+                    </p>
+                    <img
+                      src={order.proofOfDeliveryUrl}
+                      alt="Proof of delivery"
+                      className="w-full max-h-40 object-cover rounded-md border border-green-300 cursor-pointer hover:opacity-90 transition-opacity"
+                      onClick={() => window.open(order.proofOfDeliveryUrl, '_blank')}
+                    />
+                  </div>
+                )}
+
+                <OrderTimeline 
+                  statusHistory={order.statusHistory} 
+                  createdAt={order.createdAt}
+                />
+              </div>
+            )}
+            <button
+              onClick={() => setExpandedTimeline(expandedTimeline === order.id ? null : order.id)}
+              className="mt-2 text-xs font-medium flex items-center gap-1 hover:underline"
+              style={{ color: BRAND }}
+            >
+              <Clock className="w-3 h-3" />
+              {expandedTimeline === order.id ? "Hide Timeline" : "View Timeline"}
+            </button>
           </Card>
         ))}
 

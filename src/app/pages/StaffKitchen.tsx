@@ -2,7 +2,7 @@
  * StaffKitchen — Simplified kitchen ticket board for kitchen staff.
  * Shows only active cooking orders as a live board with status updates.
  */
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router";
 import { useStaffAuth, ROLE_LABELS, ROLE_COLORS } from "../lib/staff-auth";
 import { Card } from "../components/ui/card";
@@ -75,25 +75,15 @@ export default function StaffKitchen() {
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const prevCountRef = useRef(0);
   const { checkForNewOrders } = useNewOrderAlert({ label: "Kitchen" });
+  const accessTokenRef = useRef(accessToken);
+  accessTokenRef.current = accessToken;
 
-  useEffect(() => {
-    if (authLoading) return;
-    if (!staff) { navigate("/staff"); return; }
-    if (staff.role !== 'kitchen' && staff.role !== 'superuser' && staff.role !== 'manager') {
-      toast.error("Kitchen access required");
-      navigate("/staff");
-      return;
-    }
-
-    fetchOrders();
-    const intervalId = setInterval(fetchOrders, 10000); // Poll every 10s
-    return () => clearInterval(intervalId);
-  }, [staff, authLoading, navigate]);
-
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async (signal?: AbortSignal) => {
+    if (!accessTokenRef.current) return;
     try {
       const response = await fetch(`${API_BASE}/admin/orders?page=1&limit=100&status=all&payment=all&delivery=all&date=all&tab=active`, {
-        headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken || "" },
+        headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessTokenRef.current },
+        signal,
       });
 
       if (response.ok) {
@@ -110,12 +100,28 @@ export default function StaffKitchen() {
         
         setOrders(kitchenOrders);
       }
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'AbortError') return;
       console.error("Failed to fetch kitchen orders:", error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [checkForNewOrders]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!staff) { navigate("/staff"); return; }
+    if (staff.role !== 'kitchen' && staff.role !== 'superuser' && staff.role !== 'manager') {
+      toast.error("Kitchen access required");
+      navigate("/staff");
+      return;
+    }
+
+    const controller = new AbortController();
+    fetchOrders(controller.signal);
+    const intervalId = setInterval(() => fetchOrders(), 10000); // Poll every 10s
+    return () => { controller.abort(); clearInterval(intervalId); };
+  }, [staff, authLoading, navigate, fetchOrders]);
 
   const advanceStatus = async (order: Order) => {
     const nextStatus = STATUS_FLOW[order.status];
