@@ -443,23 +443,14 @@ async function initializeDefaultData(attempt = 1) {
       }
     } else {
       console.log("✅ Admin user already exists:", existingAdmin.id);
-      // Update admin password to current ADMIN_PIN (handles migration from old passwords like "admin123")
-      console.log("🔧 Updating admin password to current ADMIN_PIN...");
-      try {
-        const { error: updatePwError } = await supabase.auth.admin.updateUserById(existingAdmin.id, {
-          password: ADMIN_PIN,
-        });
-        if (updatePwError) {
-          console.log("⚠️ Failed to update admin password (non-critical, skipping):", updatePwError.message);
-        } else {
-          console.log("✅ Admin password updated to current ADMIN_PIN");
-        }
-      } catch (pwUpdateErr: any) {
-        // Network errors (connection reset, timeout) are transient — log and continue
-        console.log("⚠️ Admin password update hit a network error (non-critical, skipping):", pwUpdateErr?.message || pwUpdateErr);
-      }
+      // Skip password update on startup to avoid transient broken pipe errors.
+      // Password is set correctly during initial creation.
       console.log("🔧 Ensuring admin user data in KV...");
-      await ensureAdminKVData(existingAdmin.id, existingAdmin.created_at, ADMIN_PHONE);
+      try {
+        await ensureAdminKVData(existingAdmin.id, existingAdmin.created_at, ADMIN_PHONE);
+      } catch (kvErr: any) {
+        console.log("⚠️ ensureAdminKVData failed (non-critical):", kvErr?.message);
+      }
     }
     
     console.log("✅ Default data initialization completed");
@@ -12166,6 +12157,58 @@ app.delete("/make-server-e5e192fb/admin/notifications/:id", async (c) => {
 });
 
 // ==================== PUSH NOTIFICATION ENDPOINTS ====================
+
+// GET: Diagnose VAPID key configuration
+app.get("/make-server-e5e192fb/push/vapid-diagnose", async (c) => {
+  try {
+    // Generate fresh VAPID keys using Web Crypto API
+    let freshKeys: { publicKey: string; privateKey: string } | null = null;
+    try {
+      const keyPair = await crypto.subtle.generateKey(
+        { name: "ECDSA", namedCurve: "P-256" },
+        true,
+        ["sign", "verify"]
+      );
+      const publicRaw = await crypto.subtle.exportKey("raw", keyPair.publicKey);
+      const privateJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
+      const toBase64Url = (buf: ArrayBuffer) => {
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      };
+      freshKeys = {
+        publicKey: toBase64Url(publicRaw),
+        privateKey: privateJwk.d!,
+      };
+    } catch (genErr: any) {
+      console.log("Failed to generate VAPID keys via Web Crypto:", genErr?.message);
+    }
+
+    return c.json({
+      currentPublicKey: {
+        value: VAPID_PUBLIC_KEY,
+        length: VAPID_PUBLIC_KEY.length,
+        hasInvalidChars: /[^A-Za-z0-9_-]/.test(VAPID_PUBLIC_KEY),
+        isValid: VAPID_PUBLIC_KEY.length === 87 && !/[^A-Za-z0-9_-]/.test(VAPID_PUBLIC_KEY),
+      },
+      currentPrivateKey: {
+        length: VAPID_PRIVATE_KEY.length,
+        hasInvalidChars: /[^A-Za-z0-9_-]/.test(VAPID_PRIVATE_KEY),
+        isValid: VAPID_PRIVATE_KEY.length === 43 && !/[^A-Za-z0-9_-]/.test(VAPID_PRIVATE_KEY),
+      },
+      freshGeneratedKeys: freshKeys ? {
+        publicKey: freshKeys.publicKey,
+        privateKey: freshKeys.privateKey,
+        publicKeyLength: freshKeys.publicKey.length,
+        privateKeyLength: freshKeys.privateKey.length,
+        note: "UPDATE your Supabase secrets: set VAPID_PUBLIC_KEY to publicKey and VAPID_PRIVATE_KEY to privateKey"
+      } : { error: "Could not generate keys" },
+    });
+  } catch (err: any) {
+    return c.json({ error: err?.message || "Failed to diagnose" }, 500);
+  }
+});
 
 // GET: Return the VAPID public key so the frontend can subscribe
 app.get("/make-server-e5e192fb/push/vapid-key", (c) => {

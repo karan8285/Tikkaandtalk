@@ -55,9 +55,13 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     if (!user?.id) return;
     try {
       if (!silent) setLoading(true);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
       const res = await fetch(`${API_BASE}/notifications/${user.id}`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       if (res.ok) {
         const data = await res.json();
         const notifs: Notification[] = data.notifications || [];
@@ -71,8 +75,11 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         prevCountRef.current = currentUnread;
         initialFetchDone.current = true;
       }
-    } catch (err) {
-      console.error("Failed to fetch notifications:", err);
+    } catch (err: any) {
+      // Silently ignore network/abort errors during polling to avoid console spam
+      if (!silent) {
+        console.error("Failed to fetch notifications:", err);
+      }
     } finally {
       setLoading(false);
     }

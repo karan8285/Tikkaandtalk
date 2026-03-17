@@ -90,9 +90,27 @@ async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null
       return existingReg;
     }
 
+    // Probe /sw.js to check if host serves it with correct MIME type
+    // SPA hosts like figma.site return text/html for all paths (catch-all rewrite)
+    console.log("[Push] Probing /sw.js MIME type...");
+    try {
+      const swRes = await fetch("/sw.js", { method: "HEAD" });
+      const ct = swRes.headers.get("content-type") || "";
+      if (!ct.includes("javascript")) {
+        console.warn(
+          `[Push] /sw.js returned MIME type "${ct}" instead of application/javascript. ` +
+          "This host uses SPA catch-all rewrites that prevent service worker registration. " +
+          "Browser push notifications are unavailable on this host — in-app notifications still work."
+        );
+        return null;
+      }
+    } catch {
+      console.warn("[Push] Could not probe /sw.js — assuming unavailable");
+      return null;
+    }
+
     console.log("[Push] Registering service worker from /sw.js...");
     const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-    // Wait for the SW to be ready
     await navigator.serviceWorker.ready;
     console.log("[Push] Service worker registered successfully");
     return registration;
@@ -146,15 +164,25 @@ export async function subscribeToPush(userId: string, customToken?: string): Pro
       return false;
     }
 
+    console.log("[Push] Raw VAPID key from server:", JSON.stringify(vapidKey), "length:", vapidKey.length);
+
     // 4. Subscribe to push (PushManager must exist)
     if (!hasPush && !registration.pushManager) {
       console.error("[Push] PushManager not available on registration");
       return false;
     }
 
+    const appServerKey = urlBase64ToUint8Array(vapidKey);
+    console.log("[Push] Decoded applicationServerKey byte length:", appServerKey.length, "(should be 65 for P-256)");
+
+    if (appServerKey.length !== 65) {
+      console.error("[Push] INVALID VAPID key! Decoded to", appServerKey.length, "bytes but expected 65. Your VAPID_PUBLIC_KEY secret is likely wrong. Visit /functions/v1/make-server-e5e192fb/push/vapid-diagnose to generate fresh keys.");
+      return false;
+    }
+
     const subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(vapidKey),
+      applicationServerKey: appServerKey,
     });
 
     // 5. Send subscription to server
