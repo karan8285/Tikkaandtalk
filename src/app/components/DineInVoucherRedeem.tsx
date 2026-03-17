@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { formatIDR } from "../lib/currency";
+import jsQR from "jsqr";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -144,10 +145,35 @@ export function DineInVoucherRedeem({ customToken, staffName }: DineInVoucherRed
   };
 
   const scanQRFrame = () => {
-    // Note: Full QR decoding requires a library like jsQR.
-    // Since we can't install jsQR here, we'll use a simpler approach:
-    // The customer can manually share their assignment ID or code.
-    // The camera view is shown as a UX affordance with a manual input fallback.
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+      inversionAttempts: "dontInvert",
+    });
+
+    if (code && code.data) {
+      console.log("QR scanned:", code.data);
+      // Stop scanning immediately
+      if (scanIntervalRef.current) {
+        clearInterval(scanIntervalRef.current);
+        scanIntervalRef.current = null;
+      }
+      setScanResult(code.data);
+      toast.success("QR code scanned!");
+      // Auto-verify the scanned data
+      handleManualScan(code.data);
+      stopCamera();
+    }
   };
 
   const handleManualScan = async (scannedText: string) => {

@@ -72,6 +72,7 @@ export default function MyVouchers() {
       });
       if (res.ok) {
         const data = await res.json();
+        console.log("Fetched vouchers:", JSON.stringify(data.vouchers?.map((v: any) => ({ assignmentId: v.assignmentId, code: v.code, title: v.title }))));
         setVouchers(data.vouchers || []);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -315,14 +316,20 @@ export default function MyVouchers() {
               {/* QR Code */}
               <div className="flex justify-center">
                 <div className="p-4 bg-white rounded-2xl shadow-inner border-2" style={{ borderColor: `${BRAND}30` }}>
-                  <QRCodeSVG
-                    value={`DINEIN:${selectedVoucher.assignmentId}`}
-                    size={200}
-                    fgColor="#1F2937"
-                    bgColor="#FFFFFF"
-                    level="M"
-                    includeMargin={false}
-                  />
+                  {selectedVoucher.assignmentId ? (
+                    <QRCodeSVG
+                      value={`DINEIN:${selectedVoucher.assignmentId}`}
+                      size={200}
+                      fgColor="#1F2937"
+                      bgColor="#FFFFFF"
+                      level="M"
+                      includeMargin={true}
+                    />
+                  ) : (
+                    <div className="w-[200px] h-[200px] flex items-center justify-center bg-gray-100 rounded-lg">
+                      <p className="text-xs text-red-500 px-4">QR code unavailable. Please try refreshing.</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -330,6 +337,24 @@ export default function MyVouchers() {
               <p className="text-xs text-gray-500">
                 Show this QR code to the staff to redeem your discount
               </p>
+
+              {/* Assignment ID for manual entry fallback */}
+              {selectedVoucher.assignmentId && (
+                <div className="flex items-center justify-center gap-2">
+                  <span className="text-[10px] text-gray-400 font-mono truncate max-w-[200px]">
+                    ID: {selectedVoucher.assignmentId.slice(0, 8)}...
+                  </span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`DINEIN:${selectedVoucher.assignmentId}`);
+                      toast.success("QR data copied! Staff can paste this to verify.");
+                    }}
+                    className="p-1 rounded hover:bg-gray-100 transition-colors"
+                  >
+                    <Copy className="w-3 h-3 text-gray-400" />
+                  </button>
+                </div>
+              )}
 
               {/* Voucher Code */}
               <div className="flex items-center justify-center gap-2">
