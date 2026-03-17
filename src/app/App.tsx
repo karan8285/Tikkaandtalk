@@ -3,6 +3,7 @@ import { RouterProvider } from "react-router";
 import { router } from "./routes";
 import { Toaster } from "./components/ui/sonner";
 import { APP_CONFIG } from "./lib/config";
+import { projectId } from "/utils/supabase/info";
 
 // Set document title immediately at module level to avoid flash of default title
 document.title = `${APP_CONFIG.restaurant.name} - ${APP_CONFIG.restaurant.tagline}`;
@@ -37,11 +38,11 @@ document.title = `${APP_CONFIG.restaurant.name} - ${APP_CONFIG.restaurant.taglin
     }
   }
 
-  // Apple touch icon
+  // Apple touch icon — use the public logo proxy so the home screen icon shows the real logo
   if (!head.querySelector('link[rel="apple-touch-icon"]')) {
     const icon = document.createElement("link");
     icon.rel = "apple-touch-icon";
-    icon.href = "/icon-192.svg";
+    icon.href = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb/public/logo`;
     head.appendChild(icon);
   }
 })();

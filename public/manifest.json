@@ -1,26 +1,39 @@
 {
   "name": "Tikka N Talk - AN INDIAN KITCHEN",
   "short_name": "Tikka N Talk",
-  "description": "Order delicious Indian food, track orders, and earn rewards with Tikka N Talk loyalty app.",
+  "description": "Order delicious Indian food, track orders, and earn rewards with the Tikka N Talk loyalty app.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#E53E3E",
+  "theme_color": "#D91A60",
   "orientation": "portrait-primary",
   "scope": "/",
   "categories": ["food", "restaurant", "shopping"],
   "icons": [
     {
-      "src": "/icon-192.svg",
+      "src": "https://ajsgmltgsaogrwcivsst.supabase.co/functions/v1/make-server-e5e192fb/public/logo",
       "sizes": "192x192",
-      "type": "image/svg+xml",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://ajsgmltgsaogrwcivsst.supabase.co/functions/v1/make-server-e5e192fb/public/logo",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any"
     },
     {
       "src": "/icon-192.svg",
-      "sizes": "512x512",
+      "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
+    },
+    {
+      "src": "https://ajsgmltgsaogrwcivsst.supabase.co/functions/v1/make-server-e5e192fb/public/logo",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
-  ]
+  ],
+  "prefer_related_applications": false
 }

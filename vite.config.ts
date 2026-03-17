@@ -65,10 +65,60 @@ function publicFileServePlugin() {
   }
 }
 
+// Plugin to inject OG meta tags, PWA manifest link, and apple-touch-icon into the built HTML.
+// WhatsApp / social media crawlers don't execute JavaScript, so these tags must be in the
+// static HTML returned by the server.  This plugin uses Vite's transformIndexHtml hook which
+// runs during both dev-serve and production build.
+function ogMetaPlugin() {
+  const SITE_URL = 'https://www.tikka-n-talk.com'
+  // Public logo proxy — serves the admin-uploaded logo from Supabase Storage
+  const LOGO_URL = 'https://ajsgmltgsaogrwcivsst.supabase.co/functions/v1/make-server-e5e192fb/public/logo'
+
+  return {
+    name: 'og-meta-inject',
+    transformIndexHtml(html: string) {
+      // Inject right before </head>
+      const tags = `
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/icon-192.svg" />
+    <link rel="apple-touch-icon" href="${LOGO_URL}" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Tikka N Talk" />
+    <meta name="theme-color" content="#D91A60" />
+
+    <!-- Primary Meta -->
+    <meta name="title" content="Tikka N Talk - AN INDIAN KITCHEN" />
+    <meta name="description" content="Order delicious Indian food, track orders, and earn rewards with the Tikka N Talk loyalty app. Fresh tikka, curries, naan & more!" />
+
+    <!-- Open Graph / Facebook / WhatsApp -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="${SITE_URL}/" />
+    <meta property="og:title" content="Tikka N Talk - AN INDIAN KITCHEN" />
+    <meta property="og:description" content="Order delicious Indian food, track orders, and earn rewards with the Tikka N Talk loyalty app. Fresh tikka, curries, naan & more!" />
+    <meta property="og:image" content="${LOGO_URL}" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
+    <meta property="og:site_name" content="Tikka N Talk" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="${SITE_URL}/" />
+    <meta name="twitter:title" content="Tikka N Talk - AN INDIAN KITCHEN" />
+    <meta name="twitter:description" content="Order delicious Indian food, track orders, and earn rewards with the Tikka N Talk loyalty app." />
+    <meta name="twitter:image" content="${LOGO_URL}" />
+`
+      return html.replace('</head>', tags + '  </head>')
+    },
+  }
+}
+
 export default defineConfig({
   plugins: [
     publicFileServePlugin(),
     figmaAssetPlugin(),
+    ogMetaPlugin(),
     // The React and Tailwind plugins are both required for Make, even if
     // Tailwind is not being actively used – do not remove them
     react(),

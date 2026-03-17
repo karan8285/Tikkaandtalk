@@ -5934,6 +5934,54 @@ app.post("/make-server-e5e192fb/admin/upload-logo", async (c) => {
   }
 });
 
+// ── Public logo proxy ─────────────────────────────────────────────────
+// Serves the restaurant logo at a permanent, public URL so WhatsApp OG previews,
+// PWA manifest icons, and apple-touch-icon can reference it without auth.
+// Falls back to the inline SVG icon if no logo has been uploaded.
+app.get("/make-server-e5e192fb/public/logo", async (c) => {
+  try {
+    // Check KV for the stored logo metadata
+    const meta = await kvGetWithRetry("restaurant_logo_meta");
+    const settings = await kvGetWithRetry("restaurant_settings");
+    const logoUrl = meta?.signedUrl || settings?.restaurantLogoUrl;
+
+    if (logoUrl) {
+      // Fetch the image from Supabase Storage signed URL and proxy it
+      const imgRes = await fetch(logoUrl);
+      if (imgRes.ok) {
+        const contentType = imgRes.headers.get("content-type") || "image/png";
+        const body = await imgRes.arrayBuffer();
+        return new Response(body, {
+          headers: {
+            "Content-Type": contentType,
+            "Cache-Control": "public, max-age=3600, s-maxage=86400",
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
+      }
+    }
+
+    // Fallback: serve the default SVG icon
+    const fallbackSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#E91E63"/><stop offset="100%" stop-color="#C2185B"/></linearGradient></defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <text x="256" y="220" font-family="Arial,sans-serif" font-size="96" font-weight="bold" fill="white" text-anchor="middle" dominant-baseline="middle">TIKKA</text>
+  <text x="256" y="290" font-family="Arial,sans-serif" font-size="48" font-weight="bold" fill="rgba(255,255,255,0.9)" text-anchor="middle" dominant-baseline="middle">N TALK</text>
+  <text x="256" y="400" font-family="Arial,sans-serif" font-size="28" fill="rgba(255,255,255,0.7)" text-anchor="middle" letter-spacing="6">AN INDIAN KITCHEN</text>
+</svg>`;
+    return new Response(fallbackSvg, {
+      headers: {
+        "Content-Type": "image/svg+xml",
+        "Cache-Control": "public, max-age=3600",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  } catch (error) {
+    console.error("Public logo proxy error:", error);
+    return new Response("Logo unavailable", { status: 500 });
+  }
+});
+
 // Delete logo (admin only)
 app.delete("/make-server-e5e192fb/admin/delete-logo", async (c) => {
   try {
