@@ -36,6 +36,7 @@ import { getShortOrderId } from "../lib/orderUtils";
 import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG } from "../lib/config";
 import { OrderTimeline } from "../components/OrderTimeline";
+import { PaymentReceiptUpload, PaymentReceiptBadge } from "../components/PaymentReceiptUpload";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -90,6 +91,7 @@ interface Order {
   rating?: number;
   ratingComment?: string;
   ratingAt?: string;
+  customerName?: string;
 }
 
 const ORDER_STATUSES = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
@@ -153,6 +155,7 @@ export default function Admin() {
   const [addPaymentAmount, setAddPaymentAmount] = useState("");
   const [addPaymentMethod, setAddPaymentMethod] = useState("");
   const [addPaymentNote, setAddPaymentNote] = useState("");
+  const [addPaymentReceiptUrl, setAddPaymentReceiptUrl] = useState<string | null>(null);
   const [expandedTimeline, setExpandedTimeline] = useState<string | null>(null);
 
   // Order sub-tab: "active" vs "closed"
@@ -531,9 +534,11 @@ export default function Admin() {
     }
   };
 
-  const handleAddPayment = async (orderId: string, amount: number, method?: string, note?: string) => {
+  const handleAddPayment = async (orderId: string, amount: number, method?: string, note?: string, receiptUrl?: string) => {
     try {
       setSubmitting(orderId);
+      const addPayment: any = { amount, method, note };
+      if (receiptUrl) addPayment.receiptUrl = receiptUrl;
       const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
         method: "POST",
         headers: {
@@ -541,7 +546,7 @@ export default function Admin() {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": accessToken,
         },
-        body: JSON.stringify({ addPayment: { amount, method, note } }),
+        body: JSON.stringify({ addPayment }),
       });
 
       if (response.ok) {
@@ -1545,7 +1550,7 @@ export default function Admin() {
                               </div>
                               <p className="text-sm text-muted-foreground mt-1">
                                 {new Date(order.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-                                {customer && <span className="ml-2 font-medium text-foreground">{customer.name}</span>}
+                                {(order.customerName || customer?.name) && <span className="ml-2 font-medium text-foreground">{order.customerName || customer?.name}</span>}
                               </p>
                               {order.status === "scheduled" && order.scheduledAt && (
                                 <div className="flex items-center gap-1.5 mt-1.5 px-2 py-1 bg-blue-50 border border-blue-200 rounded-md w-fit">
@@ -1856,11 +1861,12 @@ export default function Admin() {
                                   <div className="text-[10px] uppercase tracking-wider font-medium text-gray-500">Payment History</div>
                                   {order.paymentHistory.map((entry: any, idx: number) => (
                                     <div key={idx} className="flex items-center justify-between text-xs bg-gray-50 rounded px-2 py-1 border">
-                                      <div className="flex items-center gap-1.5">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
                                         <span className="text-green-600 font-semibold">+Rp {entry.amount?.toLocaleString()}</span>
                                         {entry.method && <span className="text-gray-400">• {entry.method}</span>}
+                                        {entry.receiptUrl && <PaymentReceiptBadge receiptUrl={entry.receiptUrl} />}
                                       </div>
-                                      <span className="text-gray-400">{new Date(entry.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                                      <span className="text-gray-400 shrink-0">{new Date(entry.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -1916,6 +1922,15 @@ export default function Admin() {
                                           className="h-8 text-xs"
                                         />
                                       </div>
+                                      {/* Receipt Upload */}
+                                      <PaymentReceiptUpload
+                                        orderId={order.id}
+                                        accessToken={accessToken}
+                                        receiptUrl={addPaymentReceiptUrl}
+                                        onUploadComplete={(url) => setAddPaymentReceiptUrl(url)}
+                                        onClear={() => setAddPaymentReceiptUrl(null)}
+                                        compact
+                                      />
                                       <div className="flex gap-2">
                                         <Button
                                           size="sm"
@@ -1925,11 +1940,12 @@ export default function Admin() {
                                             const amt = Number(addPaymentAmount);
                                             const maxAllowed = (order.total || 0) - (order.paidAmount || 0);
                                             if (amt > 0 && amt <= maxAllowed) {
-                                              await handleAddPayment(order.id, amt, addPaymentMethod || undefined, addPaymentNote || undefined);
+                                              await handleAddPayment(order.id, amt, addPaymentMethod || undefined, addPaymentNote || undefined, addPaymentReceiptUrl || undefined);
                                               setAddPaymentOrderId(null);
                                               setAddPaymentAmount("");
                                               setAddPaymentMethod("");
                                               setAddPaymentNote("");
+                                              setAddPaymentReceiptUrl(null);
                                             }
                                           }}
                                         >
@@ -1944,6 +1960,7 @@ export default function Admin() {
                                             setAddPaymentAmount("");
                                             setAddPaymentMethod("");
                                             setAddPaymentNote("");
+                                            setAddPaymentReceiptUrl(null);
                                           }}
                                         >
                                           Cancel
@@ -1960,6 +1977,7 @@ export default function Admin() {
                                         setAddPaymentAmount("");
                                         setAddPaymentMethod("");
                                         setAddPaymentNote("");
+                                        setAddPaymentReceiptUrl(null);
                                       }}
                                     >
                                       + Add Payment
@@ -2143,7 +2161,7 @@ export default function Admin() {
                               <OrderTimeline 
                                 statusHistory={order.statusHistory} 
                                 createdAt={order.createdAt}
-                                customerName={customer?.name}
+                                customerName={order.customerName || customer?.name}
                               />
                             </div>
                           )}

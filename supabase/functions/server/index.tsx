@@ -1306,11 +1306,21 @@ app.post("/make-server-e5e192fb/orders", async (c) => {
     
     const isMidtransPayment = orderData.paymentMethod === "midtrans";
     const isAlreadyPaid = orderData.paymentReceived === true;
+
+    // Resolve customer name for the order
+    let customerName = orderData.guestName || "";
+    if (!customerName && userId) {
+      try {
+        const userData = await kv.get(`user:${userId}`);
+        if (userData?.name) customerName = userData.name;
+      } catch (_) { /* ignore */ }
+    }
     
     const order = {
       id: orderId,
       orderNumber: orderNumber,
       userId: userId,
+      customerName,
       ...orderData,
       status: isAlreadyPaid ? "confirmed" : "pending",
       paymentReceived: isAlreadyPaid,
@@ -5284,12 +5294,15 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
           error: `Payment amount (Rp ${addPayment.amount.toLocaleString()}) exceeds remaining balance (Rp ${remaining.toLocaleString()}). Maximum allowed: Rp ${remaining.toLocaleString()}.` 
         }, 400);
       }
-      const entry = {
+      const entry: any = {
         amount: addPayment.amount,
         date: now,
         method: addPayment.method || undefined,
         note: addPayment.note || undefined,
       };
+      if (addPayment.receiptUrl) {
+        entry.receiptUrl = addPayment.receiptUrl;
+      }
       if (!order.paymentHistory) order.paymentHistory = [];
       order.paymentHistory.push(entry);
       order.paidAmount = (order.paidAmount || 0) + addPayment.amount;
@@ -6667,6 +6680,106 @@ app.post("/make-server-e5e192fb/admin/delete-menu-video", async (c) => {
 // ==================== END MENU VIDEO UPLOAD & DELETE ====================
 
 // ==================== PROOF OF DELIVERY UPLOAD ====================
+
+// Upload payment receipt image (admin/cashier/manager/superuser)
+app.post("/make-server-e5e192fb/admin/upload-payment-receipt", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required - no token provided" }, 401);
+    }
+
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Staff access required" }, 401);
+    }
+
+    const formData = await c.req.formData();
+    const file = formData.get("image") as File | null;
+    const orderId = formData.get("orderId") as string | null;
+
+    if (!file) {
+      return c.json({ error: "No file provided. Send an 'image' field in multipart form data." }, 400);
+    }
+    if (!orderId) {
+      return c.json({ error: "No orderId provided." }, 400);
+    }
+
+    // Validate file type
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp", "application/pdf"];
+    if (!allowedTypes.includes(file.type)) {
+      return c.json({ error: `Invalid file type: ${file.type}. Allowed: PNG, JPG, WebP, PDF.` }, 400);
+    }
+
+    // Validate file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      return c.json({ error: "File too large. Maximum size is 10MB." }, 400);
+    }
+
+    // Verify order exists
+    const order = await kv.get(`order:${orderId}`);
+    if (!order) {
+      return c.json({ error: "Order not found" }, 404);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    if (!logoBucketReady) {
+      await ensureLogoBucket();
+      if (!logoBucketReady) {
+        return c.json({ error: "Storage bucket could not be created. Please try again." }, 500);
+      }
+    }
+
+    const extMap: Record<string, string> = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/jpg": "jpg",
+      "image/webp": "webp",
+      "application/pdf": "pdf",
+    };
+    const ext = extMap[file.type] || "jpg";
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    const filePath = `payment-receipts/${orderId}-${timestamp}-${random}.${ext}`;
+
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    console.log(`🧾 Uploading payment receipt for order ${orderId}: ${filePath}, size: ${uint8.length} bytes`);
+
+    const { data, error } = await supabase.storage.from(LOGO_BUCKET).upload(filePath, uint8, {
+      contentType: file.type,
+      upsert: false,
+    });
+
+    if (error) {
+      console.error("❌ Payment receipt upload failed:", JSON.stringify(error));
+      return c.json({ error: `Failed to upload payment receipt: ${error.message}` }, 500);
+    }
+
+    console.log("✅ Payment receipt uploaded:", data.path);
+
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(LOGO_BUCKET)
+      .createSignedUrl(filePath, 315360000);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("❌ Failed to create signed URL for receipt:", signedUrlError);
+      return c.json({ error: "Receipt uploaded but failed to generate URL." }, 500);
+    }
+
+    const imageUrl = signedUrlData.signedUrl;
+    console.log("✅ Payment receipt signed URL generated:", imageUrl.substring(0, 100) + "...");
+
+    return c.json({ success: true, imageUrl, path: filePath, size: file.size });
+  } catch (error) {
+    console.error("Upload payment receipt error:", error);
+    return c.json({ error: `Failed to upload payment receipt: ${error}` }, 500);
+  }
+});
 
 // Upload proof of delivery image (delivery staff only)
 app.post("/make-server-e5e192fb/delivery/upload-pod", async (c) => {

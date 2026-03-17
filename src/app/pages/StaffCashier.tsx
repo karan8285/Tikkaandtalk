@@ -26,6 +26,7 @@ import { OrderModifyDialog } from "../components/OrderModifyDialog";
 import { StaffAddToHomeScreen } from "../components/StaffAddToHomeScreen";
 import { StaffPushToggle } from "../components/StaffPushToggle";
 import { ChangePinDialog } from "../components/ChangePinDialog";
+import { PaymentReceiptUpload, PaymentReceiptBadge } from "../components/PaymentReceiptUpload";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -74,6 +75,7 @@ interface Order {
   promoCode?: string;
   taxRate?: number;
   modificationHistory?: any[];
+  customerName?: string;
 }
 
 const ORDER_STATUSES = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
@@ -111,6 +113,7 @@ export default function StaffCashier() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentReceiptUrl, setPaymentReceiptUrl] = useState<string | null>(null);
 
   // Unified local edits per order
   const [pendingStatuses, setPendingStatuses] = useState<Record<string, string>>({});
@@ -196,6 +199,8 @@ export default function StaffCashier() {
 
     try {
       setPaymentLoading(true);
+      const addPayment: any = { amount, method: paymentMethod };
+      if (paymentReceiptUrl) addPayment.receiptUrl = paymentReceiptUrl;
       const response = await fetch(`${API_BASE}/admin/orders/${paymentOrder.id}/status`, {
         method: "POST",
         headers: {
@@ -203,12 +208,13 @@ export default function StaffCashier() {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": accessToken || "",
         },
-        body: JSON.stringify({ addPayment: { amount, method: paymentMethod } }),
+        body: JSON.stringify({ addPayment }),
       });
       if (response.ok) {
         toast.success(`Payment of ${formatIDR(amount)} recorded`);
         setPaymentOrder(null);
         setPaymentAmount("");
+        setPaymentReceiptUrl(null);
         fetchOrders();
       } else {
         const err = await response.json().catch(() => ({}));
@@ -608,7 +614,9 @@ export default function StaffCashier() {
                           </Badge>
                         </div>
                         <p className="text-sm mt-1 text-gray-800">{order.itemTitle}</p>
-                        <div className="flex items-center gap-2 text-xs text-gray-600 mt-1">
+                        <div className="flex items-center gap-2 text-xs text-gray-600 mt-1 flex-wrap">
+                          {order.customerName && <span className="font-medium text-gray-900">{order.customerName}</span>}
+                          {order.customerName && <span className="text-gray-300">|</span>}
                           <Phone className="w-3 h-3" />{order.phone}
                           <span>•</span>
                           <Clock className="w-3 h-3" />{new Date(order.createdAt).toLocaleTimeString()}
@@ -666,10 +674,13 @@ export default function StaffCashier() {
                   {/* Payment History */}
                   {order.paymentHistory && order.paymentHistory.length > 0 && (
                     <div className="mt-2 space-y-1">
-                      {order.paymentHistory.map((ph, idx) => (
+                      {order.paymentHistory.map((ph: any, idx: number) => (
                         <div key={idx} className="flex items-center justify-between text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded">
-                          <span>{formatIDR(ph.amount)} — {ph.method || 'cash'}</span>
-                          <span>{ph.date && !isNaN(new Date(ph.date).getTime()) ? new Date(ph.date).toLocaleTimeString() : ph.date || '—'}</span>
+                          <span className="flex items-center gap-1.5 flex-wrap">
+                            {formatIDR(ph.amount)} — {ph.method || 'cash'}
+                            {ph.receiptUrl && <PaymentReceiptBadge receiptUrl={ph.receiptUrl} />}
+                          </span>
+                          <span className="shrink-0">{ph.date && !isNaN(new Date(ph.date).getTime()) ? new Date(ph.date).toLocaleTimeString() : ph.date || '—'}</span>
                         </div>
                       ))}
                     </div>
@@ -861,7 +872,7 @@ export default function StaffCashier() {
       </div>
 
       {/* Payment Dialog */}
-      <Dialog open={!!paymentOrder} onOpenChange={() => setPaymentOrder(null)}>
+      <Dialog open={!!paymentOrder} onOpenChange={(open) => { if (!open) { setPaymentOrder(null); setPaymentReceiptUrl(null); } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -893,6 +904,20 @@ export default function StaffCashier() {
                   <SelectItem value="transfer">Transfer</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div>
+              <Label>Receipt (Optional)</Label>
+              {paymentOrder && (
+                <div className="mt-1.5">
+                  <PaymentReceiptUpload
+                    orderId={paymentOrder.id}
+                    accessToken={accessToken || ""}
+                    receiptUrl={paymentReceiptUrl}
+                    onUploadComplete={(url) => setPaymentReceiptUrl(url)}
+                    onClear={() => setPaymentReceiptUrl(null)}
+                  />
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>

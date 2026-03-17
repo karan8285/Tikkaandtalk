@@ -7,6 +7,7 @@ import { getRestaurantLogo } from "../lib/useRestaurantLogo";
 import { getShortOrderId } from "../lib/orderUtils";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { LOGO_ALT, APP_CONFIG } from "../lib/config";
+import { PaymentReceiptBadge } from "../components/PaymentReceiptUpload";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -50,7 +51,7 @@ interface Order {
   paymentReceived?: boolean;
   paymentStatus?: 'unpaid' | 'partial' | 'paid';
   paidAmount?: number;
-  paymentHistory?: Array<{ amount: number; date: string; method?: string; note?: string }>;
+  paymentHistory?: Array<{ amount: number; date: string; method?: string; note?: string; receiptUrl?: string }>;
   pointsAwarded?: boolean;
   pointsEarned?: number;
   promoCode?: string;
@@ -540,6 +541,50 @@ export default function TrackOrder() {
               <div className="text-sm bg-green-50 border border-green-200 rounded-lg p-2 text-green-800">
                 {order.paymentDetails}
               </div>
+            </div>
+          )}
+
+          {/* Payment History */}
+          {order.paymentHistory && order.paymentHistory.length > 0 && (
+            <div className="pt-3 border-t mt-3">
+              <div className="text-sm font-medium mb-2 text-gray-900 flex items-center gap-1.5">
+                <span className="text-base">💳</span> Payment History
+              </div>
+              <div className="space-y-1.5">
+                {order.paymentHistory.map((entry, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-xs bg-green-50 border border-green-100 rounded-lg px-3 py-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-green-700 font-semibold">Rp {entry.amount.toLocaleString()}</span>
+                      {entry.method && (
+                        <span className="text-gray-500 capitalize">• {entry.method}</span>
+                      )}
+                      {entry.receiptUrl && <PaymentReceiptBadge receiptUrl={entry.receiptUrl} />}
+                    </div>
+                    <span className="text-gray-400 text-[11px] shrink-0 ml-2">
+                      {entry.date && !isNaN(new Date(entry.date).getTime())
+                        ? new Date(entry.date).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                        : entry.date || '—'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {/* Payment Summary */}
+              {(() => {
+                const totalPaid = order.paymentHistory.reduce((sum, e) => sum + e.amount, 0);
+                const remaining = order.total - totalPaid;
+                return (
+                  <div className="mt-2 flex items-center justify-between text-xs px-1">
+                    <span className="text-gray-500">
+                      Total Paid: <span className="font-semibold text-green-700">Rp {totalPaid.toLocaleString()}</span>
+                    </span>
+                    {remaining > 0 && (
+                      <span className="text-amber-600 font-medium">
+                        Remaining: Rp {remaining.toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 

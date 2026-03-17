@@ -50,6 +50,7 @@ import { APP_CONFIG } from "../lib/config";
 import { useNewOrderAlert } from "../lib/useNewOrderAlert";
 import { OrderTimeline } from "../components/OrderTimeline";
 import { OrderModifyDialog } from "../components/OrderModifyDialog";
+import { PaymentReceiptUpload, PaymentReceiptBadge } from "../components/PaymentReceiptUpload";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -331,6 +332,7 @@ interface Order {
   customCharges?: Array<{ id: string; name: string; amount: number; addedByAdmin?: boolean }>;
   remainingBalance?: number;
   modificationHistory?: any[];
+  customerName?: string;
 }
 
 const ORDER_STATUSES = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
@@ -392,6 +394,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   const [addPaymentAmount, setAddPaymentAmount] = useState("");
   const [addPaymentMethod, setAddPaymentMethod] = useState("");
   const [addPaymentNote, setAddPaymentNote] = useState("");
+  const [addPaymentReceiptUrl, setAddPaymentReceiptUrl] = useState<string | null>(null);
   const [paymentLoading, setPaymentLoading] = useState<string | null>(null);
 
   // Cancel order
@@ -517,13 +520,15 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
     finally { setCancelLoading(false); }
   };
 
-  const handleAddPayment = async (orderId: string, amount: number, method?: string, note?: string) => {
+  const handleAddPayment = async (orderId: string, amount: number, method?: string, note?: string, receiptUrl?: string) => {
     try {
       setPaymentLoading(orderId);
+      const addPayment: any = { amount, method, note };
+      if (receiptUrl) addPayment.receiptUrl = receiptUrl;
       const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
-        body: JSON.stringify({ addPayment: { amount, method, note } }),
+        body: JSON.stringify({ addPayment }),
       });
       if (response.ok) {
         toast.success(`Payment of ${formatIDR(amount)} recorded`);
@@ -885,6 +890,8 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                   </div>
                   <p className="text-sm mt-1 text-gray-800">{order.itemTitle}</p>
                   <div className="flex items-center gap-2 text-xs text-gray-600 mt-1">
+                    {order.customerName && <span className="font-medium text-gray-900">{order.customerName}</span>}
+                    {order.customerName && <span className="text-gray-300">|</span>}
                     <Phone className="w-3 h-3" />{order.phone}
                     <span className="font-semibold text-gray-900">{formatIDR(order.total)}</span>
                   </div>
@@ -972,9 +979,10 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                       <div className="text-[10px] uppercase tracking-wider font-medium text-gray-500">Payment History</div>
                       {order.paymentHistory.map((entry, idx) => (
                         <div key={idx} className="flex items-center justify-between text-xs bg-gray-50 rounded px-2 py-1 border">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-green-600 font-semibold">+{formatIDR(entry.amount)}</span>
                             {entry.method && <span className="text-gray-400">• {entry.method}</span>}
+                            {entry.receiptUrl && <PaymentReceiptBadge receiptUrl={entry.receiptUrl} />}
                           </div>
                           <span className="text-gray-400">{new Date(entry.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
@@ -1015,6 +1023,15 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                             <Input type="text" placeholder="Method (Cash, Transfer)" value={addPaymentMethod} onChange={(e) => setAddPaymentMethod(e.target.value)} className="h-8 text-xs" />
                             <Input type="text" placeholder="Note (optional)" value={addPaymentNote} onChange={(e) => setAddPaymentNote(e.target.value)} className="h-8 text-xs" />
                           </div>
+                          {/* Receipt Upload */}
+                          <PaymentReceiptUpload
+                            orderId={order.id}
+                            accessToken={accessToken}
+                            receiptUrl={addPaymentReceiptUrl}
+                            onUploadComplete={(url) => setAddPaymentReceiptUrl(url)}
+                            onClear={() => setAddPaymentReceiptUrl(null)}
+                            compact
+                          />
                           <div className="flex gap-2">
                             <Button
                               size="sm"
@@ -1023,11 +1040,12 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                               onClick={async () => {
                                 const amt = Number(addPaymentAmount);
                                 if (amt > 0 && amt <= remaining) {
-                                  await handleAddPayment(order.id, amt, addPaymentMethod || undefined, addPaymentNote || undefined);
+                                  await handleAddPayment(order.id, amt, addPaymentMethod || undefined, addPaymentNote || undefined, addPaymentReceiptUrl || undefined);
                                   setAddPaymentOrderId(null);
                                   setAddPaymentAmount("");
                                   setAddPaymentMethod("");
                                   setAddPaymentNote("");
+                                  setAddPaymentReceiptUrl(null);
                                 }
                               }}
                             >
@@ -1037,7 +1055,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                               size="sm"
                               variant="outline"
                               className="h-7 text-xs"
-                              onClick={() => { setAddPaymentOrderId(null); setAddPaymentAmount(""); setAddPaymentMethod(""); setAddPaymentNote(""); }}
+                              onClick={() => { setAddPaymentOrderId(null); setAddPaymentAmount(""); setAddPaymentMethod(""); setAddPaymentNote(""); setAddPaymentReceiptUrl(null); }}
                             >
                               Cancel
                             </Button>
@@ -1048,7 +1066,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                           size="sm"
                           variant="outline"
                           className="mt-2 w-full h-7 text-xs border-dashed"
-                          onClick={() => { setAddPaymentOrderId(order.id); setAddPaymentAmount(""); setAddPaymentMethod(""); setAddPaymentNote(""); }}
+                          onClick={() => { setAddPaymentOrderId(order.id); setAddPaymentAmount(""); setAddPaymentMethod(""); setAddPaymentNote(""); setAddPaymentReceiptUrl(null); }}
                         >
                           <Banknote className="w-3.5 h-3.5 mr-1" /> Add Payment
                         </Button>

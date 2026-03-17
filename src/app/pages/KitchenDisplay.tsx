@@ -34,6 +34,7 @@ interface Order {
   specialInstructions?: string;
   items?: OrderItem[];
   orderNumber?: string;
+  customerName?: string;
 }
 
 export default function KitchenDisplay() {
@@ -302,6 +303,9 @@ export default function KitchenDisplay() {
 
                 {/* Customer Info */}
                 <div className="flex items-center gap-4 text-sm text-gray-400 mb-4 pb-4 border-b border-gray-700">
+                  {order.customerName && (
+                    <span className="font-medium text-gray-200">{order.customerName}</span>
+                  )}
                   <div className="flex items-center gap-1">
                     <Phone className="w-4 h-4" />
                     <span>{order.phone}</span>
