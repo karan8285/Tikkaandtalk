@@ -15,7 +15,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin, MessageSquare, Save, Filter, X, Share2, CheckSquare, Loader2, Ban, Plus, Star, Edit3, Volume2, VolumeX, KeyRound, AlertCircle, Printer } from "lucide-react";
+import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin, MessageSquare, Save, Filter, X, Share2, CheckSquare, Loader2, Ban, Plus, Star, Edit3, Volume2, VolumeX, KeyRound, AlertCircle, Printer, Ticket } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
@@ -31,6 +31,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { OrderStatusTabs } from "../components/OrderStatusTabs";
 import { PrinterSettings } from "../components/PrinterSettings";
 import { isPrinterConnected, printInvoice, connectPrinter, ensureConnected } from "../lib/thermalPrinter";
+import { DineInVoucherRedeem } from "../components/DineInVoucherRedeem";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -71,6 +72,7 @@ interface Order {
   rating?: number;
   ratingComment?: string;
   ratingAt?: string;
+  ratingPhotos?: string[];
   lastModifiedAt?: string;
   lastModifiedBy?: string;
   customCharges?: Array<{ id: string; name: string; amount: number; addedByAdmin?: boolean }>;
@@ -103,6 +105,7 @@ export default function StaffCashier() {
   const [loading, setLoading] = useState(true);
   const [changePinOpen, setChangePinOpen] = useState(false);
   const [printerSettingsOpen, setPrinterSettingsOpen] = useState(false);
+  const [showVoucherRedeem, setShowVoucherRedeem] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("pending");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -482,6 +485,7 @@ export default function StaffCashier() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setShowVoucherRedeem(true)} title="Redeem Dine-In Voucher"><Ticket className="w-4 h-4" /></Button>
             <Button variant="outline" size="sm" onClick={() => navigate("/staff/create-order")}><Plus className="w-4 h-4" /></Button>
             <Button variant="outline" size="sm" onClick={fetchOrders}><RefreshCw className="w-4 h-4" /></Button>
             <Button variant="outline" size="sm" onClick={() => setPrinterSettingsOpen(true)} title="Printer Settings"><Printer className="w-4 h-4" /></Button>
@@ -915,6 +919,15 @@ export default function StaffCashier() {
                           "{order.ratingComment}"
                         </p>
                       )}
+                      {order.ratingPhotos && order.ratingPhotos.length > 0 && (
+                        <div className="flex gap-1.5 mt-2">
+                          {order.ratingPhotos.map((url: string, idx: number) => (
+                            <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="block w-14 h-14 rounded-md overflow-hidden border border-amber-200 hover:border-amber-400 transition-colors">
+                              <img src={url} alt={`Review photo ${idx + 1}`} className="w-full h-full object-cover" />
+                            </a>
+                          ))}
+                        </div>
+                      )}
                       {order.ratingAt && (
                         <p className="text-[10px] text-gray-400 mt-1">
                           {new Date(order.ratingAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
@@ -1073,6 +1086,19 @@ export default function StaffCashier() {
             </DialogTitle>
           </DialogHeader>
           <PrinterSettings />
+        </DialogContent>
+      </Dialog>
+
+      {/* Voucher Redeem Dialog */}
+      <Dialog open={showVoucherRedeem} onOpenChange={setShowVoucherRedeem}>
+        <DialogContent className="max-w-sm max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Ticket className="w-5 h-5" style={{ color: BRAND_COLOR }} />
+              Redeem Dine-In Voucher
+            </DialogTitle>
+          </DialogHeader>
+          <DineInVoucherRedeem customToken={accessToken || ""} staffName={staff.name} />
         </DialogContent>
       </Dialog>
     </div>

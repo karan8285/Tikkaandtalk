@@ -4948,7 +4948,7 @@ app.post("/make-server-e5e192fb/orders/:id/rate", async (c) => {
   try {
     const orderId = c.req.param('id');
     const body = await c.req.json();
-    const { userId, rating, comment } = body;
+    const { userId, rating, comment, ratingPhotos } = body;
 
     if (!userId) {
       return c.json({ error: "User ID is required" }, 400);
@@ -4981,14 +4981,104 @@ app.post("/make-server-e5e192fb/orders/:id/rate", async (c) => {
     order.rating = Math.round(rating);
     order.ratingComment = comment ? comment.trim() : '';
     order.ratingAt = new Date().toISOString();
+    if (ratingPhotos && Array.isArray(ratingPhotos) && ratingPhotos.length > 0) {
+      order.ratingPhotos = ratingPhotos;
+    }
 
     await kvRetry(() => kv.set(`order:${orderId}`, order));
 
-    console.log(`⭐ Order ${orderId} rated ${rating}/5 by user ${userId}`);
-    return c.json({ success: true, rating: order.rating, ratingComment: order.ratingComment });
+    console.log(`⭐ Order ${orderId} rated ${rating}/5 by user ${userId}, photos: ${(ratingPhotos || []).length}`);
+    return c.json({ success: true, rating: order.rating, ratingComment: order.ratingComment, ratingPhotos: order.ratingPhotos || [] });
   } catch (error) {
     console.log(`❌ Rate order error: ${error}`);
     return c.json({ error: "Failed to rate order" }, 500);
+  }
+});
+
+// Upload rating photo (customer uploads photo with review)
+app.post("/make-server-e5e192fb/orders/:id/upload-rating-photo", async (c) => {
+  try {
+    const orderId = c.req.param('id');
+    const formData = await c.req.formData();
+    const userId = formData.get("userId") as string;
+    const file = formData.get("photo") as File;
+
+    if (!userId) {
+      return c.json({ error: "User ID is required" }, 400);
+    }
+    if (!file || !(file instanceof File)) {
+      return c.json({ error: "Photo file is required" }, 400);
+    }
+
+    // Validate file type
+    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      return c.json({ error: "Only PNG, JPG, and WebP images are allowed" }, 400);
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      return c.json({ error: "Photo must be less than 5MB" }, 400);
+    }
+
+    const order = await kv.get(`order:${orderId}`);
+    if (!order) {
+      return c.json({ error: "Order not found" }, 404);
+    }
+
+    // Verify ownership
+    if (order.userId && order.userId !== userId) {
+      return c.json({ error: "Unauthorized" }, 403);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    const extMap: Record<string, string> = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/jpg": "jpg",
+      "image/webp": "webp",
+    };
+    const ext = extMap[file.type] || "jpg";
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    const filePath = `rating-photos/${orderId}-${timestamp}-${random}.${ext}`;
+
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    console.log(`📸 Uploading rating photo for order ${orderId}: ${filePath}, size: ${uint8.length} bytes`);
+
+    const { data, error } = await supabase.storage.from(LOGO_BUCKET).upload(filePath, uint8, {
+      contentType: file.type,
+      upsert: false,
+    });
+
+    if (error) {
+      console.error("❌ Rating photo upload failed:", JSON.stringify(error));
+      return c.json({ error: `Failed to upload rating photo: ${error.message}` }, 500);
+    }
+
+    console.log("✅ Rating photo uploaded:", data.path);
+
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(LOGO_BUCKET)
+      .createSignedUrl(filePath, 315360000);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("❌ Failed to create signed URL for rating photo:", signedUrlError);
+      return c.json({ error: "Photo uploaded but failed to generate URL." }, 500);
+    }
+
+    const imageUrl = signedUrlData.signedUrl;
+    console.log("✅ Rating photo signed URL generated");
+
+    return c.json({ success: true, imageUrl, path: filePath });
+  } catch (error) {
+    console.error("Upload rating photo error:", error);
+    return c.json({ error: `Failed to upload rating photo: ${error}` }, 500);
   }
 });
 
@@ -13297,6 +13387,385 @@ app.get("/make-server-e5e192fb/reports/menu-catalog", async (c) => {
   } catch (error: any) {
     console.log(`❌ [Menu Catalog Report] Error: ${error?.message}`);
     return c.json({ error: `Failed to generate menu catalog report: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== DINE-IN VOUCHERS ====================
+
+// Create Dine-In Voucher (admin/superuser only)
+app.post("/make-server-e5e192fb/admin/dinein-vouchers", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth) return c.json({ error: "Unauthorized" }, 403);
+
+    const body = await c.req.json();
+    const { title, description, discountType, discountValue, minOrderAmount, expiryDate, maxRedemptions, assignmentType, targetPhones, code } = body;
+
+    if (!title || !discountType || discountValue === undefined) {
+      return c.json({ error: "Title, discount type, and discount value are required" }, 400);
+    }
+
+    const voucherId = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    let voucherCode = code?.trim().toUpperCase();
+    if (!voucherCode) {
+      voucherCode = `DINE-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    }
+
+    const existingCodes = await kvRetry(() => kv.get("dinein_voucher_codes")) || {};
+    if (existingCodes[voucherCode]) {
+      return c.json({ error: "Voucher code already exists. Please use a different code." }, 400);
+    }
+
+    const voucher: any = {
+      id: voucherId,
+      title,
+      description: description || "",
+      discountType,
+      discountValue: Number(discountValue),
+      minOrderAmount: minOrderAmount ? Number(minOrderAmount) : 0,
+      expiryDate: expiryDate || null,
+      maxRedemptions: maxRedemptions ? Number(maxRedemptions) : 1,
+      assignmentType: assignmentType || "all",
+      code: voucherCode,
+      isActive: true,
+      createdAt: now,
+      createdBy: auth.userId,
+      redemptions: [],
+      totalRedemptions: 0,
+    };
+
+    await kvRetry(() => kv.set(`dinein_voucher:${voucherId}`, voucher));
+    existingCodes[voucherCode] = voucherId;
+    await kvRetry(() => kv.set("dinein_voucher_codes", existingCodes));
+
+    const voucherList = await kvRetry(() => kv.get("dinein_voucher_list")) || [];
+    voucherList.push(voucherId);
+    await kvRetry(() => kv.set("dinein_voucher_list", voucherList));
+
+    if (assignmentType === "all") {
+      const allUserKeys = await kvRetry(() => kv.getByPrefix("user:"));
+      for (const userData of allUserKeys) {
+        if (userData?.id && !userData.isAdmin) {
+          const assignmentId = crypto.randomUUID();
+          const assignment = { id: assignmentId, voucherId, userId: userData.id, code: voucherCode, redeemed: false, assignedAt: now };
+          await kvRetry(() => kv.set(`dinein_assignment:${assignmentId}`, assignment));
+          const userDineinList = await kvRetry(() => kv.get(`user_dinein_vouchers:${userData.id}`)) || [];
+          userDineinList.push(assignmentId);
+          await kvRetry(() => kv.set(`user_dinein_vouchers:${userData.id}`, userDineinList));
+        }
+      }
+    } else if (assignmentType === "specific" && targetPhones && Array.isArray(targetPhones)) {
+      const allUserKeys = await kvRetry(() => kv.getByPrefix("user:"));
+      for (const userData of allUserKeys) {
+        if (userData?.phone && targetPhones.includes(userData.phone)) {
+          const assignmentId = crypto.randomUUID();
+          const assignment = { id: assignmentId, voucherId, userId: userData.id, code: voucherCode, redeemed: false, assignedAt: now };
+          await kvRetry(() => kv.set(`dinein_assignment:${assignmentId}`, assignment));
+          const userDineinList = await kvRetry(() => kv.get(`user_dinein_vouchers:${userData.id}`)) || [];
+          userDineinList.push(assignmentId);
+          await kvRetry(() => kv.set(`user_dinein_vouchers:${userData.id}`, userDineinList));
+        }
+      }
+    }
+
+    console.log(`🎫 Dine-in voucher created: ${title} (${voucherCode}), type: ${assignmentType}`);
+    return c.json({ success: true, voucher });
+  } catch (error: any) {
+    console.log(`❌ Create dine-in voucher error: ${error}`);
+    return c.json({ error: `Failed to create dine-in voucher: ${error?.message}` }, 500);
+  }
+});
+
+// List all Dine-In Vouchers (admin)
+app.get("/make-server-e5e192fb/admin/dinein-vouchers", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth) return c.json({ error: "Unauthorized" }, 403);
+
+    const voucherList = await kvRetry(() => kv.get("dinein_voucher_list")) || [];
+    const vouchers: any[] = [];
+    for (const vId of voucherList) {
+      const v = await kvRetry(() => kv.get(`dinein_voucher:${vId}`));
+      if (v) vouchers.push(v);
+    }
+    vouchers.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return c.json({ vouchers });
+  } catch (error: any) {
+    console.log(`❌ List dine-in vouchers error: ${error}`);
+    return c.json({ error: `Failed to list dine-in vouchers: ${error?.message}` }, 500);
+  }
+});
+
+// Update Dine-In Voucher (admin)
+app.put("/make-server-e5e192fb/admin/dinein-vouchers/:id", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth) return c.json({ error: "Unauthorized" }, 403);
+
+    const voucherId = c.req.param("id");
+    const body = await c.req.json();
+    const voucher = await kvRetry(() => kv.get(`dinein_voucher:${voucherId}`));
+    if (!voucher) return c.json({ error: "Voucher not found" }, 404);
+
+    if (body.title !== undefined) voucher.title = body.title;
+    if (body.description !== undefined) voucher.description = body.description;
+    if (body.discountType !== undefined) voucher.discountType = body.discountType;
+    if (body.discountValue !== undefined) voucher.discountValue = Number(body.discountValue);
+    if (body.minOrderAmount !== undefined) voucher.minOrderAmount = Number(body.minOrderAmount);
+    if (body.expiryDate !== undefined) voucher.expiryDate = body.expiryDate;
+    if (body.maxRedemptions !== undefined) voucher.maxRedemptions = Number(body.maxRedemptions);
+    if (body.isActive !== undefined) voucher.isActive = body.isActive;
+
+    await kvRetry(() => kv.set(`dinein_voucher:${voucherId}`, voucher));
+    console.log(`🎫 Dine-in voucher updated: ${voucher.title}`);
+    return c.json({ success: true, voucher });
+  } catch (error: any) {
+    console.log(`❌ Update dine-in voucher error: ${error}`);
+    return c.json({ error: `Failed to update dine-in voucher: ${error?.message}` }, 500);
+  }
+});
+
+// Delete Dine-In Voucher (admin)
+app.delete("/make-server-e5e192fb/admin/dinein-vouchers/:id", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth) return c.json({ error: "Unauthorized" }, 403);
+
+    const voucherId = c.req.param("id");
+    const voucher = await kvRetry(() => kv.get(`dinein_voucher:${voucherId}`));
+    if (!voucher) return c.json({ error: "Voucher not found" }, 404);
+
+    const existingCodes = await kvRetry(() => kv.get("dinein_voucher_codes")) || {};
+    delete existingCodes[voucher.code];
+    await kvRetry(() => kv.set("dinein_voucher_codes", existingCodes));
+
+    const voucherList = await kvRetry(() => kv.get("dinein_voucher_list")) || [];
+    const newList = voucherList.filter((id: string) => id !== voucherId);
+    await kvRetry(() => kv.set("dinein_voucher_list", newList));
+    await kvRetry(() => kv.del(`dinein_voucher:${voucherId}`));
+
+    console.log(`🗑️ Dine-in voucher deleted: ${voucher.title} (${voucher.code})`);
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log(`❌ Delete dine-in voucher error: ${error}`);
+    return c.json({ error: `Failed to delete dine-in voucher: ${error?.message}` }, 500);
+  }
+});
+
+// Customer: Get my dine-in vouchers
+app.get("/make-server-e5e192fb/my-dinein-vouchers", async (c) => {
+  try {
+    const userId = c.req.query("userId");
+    if (!userId) return c.json({ error: "userId required" }, 400);
+
+    const assignmentIds = await kvRetry(() => kv.get(`user_dinein_vouchers:${userId}`)) || [];
+    const vouchers: any[] = [];
+    for (const aId of assignmentIds) {
+      const assignment = await kvRetry(() => kv.get(`dinein_assignment:${aId}`));
+      if (!assignment) continue;
+      const voucher = await kvRetry(() => kv.get(`dinein_voucher:${assignment.voucherId}`));
+      if (!voucher) continue;
+
+      let status = "active";
+      if (assignment.redeemed) status = "used";
+      else if (!voucher.isActive) status = "inactive";
+      else if (voucher.expiryDate && new Date(voucher.expiryDate) < new Date()) status = "expired";
+
+      vouchers.push({
+        assignmentId: assignment.id, voucherId: voucher.id, code: assignment.code,
+        title: voucher.title, description: voucher.description,
+        discountType: voucher.discountType, discountValue: voucher.discountValue,
+        minOrderAmount: voucher.minOrderAmount, expiryDate: voucher.expiryDate,
+        status, redeemed: assignment.redeemed,
+        redeemedAt: assignment.redeemedAt || null, redeemedBy: assignment.redeemedBy || null,
+      });
+    }
+    return c.json({ vouchers });
+  } catch (error: any) {
+    console.log(`❌ Get my dine-in vouchers error: ${error}`);
+    return c.json({ error: `Failed to get dine-in vouchers: ${error?.message}` }, 500);
+  }
+});
+
+// Customer: Claim a bulk dine-in voucher by code
+app.post("/make-server-e5e192fb/claim-dinein-voucher", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { userId, code } = body;
+    if (!userId || !code) return c.json({ error: "userId and code required" }, 400);
+
+    const upperCode = code.trim().toUpperCase();
+    const codeMappings = await kvRetry(() => kv.get("dinein_voucher_codes")) || {};
+    const voucherId = codeMappings[upperCode];
+    if (!voucherId) return c.json({ error: "Invalid voucher code" }, 404);
+
+    const voucher = await kvRetry(() => kv.get(`dinein_voucher:${voucherId}`));
+    if (!voucher) return c.json({ error: "Voucher not found" }, 404);
+    if (!voucher.isActive) return c.json({ error: "This voucher is no longer active" }, 400);
+    if (voucher.expiryDate && new Date(voucher.expiryDate) < new Date()) return c.json({ error: "This voucher has expired" }, 400);
+    if (voucher.assignmentType !== "bulk") return c.json({ error: "This voucher cannot be claimed with a code" }, 400);
+
+    let userDineinList = await kvRetry(() => kv.get(`user_dinein_vouchers:${userId}`)) || [];
+    for (const aId of userDineinList) {
+      const existing = await kvRetry(() => kv.get(`dinein_assignment:${aId}`));
+      if (existing && existing.voucherId === voucherId) return c.json({ error: "You have already claimed this voucher" }, 400);
+    }
+
+    const assignmentId = crypto.randomUUID();
+    const assignment = { id: assignmentId, voucherId, userId, code: upperCode, redeemed: false, assignedAt: new Date().toISOString(), claimedAt: new Date().toISOString() };
+    await kvRetry(() => kv.set(`dinein_assignment:${assignmentId}`, assignment));
+    userDineinList.push(assignmentId);
+    await kvRetry(() => kv.set(`user_dinein_vouchers:${userId}`, userDineinList));
+
+    console.log(`🎫 User ${userId} claimed dine-in voucher: ${voucher.title} (${upperCode})`);
+    return c.json({ success: true, voucher: { title: voucher.title, discountType: voucher.discountType, discountValue: voucher.discountValue } });
+  } catch (error: any) {
+    console.log(`❌ Claim dine-in voucher error: ${error}`);
+    return c.json({ error: `Failed to claim voucher: ${error?.message}` }, 500);
+  }
+});
+
+// Staff: Verify dine-in voucher by assignment ID (from QR scan)
+app.get("/make-server-e5e192fb/staff/verify-dinein-assignment/:assignmentId", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth) return c.json({ error: "Unauthorized" }, 403);
+
+    const assignmentId = c.req.param("assignmentId");
+    const assignment = await kvRetry(() => kv.get(`dinein_assignment:${assignmentId}`));
+    if (!assignment) return c.json({ error: "Voucher assignment not found" }, 404);
+
+    const voucher = await kvRetry(() => kv.get(`dinein_voucher:${assignment.voucherId}`));
+    if (!voucher) return c.json({ error: "Voucher not found" }, 404);
+    const user = await kvRetry(() => kv.get(`user:${assignment.userId}`));
+
+    let status = "valid";
+    if (assignment.redeemed) status = "already_redeemed";
+    else if (!voucher.isActive) status = "inactive";
+    else if (voucher.expiryDate && new Date(voucher.expiryDate) < new Date()) status = "expired";
+
+    return c.json({
+      status,
+      assignment: { id: assignment.id, redeemed: assignment.redeemed, redeemedAt: assignment.redeemedAt, redeemedBy: assignment.redeemedBy },
+      voucher: { id: voucher.id, title: voucher.title, description: voucher.description, discountType: voucher.discountType, discountValue: voucher.discountValue, minOrderAmount: voucher.minOrderAmount, expiryDate: voucher.expiryDate, code: voucher.code },
+      customer: user ? { name: user.name, phone: user.phone } : null,
+    });
+  } catch (error: any) {
+    console.log(`❌ Verify dine-in assignment error: ${error}`);
+    return c.json({ error: `Failed to verify assignment: ${error?.message}` }, 500);
+  }
+});
+
+// Staff: Verify dine-in voucher by code (manual input)
+app.get("/make-server-e5e192fb/staff/verify-dinein-code/:code", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth) return c.json({ error: "Unauthorized" }, 403);
+
+    const code = c.req.param("code").trim().toUpperCase();
+    const codeMappings = await kvRetry(() => kv.get("dinein_voucher_codes")) || {};
+    const voucherId = codeMappings[code];
+    if (!voucherId) return c.json({ error: "Invalid voucher code" }, 404);
+
+    const voucher = await kvRetry(() => kv.get(`dinein_voucher:${voucherId}`));
+    if (!voucher) return c.json({ error: "Voucher not found" }, 404);
+
+    const allAssignmentKeys = await kvRetry(() => kv.getByPrefix("dinein_assignment:"));
+    const pendingAssignments: any[] = [];
+    for (const a of allAssignmentKeys) {
+      if (a.voucherId === voucherId && !a.redeemed) {
+        const user = await kvRetry(() => kv.get(`user:${a.userId}`));
+        pendingAssignments.push({ id: a.id, userId: a.userId, customerName: user?.name || "Unknown", customerPhone: user?.phone || "Unknown", assignedAt: a.assignedAt });
+      }
+    }
+
+    return c.json({
+      voucher: { id: voucher.id, title: voucher.title, description: voucher.description, discountType: voucher.discountType, discountValue: voucher.discountValue, minOrderAmount: voucher.minOrderAmount, expiryDate: voucher.expiryDate, isActive: voucher.isActive, code: voucher.code },
+      pendingAssignments,
+    });
+  } catch (error: any) {
+    console.log(`❌ Verify dine-in code error: ${error}`);
+    return c.json({ error: `Failed to verify voucher code: ${error?.message}` }, 500);
+  }
+});
+
+// Staff: Redeem dine-in voucher
+app.post("/make-server-e5e192fb/staff/redeem-dinein-voucher", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth) return c.json({ error: "Unauthorized" }, 403);
+
+    const body = await c.req.json();
+    const { assignmentId, staffName } = body;
+    if (!assignmentId) return c.json({ error: "Assignment ID is required" }, 400);
+
+    const assignment = await kvRetry(() => kv.get(`dinein_assignment:${assignmentId}`));
+    if (!assignment) return c.json({ error: "Voucher assignment not found" }, 404);
+    if (assignment.redeemed) return c.json({ error: "This voucher has already been redeemed", redeemedAt: assignment.redeemedAt, redeemedBy: assignment.redeemedBy }, 400);
+
+    const voucher = await kvRetry(() => kv.get(`dinein_voucher:${assignment.voucherId}`));
+    if (!voucher) return c.json({ error: "Voucher not found" }, 404);
+    if (!voucher.isActive) return c.json({ error: "This voucher is no longer active" }, 400);
+    if (voucher.expiryDate && new Date(voucher.expiryDate) < new Date()) return c.json({ error: "This voucher has expired" }, 400);
+
+    const now = new Date().toISOString();
+    assignment.redeemed = true;
+    assignment.redeemedAt = now;
+    assignment.redeemedBy = staffName || "Staff";
+    assignment.redeemedByUserId = auth.userId;
+    await kvRetry(() => kv.set(`dinein_assignment:${assignmentId}`, assignment));
+
+    voucher.totalRedemptions = (voucher.totalRedemptions || 0) + 1;
+    voucher.redemptions = voucher.redemptions || [];
+    voucher.redemptions.push({ assignmentId, userId: assignment.userId, redeemedAt: now, redeemedBy: staffName || "Staff" });
+    await kvRetry(() => kv.set(`dinein_voucher:${assignment.voucherId}`, voucher));
+
+    const user = await kvRetry(() => kv.get(`user:${assignment.userId}`));
+    console.log(`✅ Dine-in voucher redeemed: ${voucher.title} (${voucher.code}) by ${staffName || 'Staff'} for user ${assignment.userId}`);
+    return c.json({ success: true, voucher: { title: voucher.title, discountType: voucher.discountType, discountValue: voucher.discountValue }, customer: user ? { name: user.name, phone: user.phone } : null });
+  } catch (error: any) {
+    console.log(`❌ Redeem dine-in voucher error: ${error}`);
+    return c.json({ error: `Failed to redeem voucher: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: List redemption history for a voucher
+app.get("/make-server-e5e192fb/admin/dinein-vouchers/:id/redemptions", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth) return c.json({ error: "Unauthorized" }, 403);
+
+    const voucherId = c.req.param("id");
+    const voucher = await kvRetry(() => kv.get(`dinein_voucher:${voucherId}`));
+    if (!voucher) return c.json({ error: "Voucher not found" }, 404);
+
+    const enrichedRedemptions = [];
+    for (const r of (voucher.redemptions || [])) {
+      const user = await kvRetry(() => kv.get(`user:${r.userId}`));
+      enrichedRedemptions.push({ ...r, customerName: user?.name || "Unknown", customerPhone: user?.phone || "Unknown" });
+    }
+    return c.json({ redemptions: enrichedRedemptions });
+  } catch (error: any) {
+    console.log(`❌ Get dine-in voucher redemptions error: ${error}`);
+    return c.json({ error: `Failed to get redemptions: ${error?.message}` }, 500);
   }
 });
 

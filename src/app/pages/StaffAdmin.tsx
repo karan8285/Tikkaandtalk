@@ -26,6 +26,7 @@ import { KidsMenuAdmin } from "../components/KidsMenuAdmin";
 import { FlashSaleAdmin } from "../components/FlashSaleAdmin";
 import { RegularMenuAdmin } from "../components/RegularMenuAdmin";
 import { VouchersAdmin } from "../components/VouchersAdmin";
+import { DineInVouchersAdmin } from "../components/DineInVouchersAdmin";
 import { TierBenefitsAdmin } from "../components/TierBenefitsAdmin";
 import { SalesReportsAdmin } from "../components/SalesReportsAdmin";
 import { AnalyticsAdmin } from "../components/AnalyticsAdmin";
@@ -69,6 +70,7 @@ const TAB_DEFINITIONS: { value: string; label: string; permission: string }[] = 
   { value: "sales-reports", label: "Sales", permission: "sales" },
   { value: "analytics", label: "Analytics", permission: "analytics" },
   { value: "vouchers", label: "Vouchers", permission: "vouchers" },
+  { value: "dinein-vouchers", label: "Dine-In", permission: "vouchers" },
   { value: "tier-benefits", label: "Tiers", permission: "tiers" },
   { value: "regular-menu", label: "Menu", permission: "menu" },
   { value: "todays-special", label: "Special", permission: "special" },
@@ -197,6 +199,10 @@ export default function StaffAdmin() {
 
           <TabsContent value="vouchers">
             <VouchersAdmin customToken={accessToken} />
+          </TabsContent>
+
+          <TabsContent value="dinein-vouchers">
+            <DineInVouchersAdmin customToken={accessToken} />
           </TabsContent>
 
           <TabsContent value="tier-benefits">
@@ -336,6 +342,7 @@ interface Order {
   rating?: number;
   ratingComment?: string;
   ratingAt?: string;
+  ratingPhotos?: string[];
   lastModifiedAt?: string;
   lastModifiedBy?: string;
   customCharges?: Array<{ id: string; name: string; amount: number; addedByAdmin?: boolean }>;
@@ -1324,6 +1331,15 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                   <p className="text-xs text-gray-600 italic mt-1.5 bg-amber-50 rounded-md px-2 py-1.5">
                     "{order.ratingComment}"
                   </p>
+                )}
+                {order.ratingPhotos && order.ratingPhotos.length > 0 && (
+                  <div className="flex gap-1.5 mt-2">
+                    {order.ratingPhotos.map((url: string, idx: number) => (
+                      <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="block w-14 h-14 rounded-md overflow-hidden border border-amber-200 hover:border-amber-400 transition-colors">
+                        <img src={url} alt={`Review photo ${idx + 1}`} className="w-full h-full object-cover" />
+                      </a>
+                    ))}
+                  </div>
                 )}
                 {order.ratingAt && (
                   <p className="text-[10px] text-gray-400 mt-1">

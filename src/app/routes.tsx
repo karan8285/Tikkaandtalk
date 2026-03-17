@@ -30,6 +30,7 @@ const CelebrationsHub = React.lazy(() => import("./pages/CelebrationsHub"));
 const PartyPackages = React.lazy(() => import("./pages/PartyPackages"));
 const CustomMenuPage = React.lazy(() => import("./pages/CustomMenuPage"));
 const Notifications = React.lazy(() => import("./pages/Notifications"));
+const MyVouchers = React.lazy(() => import("./pages/MyVouchers"));
 
 // Staff pages (completely separate from customer app)
 const StaffLayout = React.lazy(() => import("./layouts/StaffLayout"));
@@ -182,6 +183,10 @@ export const router = createBrowserRouter(
         {
           path: "rewards",
           element: <Lazy><Rewards /></Lazy>,
+        },
+        {
+          path: "my-vouchers",
+          element: <Lazy><MyVouchers /></Lazy>,
         },
         {
           path: "track/:orderNumber",

@@ -279,6 +279,21 @@ export default function Rewards() {
       </header>
 
       <main className="max-w-md mx-auto px-4 pb-24 space-y-4">
+        {/* Dine-In Vouchers Link */}
+        <button
+          onClick={() => navigate("/my-vouchers")}
+          className="w-full bg-white rounded-2xl shadow-md p-4 flex items-center gap-3 hover:shadow-lg active:scale-[0.99] transition-all"
+        >
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: `${BRAND}15` }}>
+            <Ticket className="w-5 h-5" style={{ color: BRAND }} />
+          </div>
+          <div className="flex-1 text-left">
+            <p className="font-semibold text-sm" style={{ color: "#333" }}>Dine-In Vouchers</p>
+            <p className="text-xs text-gray-500">View & redeem your dine-in discount vouchers</p>
+          </div>
+          <ChevronLeft className="w-5 h-5 text-gray-400 rotate-180" />
+        </button>
+
         {/* User Tier Card */}
         <div className="bg-white rounded-2xl shadow-lg p-6 relative">
           {refreshingPoints && (

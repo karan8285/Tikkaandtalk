@@ -21,6 +21,7 @@ import { KidsMenuAdmin } from "../components/KidsMenuAdmin";
 import { FlashSaleAdmin } from "../components/FlashSaleAdmin";
 import { RegularMenuAdmin } from "../components/RegularMenuAdmin";
 import { VouchersAdmin } from "../components/VouchersAdmin";
+import { DineInVouchersAdmin } from "../components/DineInVouchersAdmin";
 import { TierBenefitsAdmin } from "../components/TierBenefitsAdmin";
 import { SalesReportsAdmin } from "../components/SalesReportsAdmin";
 import { AnalyticsAdmin } from "../components/AnalyticsAdmin";
@@ -95,6 +96,7 @@ interface Order {
   rating?: number;
   ratingComment?: string;
   ratingAt?: string;
+  ratingPhotos?: string[];
   customerName?: string;
 }
 
@@ -1247,6 +1249,7 @@ export default function Admin() {
               <TabsTrigger value="sales-reports">Sales</TabsTrigger>
               <TabsTrigger value="analytics">Analytics</TabsTrigger>
               <TabsTrigger value="vouchers">Vouchers</TabsTrigger>
+              <TabsTrigger value="dinein-vouchers">Dine-In</TabsTrigger>
               <TabsTrigger value="tier-benefits">Tiers</TabsTrigger>
               <TabsTrigger value="regular-menu">Menu</TabsTrigger>
               <TabsTrigger value="todays-special">Special</TabsTrigger>
@@ -2146,6 +2149,15 @@ export default function Admin() {
                                 "{order.ratingComment}"
                               </p>
                             )}
+                            {order.ratingPhotos && order.ratingPhotos.length > 0 && (
+                              <div className="flex gap-1.5 mt-2">
+                                {order.ratingPhotos.map((url: string, idx: number) => (
+                                  <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="block w-14 h-14 rounded-md overflow-hidden border border-amber-200 hover:border-amber-400 transition-colors">
+                                    <img src={url} alt={`Review photo ${idx + 1}`} className="w-full h-full object-cover" />
+                                  </a>
+                                ))}
+                              </div>
+                            )}
                             {order.ratingAt && (
                               <p className="text-[10px] text-gray-400 mt-1">
                                 {new Date(order.ratingAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
@@ -2507,6 +2519,17 @@ export default function Admin() {
           <TabsContent value="vouchers" className="space-y-4">
             {accessToken ? (
               <VouchersAdmin customToken={accessToken} />
+            ) : (
+              <Card className="p-8 text-center">
+                <p className="text-muted-foreground">Loading authentication...</p>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* Dine-In Vouchers Tab */}
+          <TabsContent value="dinein-vouchers" className="space-y-4">
+            {accessToken ? (
+              <DineInVouchersAdmin customToken={accessToken} />
             ) : (
               <Card className="p-8 text-center">
                 <p className="text-muted-foreground">Loading authentication...</p>

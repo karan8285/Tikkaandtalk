@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useAuth } from "../lib/auth";
 import { APP_CONFIG, LOGO_ALT } from "../lib/config";
@@ -10,7 +10,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
 import {
   RefreshCw, MapPin, Phone, Clock, CheckCircle2,
-  Package, CreditCard, Ticket, DollarSign, AlertCircle, Loader2, Camera, X, MessageCircle, Star,
+  Package, CreditCard, Ticket, DollarSign, AlertCircle, Loader2, Camera, X, MessageCircle, Star, ImagePlus,
 } from "lucide-react";
 import { formatIDR } from "../lib/currency";
 import { getRestaurantLogo } from "../lib/useRestaurantLogo";
@@ -101,6 +101,7 @@ interface Order {
   rating?: number;
   ratingComment?: string;
   ratingAt?: string;
+  ratingPhotos?: string[];
   customCharges?: Array<{ id: string; name: string; amount: number; addedByAdmin?: boolean }>;
   lastModifiedAt?: string;
   lastModifiedBy?: string;
@@ -244,6 +245,11 @@ export default function OrderTracking() {
   const [ratingHover, setRatingHover] = useState(0);
   const [ratingComment, setRatingComment] = useState("");
   const [submittingRating, setSubmittingRating] = useState(false);
+  const [ratingPhotos, setRatingPhotos] = useState<File[]>([]);
+  const [ratingPhotoPreviewUrls, setRatingPhotoPreviewUrls] = useState<string[]>([]);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const [ratingPhotoViewUrl, setRatingPhotoViewUrl] = useState<string | null>(null);
+  const ratingPhotoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (authLoading) return;
@@ -307,6 +313,31 @@ export default function OrderTracking() {
     if (!order || !user || ratingValue === 0) return;
     try {
       setSubmittingRating(true);
+
+      // Step 1: Upload photos if any
+      let uploadedPhotoUrls: string[] = [];
+      if (ratingPhotos.length > 0) {
+        for (const photo of ratingPhotos) {
+          const formData = new FormData();
+          formData.append("userId", user.id);
+          formData.append("photo", photo);
+          const uploadRes = await fetchWithRetry(`${API_BASE}/orders/${order.id}/upload-rating-photo`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${publicAnonKey}` },
+            body: formData,
+          });
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json();
+            uploadedPhotoUrls.push(uploadData.imageUrl);
+          } else {
+            const err = await uploadRes.json().catch(() => ({}));
+            console.error("Photo upload failed:", err);
+            toast.error(`Failed to upload photo: ${err.error || 'Unknown error'}`);
+          }
+        }
+      }
+
+      // Step 2: Submit rating with photo URLs
       const response = await fetchWithRetry(`${API_BASE}/orders/${order.id}/rate`, {
         method: "POST",
         headers: {
@@ -317,10 +348,13 @@ export default function OrderTracking() {
           userId: user.id,
           rating: ratingValue,
           comment: ratingComment.trim(),
+          ratingPhotos: uploadedPhotoUrls,
         }),
       });
       if (response.ok) {
         toast.success("Thank you for your feedback!");
+        setRatingPhotos([]);
+        setRatingPhotoPreviewUrls([]);
         fetchOrder();
       } else {
         const err = await response.json().catch(() => ({}));
@@ -1025,6 +1059,19 @@ export default function OrderTracking() {
                     "{order.ratingComment}"
                   </p>
                 )}
+                {order.ratingPhotos && order.ratingPhotos.length > 0 && (
+                  <div className="flex justify-center gap-2 mt-3">
+                    {order.ratingPhotos.map((url, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setRatingPhotoViewUrl(url)}
+                        className="w-20 h-20 rounded-lg overflow-hidden border border-amber-200 hover:border-amber-400 transition-colors"
+                      >
+                        <img src={url} alt={`Review photo ${idx + 1}`} className="w-full h-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {order.ratingAt && (
                   <p className="text-[10px] text-gray-400 mt-2">
                     Rated on {new Date(order.ratingAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
@@ -1067,6 +1114,55 @@ export default function OrderTracking() {
                   rows={3}
                   className="text-sm resize-none"
                 />
+                {/* Photo Upload */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => ratingPhotoInputRef.current?.click()}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-gray-300 hover:border-amber-400 hover:bg-amber-50 transition-colors text-sm text-gray-500 hover:text-amber-700"
+                  >
+                    <ImagePlus className="w-4 h-4" />
+                    <span>Add Photos (optional, max 3)</span>
+                  </button>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []).slice(0, 3);
+                      const combined = [...ratingPhotos, ...files].slice(0, 3);
+                      setRatingPhotos(combined);
+                      setRatingPhotoPreviewUrls(combined.map(file => URL.createObjectURL(file)));
+                      if (ratingPhotoInputRef.current) ratingPhotoInputRef.current.value = '';
+                    }}
+                    className="hidden"
+                    ref={ratingPhotoInputRef}
+                  />
+                </div>
+                {ratingPhotoPreviewUrls.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 mt-2">
+                    {ratingPhotoPreviewUrls.map((url, index) => (
+                      <div key={index} className="relative">
+                        <img
+                          src={url}
+                          alt={`Rating photo ${index + 1}`}
+                          className="w-full h-16 object-cover rounded"
+                        />
+                        <button
+                          onClick={() => {
+                            const newPhotos = ratingPhotos.filter((_, i) => i !== index);
+                            const newPreviews = ratingPhotoPreviewUrls.filter((_, i) => i !== index);
+                            setRatingPhotos(newPhotos);
+                            setRatingPhotoPreviewUrls(newPreviews);
+                          }}
+                          className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <Button
                   onClick={handleSubmitRating}
                   disabled={ratingValue === 0 || submittingRating}
@@ -1104,6 +1200,27 @@ export default function OrderTracking() {
       </main>
 
       {/* Payment Confirmation Modal */}
+      {/* Rating Photo Fullscreen Viewer */}
+      {ratingPhotoViewUrl && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setRatingPhotoViewUrl(null)}
+        >
+          <button
+            className="absolute top-4 right-4 bg-white/20 hover:bg-white/30 rounded-full p-2 z-10"
+            onClick={() => setRatingPhotoViewUrl(null)}
+          >
+            <X className="w-6 h-6 text-white" />
+          </button>
+          <img
+            src={ratingPhotoViewUrl}
+            alt="Review photo - full size"
+            className="max-w-full max-h-full object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+
       {showPayConfirm && order && (() => {
         const ps = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
         const payAmount = (order.total || 0) - (order.paidAmount || 0);
