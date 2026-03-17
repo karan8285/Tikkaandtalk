@@ -12,6 +12,16 @@ import { TrendingUp, DollarSign, ShoppingCart, XCircle, Clock, CheckCircle2, Pac
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
+/** Derive short order ID from orderNumber (e.g. TNT00000102 -> TNT-102) */
+function getShortOrderId(orderNumber: string): string {
+  if (!orderNumber) return "";
+  const prefix = APP_CONFIG.restaurant?.orderPrefix || "TNT";
+  const numPart = orderNumber.replace(prefix, "");
+  const num = parseInt(numPart, 10);
+  if (isNaN(num)) return orderNumber;
+  return `${prefix}-${String(num).padStart(3, "0")}`;
+}
+
 interface SalesReport {
   period: string;
   summary: {
@@ -421,7 +431,7 @@ export function SalesReportsAdmin({ customToken }: { customToken: string | null 
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <p className="font-semibold text-sm text-primary">
-                            {order.orderNumber || order.id.substring(0, 8)}
+                            {order.orderNumber ? getShortOrderId(order.orderNumber) : order.id.substring(0, 8)}
                           </p>
                           {getStatusBadge(order.status)}
                           {(() => {

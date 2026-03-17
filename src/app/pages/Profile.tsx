@@ -4,10 +4,13 @@ import { useAuth } from "../lib/auth";
 import { useMascot } from "../lib/mascot-context";
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
-import { User, Smartphone, Award, LogOut, ShieldCheck, Key, Bot, Bell, BellOff } from "lucide-react";
+import { AddToHomeScreen } from "../components/AddToHomeScreen";
+import { User, Smartphone, Award, LogOut, ShieldCheck, Key, Bot, Bell, BellOff, BellRing, KeyRound } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { APP_CONFIG } from "../lib/config";
-import { isPushSupported, subscribeToPush, unsubscribeFromPush, isCurrentlySubscribed } from "../lib/pushNotifications";
+import { isPushSupported, subscribeToPush, unsubscribeFromPush, isCurrentlySubscribed, getPushPermissionStatus } from "../lib/pushNotifications";
+import { toast } from "sonner";
+import { ChangePinDialog } from "../components/ChangePinDialog";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -19,6 +22,9 @@ export default function Profile() {
   const [pushSupported, setPushSupported] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushToggling, setPushToggling] = useState(false);
+  const [pushPermission, setPushPermission] = useState<NotificationPermission | "unsupported">("unsupported");
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [changePinOpen, setChangePinOpen] = useState(false);
 
   useEffect(() => {
     // Refresh profile on mount to get latest points
@@ -27,11 +33,16 @@ export default function Profile() {
     }
   }, [loading, user, accessToken]);
 
-  // Check push notification status
+  // Check push notification status and standalone mode
   useEffect(() => {
     if (!user) return;
     const supported = isPushSupported();
     setPushSupported(supported);
+    setPushPermission(getPushPermissionStatus());
+    setIsStandalone(
+      window.matchMedia?.("(display-mode: standalone)").matches ||
+      (window.navigator as any).standalone === true
+    );
     if (supported) {
       isCurrentlySubscribed().then(setPushEnabled);
     }
@@ -43,10 +54,23 @@ export default function Profile() {
     try {
       if (pushEnabled) {
         const success = await unsubscribeFromPush(user.id, accessToken || undefined);
-        if (success) setPushEnabled(false);
+        if (success) {
+          setPushEnabled(false);
+          toast.success("Push notifications disabled");
+        }
       } else {
         const success = await subscribeToPush(user.id, accessToken || undefined);
-        if (success) setPushEnabled(true);
+        if (success) {
+          setPushEnabled(true);
+          setPushPermission("granted");
+          toast.success("Push notifications enabled!");
+        } else {
+          const perm = getPushPermissionStatus();
+          setPushPermission(perm);
+          if (perm === "denied") {
+            toast.error("Notifications blocked. Please enable in browser settings.");
+          }
+        }
       }
     } catch (err) {
       console.error("[Profile] Push toggle error:", err);
@@ -100,6 +124,23 @@ export default function Profile() {
       </div>
     );
   }
+
+  // Determine notification status info
+  const getNotifStatusInfo = () => {
+    if (pushEnabled) {
+      return { icon: BellRing, color: "text-green-600", bg: "bg-green-100", label: "Active", desc: "Order updates & alerts on your device" };
+    }
+    if (pushPermission === "denied") {
+      return { icon: BellOff, color: "text-red-500", bg: "bg-red-100", label: "Blocked", desc: "Blocked in browser settings" };
+    }
+    if (!pushSupported && !isStandalone) {
+      return { icon: Bell, color: "text-amber-500", bg: "bg-amber-100", label: "Requires App", desc: "Install the app first to enable" };
+    }
+    return { icon: Bell, color: "text-gray-400", bg: "bg-gray-100", label: "Off", desc: "Tap to enable order alerts" };
+  };
+
+  const notifInfo = getNotifStatusInfo();
+  const NotifIcon = notifInfo.icon;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -172,19 +213,112 @@ export default function Profile() {
             <Award className="w-4 h-4 mr-2" />
             Rewards & Offers
           </Button>
+        </div>
 
-          {/* Admin access moved to /staff portal — no longer accessible from customer side */}
+        {/* ─── App Setup Section ─── */}
+        <div className="space-y-1">
+          <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider px-1 pt-2">
+            App Setup
+          </h3>
+
+          {/* Add to Home Screen */}
+          <AddToHomeScreen variant="card" />
+
+          {/* Push Notifications — always show, with contextual content */}
+          <div className="bg-white rounded-xl shadow-md p-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-full ${notifInfo.bg} flex items-center justify-center flex-shrink-0`}>
+                  <NotifIcon className={`w-4.5 h-4.5 ${notifInfo.color}`} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-sm">Push Notifications</p>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                      pushEnabled
+                        ? "bg-green-100 text-green-700"
+                        : pushPermission === "denied"
+                        ? "bg-red-100 text-red-600"
+                        : "bg-gray-100 text-gray-500"
+                    }`}>
+                      {notifInfo.label}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {notifInfo.desc}
+                  </p>
+                </div>
+              </div>
+
+              {/* Toggle: only show when push is supported or standalone */}
+              {(pushSupported || isStandalone) && pushPermission !== "denied" && (
+                <button
+                  onClick={handleTogglePush}
+                  disabled={pushToggling}
+                  className="relative w-11 h-6 rounded-full transition-colors duration-200 disabled:opacity-50 flex-shrink-0"
+                  style={{
+                    backgroundColor: pushEnabled ? APP_CONFIG.brand.primaryColor : "#D1D5DB",
+                  }}
+                  aria-label={pushEnabled ? "Disable push notifications" : "Enable push notifications"}
+                >
+                  <span
+                    className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200"
+                    style={{
+                      transform: pushEnabled ? "translateX(20px)" : "translateX(0)",
+                    }}
+                  />
+                </button>
+              )}
+            </div>
+
+            {/* Denied state: show how to unblock */}
+            {pushPermission === "denied" && (
+              <div className="mt-3 bg-red-50 rounded-lg p-3">
+                <p className="text-[11px] text-red-700 font-medium mb-1">
+                  Notifications are blocked in your browser settings
+                </p>
+                <ol className="text-[10px] text-red-600 list-decimal list-inside space-y-0.5 mb-2">
+                  <li>Tap the lock/info icon in your browser's address bar</li>
+                  <li>Find <strong>Notifications</strong> → change to <strong>Allow</strong></li>
+                  <li>Refresh this page</li>
+                </ol>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="text-[11px] font-semibold px-3 py-1.5 rounded-lg border border-red-300 text-red-700 bg-white active:scale-95 transition-transform"
+                >
+                  Refresh Page
+                </button>
+              </div>
+            )}
+
+            {/* Not supported + not standalone: nudge to install app first */}
+            {!pushSupported && !isStandalone && pushPermission !== "denied" && (
+              <div className="mt-3 bg-amber-50 rounded-lg p-3">
+                <p className="text-[11px] text-amber-700 leading-snug">
+                  <strong>Install the app</strong> to your home screen first (above), then push notifications will be available.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Security Info */}
         <div className="bg-white rounded-xl shadow-md p-5">
           <div className="flex items-center gap-3 text-green-600">
-            <Key className="w-5 h-5" />
+            <KeyRound className="w-5 h-5" />
             <div>
               <p className="font-medium text-sm">PIN Login Enabled</p>
               <p className="text-xs text-muted-foreground">You're using secure 6-digit PIN authentication</p>
             </div>
           </div>
+          <Button
+            onClick={() => setChangePinOpen(true)}
+            variant="outline"
+            className="w-full justify-start mt-3"
+          >
+            <Key className="w-4 h-4 mr-2" />
+            Change PIN
+          </Button>
         </div>
 
         {/* Mascot Preferences */}
@@ -219,43 +353,6 @@ export default function Profile() {
           </div>
         )}
 
-        {/* Push Notifications */}
-        {pushSupported && (
-          <div className="bg-white rounded-xl shadow-md p-5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {pushEnabled ? (
-                  <Bell className="w-5 h-5" style={{ color: APP_CONFIG.brand.primaryColor }} />
-                ) : (
-                  <BellOff className="w-5 h-5 text-gray-400" />
-                )}
-                <div>
-                  <p className="font-medium text-sm">Push Notifications</p>
-                  <p className="text-xs text-muted-foreground">
-                    {pushEnabled ? "Order updates & alerts on your device" : "Disabled — no browser alerts"}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={handleTogglePush}
-                disabled={pushToggling}
-                className="relative w-11 h-6 rounded-full transition-colors duration-200 disabled:opacity-50"
-                style={{
-                  backgroundColor: pushEnabled ? APP_CONFIG.brand.primaryColor : "#D1D5DB",
-                }}
-                aria-label={pushEnabled ? "Disable push notifications" : "Enable push notifications"}
-              >
-                <span
-                  className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200"
-                  style={{
-                    transform: pushEnabled ? "translateX(20px)" : "translateX(0)",
-                  }}
-                />
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* Sign Out */}
         <Button
           onClick={handleSignOut}
@@ -267,6 +364,15 @@ export default function Profile() {
           {isSigningOut ? "Signing Out..." : "Sign Out"}
         </Button>
       </main>
+      {user && accessToken && (
+        <ChangePinDialog
+          open={changePinOpen}
+          onOpenChange={setChangePinOpen}
+          variant="customer"
+          accessToken={accessToken}
+          userId={user.id}
+        />
+      )}
     </div>
   );
 }

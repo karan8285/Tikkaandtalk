@@ -9,7 +9,7 @@ import { Button } from "./ui/button";
 import {
   FileBarChart2, Lock, Construction, ChevronRight,
   ChevronLeft, Users, TrendingUp, BarChart3, UtensilsCrossed, UserCheck, UserX, Star,
-  CreditCard,
+  CreditCard, Download,
 } from "lucide-react";
 import { APP_CONFIG } from "../lib/config";
 import { CRMCustomerReport } from "./CRMCustomerReport";
@@ -21,6 +21,7 @@ import { CustomerPaymentReport } from "./CustomerPaymentReport";
 import { RevenueBreakdownReport } from "./RevenueBreakdownReport";
 import { StaffPerformanceReport } from "./StaffPerformanceReport";
 import { DailySummaryReport } from "./DailySummaryReport";
+import { A2HSReport } from "./A2HSReport";
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -33,7 +34,7 @@ interface ReportDefinition {
 }
 
 /**
- * Report slots �� add new entries here as reports are built.
+ * Report slots  add new entries here as reports are built.
  * Set status to "active" once the report is implemented.
  */
 const REPORT_SLOTS: ReportDefinition[] = [
@@ -100,6 +101,13 @@ const REPORT_SLOTS: ReportDefinition[] = [
     icon: CreditCard,
     status: "active",
   },
+  {
+    id: "a2hs-report",
+    title: "Add to Home Screen Report",
+    description: "Track the number of users who have added your app to their home screen.",
+    icon: Download,
+    status: "active",
+  },
 ];
 
 interface Props {
@@ -151,6 +159,9 @@ export function CustomReportsAdmin({ customToken }: Props) {
         )}
         {selectedReport === "daily-summary" && (
           <DailySummaryReport customToken={customToken} />
+        )}
+        {selectedReport === "a2hs-report" && (
+          <A2HSReport customToken={customToken} />
         )}
       </div>
     );

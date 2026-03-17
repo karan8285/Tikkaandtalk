@@ -51,6 +51,16 @@ const STAR_BORDER: Record<number, string> = {
   5: "#BBF7D0",
 };
 
+/** Derive short order ID from orderNumber (e.g. TNT00000102 -> TNT-102) */
+function getShortOrderId(orderNumber: string): string {
+  if (!orderNumber) return "";
+  const prefix = APP_CONFIG.restaurant.orderPrefix || "TNT";
+  const numPart = orderNumber.replace(prefix, "");
+  const num = parseInt(numPart, 10);
+  if (isNaN(num)) return orderNumber;
+  return `${prefix}-${String(num).padStart(3, "0")}`;
+}
+
 interface RatedOrder {
   rank: number;
   orderId: string;
@@ -189,7 +199,7 @@ export function RatingFeedbackReport({ customToken }: Props) {
           o.comment || "-",
           o.total,
           o.orderDate ? format(new Date(o.orderDate), "dd MMM yyyy HH:mm") : "-",
-          o.orderId,
+          o.orderNumber ? getShortOrderId(o.orderNumber) : o.orderId.slice(-8),
           o.items.join(", "),
         ]),
         [],
@@ -243,7 +253,7 @@ export function RatingFeedbackReport({ customToken }: Props) {
           (o.comment || "-").substring(0, 60),
           formatCurrency(o.total),
           o.orderDate ? format(new Date(o.orderDate), "dd MMM yy") : "-",
-          o.orderId.slice(-8),
+          o.orderNumber ? getShortOrderId(o.orderNumber) : o.orderId.slice(-8),
         ]),
         theme: "grid",
         headStyles: { fillColor: [217, 26, 96], textColor: [255, 255, 255], fontSize: 8 },

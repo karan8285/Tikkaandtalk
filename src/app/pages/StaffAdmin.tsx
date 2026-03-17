@@ -18,7 +18,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save, Ban, Star, Edit3 } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save, Ban, Star, Edit3, Volume2, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -38,8 +38,12 @@ import { CelebrationCategoriesAdmin } from "../components/CelebrationCategoriesA
 import { HomeLayoutAdmin } from "../components/HomeLayoutAdmin";
 import { CustomMenuAdmin } from "../components/CustomMenuAdmin";
 import { StaffManagement } from "../components/StaffManagement";
+import { StaffAddToHomeScreen, useShowStaffA2HSBanner } from "../components/StaffAddToHomeScreen";
+import { StaffPushToggle } from "../components/StaffPushToggle";
 import { CustomReportsAdmin } from "../components/CustomReportsAdmin";
 import { NotificationsAdmin } from "../components/NotificationsAdmin";
+import { BroadcastAdmin } from "../components/BroadcastAdmin";
+import { ChangePinDialog } from "../components/ChangePinDialog";
 import { getShortOrderId } from "../lib/orderUtils";
 import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG } from "../lib/config";
@@ -76,12 +80,14 @@ const TAB_DEFINITIONS: { value: string; label: string; permission: string }[] = 
   { value: "health", label: "Health", permission: "health" },
   { value: "staff", label: "Staff", permission: "staff" },
   { value: "reports", label: "Reports", permission: "reports" },
+  { value: "broadcast", label: "Broadcast", permission: "broadcast" },
 ];
 
 export default function StaffAdmin() {
   const navigate = useNavigate();
   const { staff, accessToken, loading: authLoading, signOut } = useStaffAuth();
   const role = staff?.role;
+  const [changePinOpen, setChangePinOpen] = useState(false);
 
   // Redirect if not authenticated or not authorized
   useEffect(() => {
@@ -139,11 +145,20 @@ export default function StaffAdmin() {
               <p className="text-sm font-medium">{staff.name}</p>
               <Badge className={`text-[10px] ${ROLE_COLORS[staff.role]}`}>{ROLE_LABELS[staff.role]}</Badge>
             </div>
+            <Button variant="outline" size="sm" onClick={() => setChangePinOpen(true)} title="Change PIN">
+              <Key className="w-4 h-4" />
+            </Button>
             <Button variant="outline" size="sm" onClick={handleSignOut}>
               <LogOut className="w-4 h-4 mr-1" /> Sign Out
             </Button>
           </div>
         </div>
+      </div>
+
+      {/* Staff Add to Home Screen & Push Notification Banners */}
+      <div className="max-w-7xl mx-auto">
+        <StaffAddToHomeScreen variant="banner" />
+        <StaffPushToggle variant="banner" />
       </div>
 
       {/* Content */}
@@ -226,6 +241,12 @@ export default function StaffAdmin() {
             <NotificationsAdmin customToken={accessToken} />
           </TabsContent>
 
+          {(role === 'superuser' || role === 'manager') && (
+            <TabsContent value="broadcast">
+              <BroadcastAdmin customToken={accessToken} />
+            </TabsContent>
+          )}
+
           {role === 'superuser' && (
             <>
               <TabsContent value="settings">
@@ -247,6 +268,17 @@ export default function StaffAdmin() {
           )}
         </Tabs>
       </div>
+
+      {/* Change PIN Dialog */}
+      {staff && accessToken && (
+        <ChangePinDialog
+          open={changePinOpen}
+          onOpenChange={setChangePinOpen}
+          variant="staff"
+          accessToken={accessToken}
+          userId={staff.id}
+        />
+      )}
     </div>
   );
 }
@@ -370,7 +402,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   // Modify order
   const [modifyOrderTarget, setModifyOrderTarget] = useState<Order | null>(null);
 
-  const { checkForNewOrders } = useNewOrderAlert({ label: "Admin" });
+  const { checkForNewOrders, soundEnabled, enableSound } = useNewOrderAlert({ label: "Admin" });
   const accessTokenRef = useRef(accessToken);
   accessTokenRef.current = accessToken;
 
@@ -637,6 +669,18 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
 
   return (
     <div className="space-y-4">
+      {/* Sound alert prompt */}
+      {!soundEnabled && (
+        <button
+          onClick={enableSound}
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 border-dashed border-amber-300 bg-amber-50 text-amber-800 text-sm font-medium hover:bg-amber-100 active:bg-amber-200 transition-colors"
+        >
+          <VolumeX className="w-5 h-5 text-amber-600" />
+          <span>Tap here to enable new order sound alerts</span>
+          <Volume2 className="w-5 h-5 text-amber-600" />
+        </button>
+      )}
+
       {/* Stats Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <Card className="p-3" style={{ borderLeft: `4px solid ${BRAND}` }}>

@@ -81,7 +81,7 @@ function ogMetaPlugin() {
       const tags = `
     <!-- PWA -->
     <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/svg+xml" href="/icon-192.svg" />
+    <link rel="icon" type="image/png" href="${LOGO_URL}" />
     <link rel="apple-touch-icon" href="${LOGO_URL}" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />

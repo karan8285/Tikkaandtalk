@@ -1,4 +1,4 @@
-import { MessageCircle, Store, Info, MapPin, Image, Upload, Trash2, Loader2, SmilePlus } from "lucide-react";
+import { MessageCircle, Store, Info, MapPin, Image, Upload, Trash2, Loader2, SmilePlus, Globe, Smartphone, Star } from "lucide-react";
 import { APP_CONFIG } from "../lib/config";
 import { useState, useEffect } from "react";
 import { Card } from "./ui/card";
@@ -23,6 +23,9 @@ interface RestaurantSettings {
   restaurantAddress: string;
   restaurantLogoUrl: string;
   mascotImageUrl: string;
+  siteTitle: string;
+  appShortName: string;
+  faviconUrl: string;
 }
 
 export function RestaurantSettingsAdmin({ customToken }: { customToken: string | null }) {
@@ -40,6 +43,12 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
   const [mascotVersion, setMascotVersion] = useState(0);
   const [mascotLoadError, setMascotLoadError] = useState(false);
   const [mascotLocalPreview, setMascotLocalPreview] = useState<string | null>(null);
+  // Favicon upload state
+  const [faviconUploading, setFaviconUploading] = useState(false);
+  const [faviconDragOver, setFaviconDragOver] = useState(false);
+  const [faviconVersion, setFaviconVersion] = useState(0);
+  const [faviconLoadError, setFaviconLoadError] = useState(false);
+  const [faviconLocalPreview, setFaviconLocalPreview] = useState<string | null>(null);
 
   useEffect(() => {
     fetchSettings();
@@ -75,6 +84,9 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
         restaurantAddress: data.restaurantAddress ?? "",
         restaurantLogoUrl: data.restaurantLogoUrl ?? "",
         mascotImageUrl: data.mascotImageUrl ?? "",
+        siteTitle: data.siteTitle ?? "",
+        appShortName: data.appShortName ?? "",
+        faviconUrl: data.faviconUrl ?? "",
       });
     } catch (error: any) {
       console.error("Error fetching settings:", error);
@@ -321,6 +333,105 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
     e.target.value = "";
   };
 
+  // ─── Favicon Upload/Delete ───────────────────────────────
+  const handleFaviconUpload = async (file: File) => {
+    if (!customToken) return;
+    
+    const allowedTypes = ["image/png", "image/x-icon", "image/vnd.microsoft.icon", "image/svg+xml", "image/webp", "image/jpeg", "image/jpg"];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error("Invalid file type. Please upload PNG, ICO, SVG, WebP, JPG, or JPEG.");
+      return;
+    }
+    if (file.size > 1 * 1024 * 1024) {
+      toast.error("File too large. Maximum size is 1MB.");
+      return;
+    }
+
+    setFaviconUploading(true);
+    try {
+      const objectUrl = URL.createObjectURL(file);
+      setFaviconLocalPreview(objectUrl);
+      setFaviconLoadError(false);
+
+      const formData = new FormData();
+      formData.append("favicon", file);
+
+      const response = await fetch(`${API_BASE}/admin/upload-favicon`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": customToken,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: "Upload failed" }));
+        throw new Error(err.error || "Upload failed");
+      }
+
+      const data = await response.json();
+      console.log("Favicon upload response:", data);
+      if (settings && data.faviconUrl) {
+        setSettings({ ...settings, faviconUrl: data.faviconUrl });
+      }
+      setFaviconLoadError(false);
+      setFaviconVersion((v) => v + 1);
+      setFaviconLocalPreview(null);
+      toast.success("Favicon uploaded successfully!");
+    } catch (error: any) {
+      console.error("Favicon upload error:", error);
+      toast.error(`Failed to upload favicon: ${error.message}`);
+      setFaviconLocalPreview(null);
+    } finally {
+      setFaviconUploading(false);
+    }
+  };
+
+  const handleFaviconDelete = async () => {
+    if (!customToken) return;
+
+    setFaviconUploading(true);
+    try {
+      const response = await fetch(`${API_BASE}/admin/delete-favicon`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": customToken,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete favicon");
+      }
+
+      if (settings) {
+        setSettings({ ...settings, faviconUrl: "" });
+      }
+      setFaviconLocalPreview(null);
+      setFaviconLoadError(false);
+      toast.success("Favicon removed. The default favicon will be used.");
+    } catch (error: any) {
+      console.error("Favicon delete error:", error);
+      toast.error(`Failed to delete favicon: ${error.message}`);
+    } finally {
+      setFaviconUploading(false);
+    }
+  };
+
+  const handleFaviconDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setFaviconDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFaviconUpload(file);
+  };
+
+  const handleFaviconFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFaviconUpload(file);
+    e.target.value = "";
+  };
+
   if (loading) {
     return <div className="text-center py-8">Loading settings...</div>;
   }
@@ -407,6 +518,255 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
               </p>
             </div>
           )}
+        </div>
+      </Card>
+
+      {/* Browser Tab & Home Screen */}
+      <Card className="p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Globe className="w-5 h-5 text-indigo-600" />
+          <h3 className="text-lg font-semibold">Browser Tab & Home Screen</h3>
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          Customize the browser tab title, favicon, and the name shown when customers add the app to their home screen.
+        </p>
+        <div className="space-y-4">
+          <div>
+            <Label htmlFor="site-title">Browser Tab Title</Label>
+            <Input
+              id="site-title"
+              value={settings.siteTitle}
+              onChange={(e) => setSettings({ ...settings, siteTitle: e.target.value })}
+              placeholder={`e.g., ${settings.restaurantName || APP_CONFIG.restaurant.name} - ${settings.restaurantTagline || APP_CONFIG.restaurant.tagline}`}
+              className="mt-1"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              The title shown in the browser tab. Leave empty to use "<strong>{settings.restaurantName || APP_CONFIG.restaurant.name} - {settings.restaurantTagline || APP_CONFIG.restaurant.tagline}</strong>".
+            </p>
+          </div>
+          <div>
+            <Label htmlFor="app-short-name">Home Screen App Name</Label>
+            <Input
+              id="app-short-name"
+              value={settings.appShortName}
+              onChange={(e) => setSettings({ ...settings, appShortName: e.target.value })}
+              placeholder={settings.restaurantName || APP_CONFIG.restaurant.name}
+              className="mt-1"
+              maxLength={12}
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Short name shown under the app icon on the home screen (max 12 characters). Leave empty to use "<strong>{settings.restaurantName || APP_CONFIG.restaurant.name}</strong>".
+            </p>
+          </div>
+
+          {/* Favicon Upload Section */}
+          <div className="border-t border-gray-200 pt-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Star className="w-4 h-4 text-indigo-500" />
+              <Label className="text-sm font-semibold">Favicon (Browser Tab Icon)</Label>
+            </div>
+            <p className="text-[11px] text-muted-foreground mb-3">
+              Upload a custom favicon that appears in the browser tab next to the page title. If not set, the restaurant logo is used instead.
+            </p>
+
+            {/* Favicon Specifications */}
+            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 mb-3">
+              <p className="text-[11px] font-semibold text-indigo-700 mb-1.5">Image Specifications for Best Results:</p>
+              <ul className="text-[11px] text-indigo-600 space-y-1 list-disc pl-4">
+                <li><strong>Size:</strong> 32×32 px (minimum), 64×64 px or 128×128 px (recommended)</li>
+                <li><strong>Format:</strong> PNG (recommended for transparency), ICO, SVG, or WebP</li>
+                <li><strong>Shape:</strong> Square (1:1 aspect ratio) — non-square images will be distorted</li>
+                <li><strong>Background:</strong> Transparent PNG preferred for a clean look</li>
+                <li><strong>Design:</strong> Simple, recognizable icon — avoid text or fine details (it displays at 16×16 px in most tabs)</li>
+                <li><strong>File size:</strong> Under 1 MB (smaller is better for fast loading)</li>
+              </ul>
+            </div>
+
+            {/* Current favicon preview */}
+            {(settings.faviconUrl || faviconLocalPreview) && (
+              <div className="p-3 rounded-lg bg-indigo-50/50 border border-indigo-200 mb-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-gray-600 font-medium">
+                    {faviconLocalPreview && faviconUploading ? "Uploading..." : "Current Favicon:"}
+                  </p>
+                  {!faviconUploading && settings.faviconUrl && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-500 hover:text-red-700 hover:bg-red-50 h-7 px-2"
+                      onClick={handleFaviconDelete}
+                      disabled={faviconUploading}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1" />
+                      Remove
+                    </Button>
+                  )}
+                </div>
+                <div className="flex items-center gap-4 p-3 rounded-md bg-white border border-gray-200">
+                  <div className="flex flex-col items-center gap-1">
+                    <p className="text-[9px] text-gray-400 uppercase">Actual Size</p>
+                    <div className="w-4 h-4 bg-gray-100 rounded-sm flex items-center justify-center overflow-hidden">
+                      {faviconLocalPreview ? (
+                        <img src={faviconLocalPreview} alt="Favicon" className="w-4 h-4 object-contain" />
+                      ) : (
+                        <img
+                          src={`${settings.faviconUrl}${settings.faviconUrl.includes("?") ? "&" : "?"}v=${faviconVersion}`}
+                          alt="Favicon"
+                          className="w-4 h-4 object-contain"
+                          onLoad={() => setFaviconLoadError(false)}
+                          onError={() => setFaviconLoadError(true)}
+                        />
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-center gap-1">
+                    <p className="text-[9px] text-gray-400 uppercase">Preview (32px)</p>
+                    <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center overflow-hidden">
+                      {faviconLocalPreview ? (
+                        <img src={faviconLocalPreview} alt="Favicon" className="w-8 h-8 object-contain" />
+                      ) : (
+                        <img
+                          src={`${settings.faviconUrl}${settings.faviconUrl.includes("?") ? "&" : "?"}v=${faviconVersion}`}
+                          alt="Favicon"
+                          className="w-8 h-8 object-contain"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                        />
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-center gap-1">
+                    <p className="text-[9px] text-gray-400 uppercase">Preview (64px)</p>
+                    <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center overflow-hidden">
+                      {faviconLocalPreview ? (
+                        <img src={faviconLocalPreview} alt="Favicon" className="w-16 h-16 object-contain" />
+                      ) : (
+                        <img
+                          src={`${settings.faviconUrl}${settings.faviconUrl.includes("?") ? "&" : "?"}v=${faviconVersion}`}
+                          alt="Favicon"
+                          className="w-16 h-16 object-contain"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {faviconUploading && faviconLocalPreview && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <Loader2 className="animate-spin h-3.5 w-3.5 text-indigo-500" />
+                    <p className="text-xs text-indigo-600">Saving to server...</p>
+                  </div>
+                )}
+                {faviconLoadError && !faviconLocalPreview && (
+                  <div className="flex items-center gap-1.5 mt-2">
+                    <Info className="w-3.5 h-3.5 text-red-400" />
+                    <p className="text-[11px] text-red-500">Could not load favicon preview. Try uploading again.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Favicon upload area */}
+            <div
+              className={`relative flex flex-col items-center justify-center w-full border-2 border-dashed rounded-lg transition-colors cursor-pointer ${
+                faviconUploading ? "pointer-events-none opacity-60" : ""
+              } ${
+                faviconDragOver
+                  ? "border-indigo-500 bg-indigo-50"
+                  : "border-gray-300 hover:border-gray-400 bg-gray-50/50"
+              } ${settings.faviconUrl ? "py-3" : "py-6"}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setFaviconDragOver(true);
+              }}
+              onDragLeave={() => setFaviconDragOver(false)}
+              onDrop={handleFaviconDrop}
+              onClick={() => !faviconUploading && document.getElementById("favicon-upload")?.click()}
+            >
+              {faviconUploading ? (
+                <div className="flex flex-col items-center gap-2">
+                  <Loader2 className="animate-spin h-6 w-6 text-indigo-500" />
+                  <p className="text-sm text-indigo-600 font-medium">Uploading...</p>
+                </div>
+              ) : (
+                <>
+                  <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center mb-2">
+                    <Upload className="h-4 w-4 text-indigo-600" />
+                  </div>
+                  <p className="text-sm font-medium text-gray-700">
+                    {settings.faviconUrl ? "Replace favicon" : "Upload favicon"}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Drag & drop or click to browse
+                  </p>
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    PNG (recommended), ICO, SVG, WebP, JPG — max 1MB — Square image
+                  </p>
+                </>
+              )}
+              <input
+                type="file"
+                id="favicon-upload"
+                className="hidden"
+                accept="image/png,image/x-icon,image/vnd.microsoft.icon,image/svg+xml,image/webp,image/jpeg,image/jpg"
+                onChange={handleFaviconFileSelect}
+              />
+            </div>
+
+            {!settings.faviconUrl && (
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 mt-3">
+                <Info className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+                <p className="text-xs text-blue-700">
+                  No custom favicon uploaded. The <strong>restaurant logo</strong> will be used as the browser tab icon by default.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Preview */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <p className="text-xs font-semibold text-gray-600 mb-3">Preview</p>
+            <div className="space-y-3">
+              {/* Browser tab preview */}
+              <div>
+                <p className="text-[10px] text-gray-400 mb-1.5 uppercase tracking-wider">Browser Tab</p>
+                <div className="bg-white border border-gray-300 rounded-t-lg px-3 py-1.5 flex items-center gap-2 max-w-[280px]">
+                  <div className="w-4 h-4 bg-gray-200 rounded-sm flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    {(settings.faviconUrl || settings.restaurantLogoUrl) ? (
+                      <img src={settings.faviconUrl || settings.restaurantLogoUrl} alt="" className="w-4 h-4 object-contain" />
+                    ) : (
+                      <Globe className="w-3 h-3 text-gray-400" />
+                    )}
+                  </div>
+                  <span className="text-xs text-gray-700 truncate">
+                    {settings.siteTitle || `${settings.restaurantName || APP_CONFIG.restaurant.name} - ${settings.restaurantTagline || APP_CONFIG.restaurant.tagline}`}
+                  </span>
+                </div>
+              </div>
+              {/* Home screen preview */}
+              <div>
+                <p className="text-[10px] text-gray-400 mb-1.5 uppercase tracking-wider">Home Screen Icon</p>
+                <div className="flex flex-col items-center gap-1.5 w-16">
+                  <div className="w-14 h-14 bg-white rounded-2xl border border-gray-200 shadow-sm flex items-center justify-center overflow-hidden">
+                    {settings.restaurantLogoUrl ? (
+                      <img src={settings.restaurantLogoUrl} alt="" className="w-12 h-12 object-contain" />
+                    ) : (
+                      <Smartphone className="w-6 h-6 text-gray-300" />
+                    )}
+                  </div>
+                  <span className="text-[10px] text-gray-700 text-center leading-tight truncate w-full">
+                    {settings.appShortName || settings.restaurantName || APP_CONFIG.restaurant.name}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200">
+            <Info className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+            <p className="text-xs text-amber-700">
+              The <strong>restaurant logo</strong> is used as the home screen icon. If no custom favicon is uploaded above, the logo also serves as the browser tab icon. After updating, customers may need to re-add the app to their home screen for the new icon to appear.
+            </p>
+          </div>
         </div>
       </Card>
 

@@ -1,7 +1,10 @@
+import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
+import { Users, ShoppingBag, DollarSign, Award } from "lucide-react";
 import { APP_CONFIG } from "../lib/config";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
+import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;

@@ -29,6 +29,7 @@ import {
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { loadSnapJs, openSnapPayment } from "../lib/midtrans";
 import { PushNotificationPrompt } from "../components/PushNotificationPrompt";
+import { AddToHomeScreen } from "../components/AddToHomeScreen";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -744,6 +745,10 @@ export default function OrderSuccess() {
         </Button>
 
         {/* ===== PUSH NOTIFICATION PROMPT ===== */}
+        {/* Add to Home Screen prompt — show before push prompt since it enables push on iOS */}
+        <div className="w-full mb-1">
+          <AddToHomeScreen variant="card" />
+        </div>
         <PushNotificationPrompt userId={user?.id} accessToken={accessToken} />
         
         {/* ===== SECTION 6: Order Summary (collapsible feel) ===== */}

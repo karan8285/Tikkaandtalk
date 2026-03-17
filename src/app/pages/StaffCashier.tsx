@@ -15,7 +15,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin, MessageSquare, Save, Filter, X, Share2, CheckSquare, Loader2, Ban, Plus, Star, Edit3 } from "lucide-react";
+import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin, MessageSquare, Save, Filter, X, Share2, CheckSquare, Loader2, Ban, Plus, Star, Edit3, Volume2, VolumeX, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
@@ -23,6 +23,9 @@ import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG, BRAND_COLOR } from "../lib/config";
 import { useNewOrderAlert } from "../lib/useNewOrderAlert";
 import { OrderModifyDialog } from "../components/OrderModifyDialog";
+import { StaffAddToHomeScreen } from "../components/StaffAddToHomeScreen";
+import { StaffPushToggle } from "../components/StaffPushToggle";
+import { ChangePinDialog } from "../components/ChangePinDialog";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -92,6 +95,7 @@ export default function StaffCashier() {
   const { staff, accessToken, loading: authLoading, signOut } = useStaffAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [changePinOpen, setChangePinOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"active" | "closed">("active");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -126,7 +130,7 @@ export default function StaffCashier() {
   // Modify order
   const [modifyOrderTarget, setModifyOrderTarget] = useState<Order | null>(null);
 
-  const { checkForNewOrders } = useNewOrderAlert({ label: "Cashier" });
+  const { checkForNewOrders, soundEnabled, enableSound } = useNewOrderAlert({ label: "Cashier" });
   const accessTokenRef = useRef(accessToken);
   accessTokenRef.current = accessToken;
 
@@ -414,10 +418,29 @@ export default function StaffCashier() {
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => navigate("/staff/create-order")}><Plus className="w-4 h-4" /></Button>
             <Button variant="outline" size="sm" onClick={fetchOrders}><RefreshCw className="w-4 h-4" /></Button>
+            <Button variant="outline" size="sm" onClick={() => setChangePinOpen(true)} title="Change PIN"><KeyRound className="w-4 h-4" /></Button>
             <Button variant="outline" size="sm" onClick={handleSignOut}><LogOut className="w-4 h-4" /></Button>
           </div>
         </div>
       </div>
+
+      {/* Staff Add to Home Screen Banner */}
+      <StaffAddToHomeScreen variant="banner" />
+      <StaffPushToggle variant="banner" />
+
+      {/* Sound alert prompt — shown when audio isn't primed yet */}
+      {!soundEnabled && (
+        <div className="max-w-3xl mx-auto px-4 pt-3">
+          <button
+            onClick={enableSound}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 border-dashed border-amber-300 bg-amber-50 text-amber-800 text-sm font-medium hover:bg-amber-100 active:bg-amber-200 transition-colors"
+          >
+            <VolumeX className="w-5 h-5 text-amber-600" />
+            <span>Tap here to enable new order sound alerts</span>
+            <Volume2 className="w-5 h-5 text-amber-600" />
+          </button>
+        </div>
+      )}
 
       <div className="max-w-3xl mx-auto p-4 space-y-4">
         {/* Stats */}
@@ -928,6 +951,17 @@ export default function StaffCashier() {
           onOpenChange={(open) => { if (!open) setModifyOrderTarget(null); }}
           accessToken={accessToken}
           onModified={() => { setModifyOrderTarget(null); fetchOrders(); }}
+        />
+      )}
+
+      {/* Change PIN Dialog */}
+      {staff && accessToken && (
+        <ChangePinDialog
+          open={changePinOpen}
+          onOpenChange={setChangePinOpen}
+          variant="staff"
+          accessToken={accessToken}
+          userId={staff.id}
         />
       )}
     </div>

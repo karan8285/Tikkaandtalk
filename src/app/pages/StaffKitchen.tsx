@@ -9,12 +9,15 @@ import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { ChefHat, Clock, Phone, MapPin, Package, Flame, CheckCircle2, LogOut, RefreshCw, Truck, UtensilsCrossed } from "lucide-react";
+import { ChefHat, Clock, Phone, MapPin, Package, Flame, CheckCircle2, LogOut, RefreshCw, Truck, UtensilsCrossed, Volume2, VolumeX, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
+import { StaffAddToHomeScreen } from "../components/StaffAddToHomeScreen";
+import { StaffPushToggle } from "../components/StaffPushToggle";
 import { APP_CONFIG, BRAND_COLOR } from "../lib/config";
 import { useNewOrderAlert } from "../lib/useNewOrderAlert";
+import { ChangePinDialog } from "../components/ChangePinDialog";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -72,9 +75,10 @@ export default function StaffKitchen() {
   const { staff, accessToken, loading: authLoading, signOut } = useStaffAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [changePinOpen, setChangePinOpen] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const prevCountRef = useRef(0);
-  const { checkForNewOrders } = useNewOrderAlert({ label: "Kitchen" });
+  const { checkForNewOrders, soundEnabled, enableSound } = useNewOrderAlert({ label: "Kitchen" });
   const accessTokenRef = useRef(accessToken);
   accessTokenRef.current = accessToken;
 
@@ -193,12 +197,33 @@ export default function StaffKitchen() {
             <Button variant="outline" size="sm" onClick={fetchOrders} className="text-gray-300 border-gray-600 hover:bg-gray-700">
               <RefreshCw className="w-4 h-4 mr-1" /> Refresh
             </Button>
+            <Button variant="outline" size="sm" onClick={() => setChangePinOpen(true)} className="text-gray-300 border-gray-600 hover:bg-gray-700" title="Change PIN">
+              <KeyRound className="w-4 h-4" />
+            </Button>
             <Button variant="outline" size="sm" onClick={handleSignOut} className="text-gray-300 border-gray-600 hover:bg-gray-700">
               <LogOut className="w-4 h-4 mr-1" /> Out
             </Button>
           </div>
         </div>
       </div>
+
+      {/* Staff Add to Home Screen Banner */}
+      <StaffAddToHomeScreen variant="banner" />
+      <StaffPushToggle variant="banner" />
+
+      {/* Sound alert prompt */}
+      {!soundEnabled && (
+        <div className="max-w-7xl mx-auto px-4 pt-3">
+          <button
+            onClick={enableSound}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 border-dashed border-amber-300 bg-amber-50 text-amber-800 text-sm font-medium hover:bg-amber-100 active:bg-amber-200 transition-colors"
+          >
+            <VolumeX className="w-5 h-5 text-amber-600" />
+            <span>Tap here to enable new order sound alerts</span>
+            <Volume2 className="w-5 h-5 text-amber-600" />
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -305,6 +330,16 @@ export default function StaffKitchen() {
             })}
           </div>
         </div>
+      )}
+      {/* Change PIN Dialog */}
+      {staff && accessToken && (
+        <ChangePinDialog
+          open={changePinOpen}
+          onOpenChange={setChangePinOpen}
+          variant="staff"
+          accessToken={accessToken}
+          userId={staff.id}
+        />
       )}
     </div>
   );

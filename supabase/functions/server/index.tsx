@@ -472,6 +472,7 @@ initializeDefaultData();
 const LOGO_BUCKET = "make-e5e192fb-logos";
 const LOGO_FILE_PATH = "restaurant-logo";
 const MASCOT_FILE_PATH = "mascot-image";
+const FAVICON_FILE_PATH = "favicon-image";
 let logoBucketReady = false;
 
 async function ensureLogoBucket() {
@@ -964,25 +965,29 @@ app.get("/make-server-e5e192fb/profile", async (c) => {
 
     console.log(`✅ Profile GET - Fetching profile for user: ${payload.userId}`);
 
-    const userData = await kv.get(`user:${payload.userId}`);
+    const userData = await kvGetWithRetry(`user:${payload.userId}`);
     if (!userData) {
       console.log(`❌ Profile GET - User not found: ${payload.userId}`);
       return c.json({ error: "User not found" }, 404);
     }
 
     // Normalize phone to international format if legacy
-    if (userData.phone && !userData.phone.startsWith('+')) {
-      userData.phone = normalizePhoneForStorage(userData.phone);
-      // Persist the migration
-      await kv.set(`user:${payload.userId}`, userData);
-      console.log(`🔄 Profile GET - Migrated phone to international format: ${userData.phone}`);
+    try {
+      if (userData.phone && !userData.phone.startsWith('+')) {
+        userData.phone = normalizePhoneForStorage(userData.phone);
+        // Persist the migration
+        await kvRetry(() => kv.set(`user:${payload.userId}`, userData));
+        console.log(`🔄 Profile GET - Migrated phone to international format: ${userData.phone}`);
+      }
+    } catch (migrationErr) {
+      console.warn(`⚠️ Profile GET - Phone migration failed (non-fatal): ${migrationErr}`);
     }
 
     console.log(`✅ Profile GET - User data:`, { id: userData.id, name: userData.name, points: userData.points });
     return c.json({ user: userData });
   } catch (error) {
-    console.log(`❌ Profile error: ${error}`);
-    return c.json({ error: "Failed to get profile" }, 500);
+    console.log(`❌ Profile error: ${error?.message || error}`);
+    return c.json({ error: `Failed to get profile: ${error?.message || error}` }, 500);
   }
 });
 
@@ -1354,6 +1359,16 @@ app.post("/make-server-e5e192fb/orders", async (c) => {
     console.log("Order stored successfully");
     
     // Note: Points will be awarded when order is closed AND payment is received
+
+    // Notify staff about new order (non-blocking)
+    const shortON = getShortOrderIdServer(orderNumber);
+    const deliveryLabel = orderData.deliveryMethod === 'delivery' ? 'Delivery' : 'Pickup';
+    notifyStaffByRole(['manager', 'cashier', 'kitchen'], {
+      title: `New Order ${shortON}`,
+      body: `${deliveryLabel} order — ${orderData.itemTitle || 'New order'}`,
+      url: '/staff/admin',
+      tag: `staff-new-order-${orderId}`,
+    }).catch(() => {});
 
     console.log("✅ Order creation complete");
     return c.json({ success: true, order });
@@ -5522,6 +5537,28 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
       console.log(`⚠️ Non-critical: notification push failed: ${notifErr?.message}`);
     }
 
+    // Push staff notifications for key status changes (non-blocking)
+    if (status) {
+      const sON = getShortOrderIdServer(order.orderNumber || order.id);
+      const statusMap: Record<string, { roles: StaffRole[]; title: string; body: string; url: string }> = {
+        confirmed: { roles: ['kitchen'], title: `Order ${sON} Confirmed`, body: 'New order ready to be prepared', url: '/staff/kitchen' },
+        cooking: { roles: ['manager'], title: `Order ${sON} Cooking`, body: 'Kitchen has started preparing this order', url: '/staff/admin' },
+        ready: { roles: ['delivery', 'cashier'], title: `Order ${sON} Ready`, body: order.deliveryMethod === 'delivery' ? 'Ready for delivery pickup' : 'Ready for customer pickup', url: order.deliveryMethod === 'delivery' ? '/staff/delivery' : '/staff/cashier' },
+        out_for_delivery: { roles: ['manager', 'cashier'], title: `Order ${sON} Out for Delivery`, body: 'Delivery is on the way', url: '/staff/admin' },
+        delivered: { roles: ['manager', 'cashier'], title: `Order ${sON} Delivered`, body: 'Order has been delivered successfully', url: '/staff/admin' },
+        cancelled: { roles: ['manager', 'cashier', 'kitchen'], title: `Order ${sON} Cancelled`, body: order.cancellationReason || 'Order has been cancelled', url: '/staff/admin' },
+      };
+      const staffNotif = statusMap[status];
+      if (staffNotif) {
+        notifyStaffByRole(staffNotif.roles, {
+          title: staffNotif.title,
+          body: staffNotif.body,
+          url: staffNotif.url,
+          tag: `staff-status-${orderId}-${status}`,
+        }).catch(() => {});
+      }
+    }
+
     return c.json({ success: true, order });
   } catch (error) {
     console.error(`❌ Update order status error:`, error);
@@ -5773,6 +5810,8 @@ app.get("/make-server-e5e192fb/admin/settings", async (c) => {
     if (settings.restaurantAddress === undefined) settings.restaurantAddress = "";
     if (settings.restaurantLogoUrl === undefined) settings.restaurantLogoUrl = "";
     if (settings.mascotImageUrl === undefined) settings.mascotImageUrl = "";
+    if (settings.siteTitle === undefined) settings.siteTitle = "";
+    if (settings.appShortName === undefined) settings.appShortName = "";
 
     return c.json(settings);
   } catch (error) {
@@ -6018,6 +6057,187 @@ app.delete("/make-server-e5e192fb/admin/delete-logo", async (c) => {
   } catch (error) {
     console.error("Delete logo error:", error);
     return c.json({ error: `Failed to delete logo: ${error}` }, 500);
+  }
+});
+
+// ==================== FAVICON IMAGE UPLOAD & DELETE ====================
+
+// Upload favicon (admin only) - accepts multipart form data
+app.post("/make-server-e5e192fb/admin/upload-favicon", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required - no token provided" }, 401);
+    }
+
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    const formData = await c.req.formData();
+    const file = formData.get("favicon") as File | null;
+    if (!file) {
+      return c.json({ error: "No file provided. Send a 'favicon' field in multipart form data." }, 400);
+    }
+
+    // Validate file type - favicons should be PNG or ICO ideally
+    const allowedTypes = ["image/png", "image/x-icon", "image/vnd.microsoft.icon", "image/svg+xml", "image/webp", "image/jpeg", "image/jpg"];
+    if (!allowedTypes.includes(file.type)) {
+      return c.json({ error: `Invalid file type: ${file.type}. Allowed: PNG (recommended), ICO, SVG, WebP, JPG.` }, 400);
+    }
+
+    // Validate file size (max 1MB for favicons)
+    if (file.size > 1 * 1024 * 1024) {
+      return c.json({ error: "File too large. Maximum size for favicon is 1MB." }, 400);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    if (!logoBucketReady) {
+      await ensureLogoBucket();
+      if (!logoBucketReady) {
+        return c.json({ error: "Storage bucket could not be created. Please try again in a moment." }, 500);
+      }
+    }
+
+    const extMap: Record<string, string> = {
+      "image/png": "png",
+      "image/x-icon": "ico",
+      "image/vnd.microsoft.icon": "ico",
+      "image/svg+xml": "svg",
+      "image/webp": "webp",
+      "image/jpeg": "jpg",
+      "image/jpg": "jpg",
+    };
+    const ext = extMap[file.type] || "png";
+    const filePath = `${FAVICON_FILE_PATH}.${ext}`;
+
+    // Delete any existing favicon files first
+    const removeFiles = ["png", "ico", "svg", "webp", "jpg"].map(e => `${FAVICON_FILE_PATH}.${e}`);
+    try {
+      await supabase.storage.from(LOGO_BUCKET).remove(removeFiles);
+    } catch (cleanupErr) {
+      console.log("⚠️ Cleanup of old favicons failed (non-critical):", cleanupErr);
+    }
+
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    console.log(`📤 Uploading favicon: ${filePath}, size: ${uint8.length} bytes, type: ${file.type}`);
+
+    const { data, error } = await supabase.storage.from(LOGO_BUCKET).upload(filePath, uint8, {
+      contentType: file.type,
+      upsert: true,
+    });
+
+    if (error) {
+      console.error("❌ Favicon upload to storage failed:", JSON.stringify(error));
+      return c.json({ error: `Failed to upload favicon to storage: ${error.message}` }, 500);
+    }
+
+    console.log("✅ Favicon uploaded to storage:", data.path);
+
+    // Generate a signed URL with very long expiry (10 years)
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(LOGO_BUCKET)
+      .createSignedUrl(filePath, 315360000);
+
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      console.error("❌ Failed to create favicon signed URL:", signedUrlError);
+      return c.json({ error: "Favicon uploaded but failed to generate access URL. Please try again." }, 500);
+    }
+
+    const faviconUrl = signedUrlData.signedUrl;
+
+    // Store favicon metadata in KV
+    await kv.set("restaurant_favicon_meta", {
+      path: filePath,
+      contentType: file.type,
+      uploadedAt: new Date().toISOString(),
+      size: file.size,
+      signedUrl: faviconUrl,
+    });
+
+    // Also update restaurant_settings with the signed favicon URL
+    const settings = await kvGetWithRetry("restaurant_settings") || {};
+    settings.faviconUrl = faviconUrl;
+    await kv.set("restaurant_settings", settings);
+
+    return c.json({ success: true, faviconUrl, size: file.size });
+  } catch (error) {
+    console.error("Upload favicon error:", error);
+    return c.json({ error: `Failed to upload favicon: ${error}` }, 500);
+  }
+});
+
+// Delete favicon (admin only)
+app.delete("/make-server-e5e192fb/admin/delete-favicon", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Authentication required" }, 401);
+    }
+    const adminCheck = await verifyAdminAccess(token);
+    if (!adminCheck?.isAdmin) {
+      return c.json({ code: 401, message: "Invalid JWT", error: "Admin access required" }, 401);
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    const removeFiles = ["png", "ico", "svg", "webp", "jpg"].map(e => `${FAVICON_FILE_PATH}.${e}`);
+    try {
+      await supabase.storage.from(LOGO_BUCKET).remove(removeFiles);
+    } catch (_) { /* ignore */ }
+
+    await kv.del("restaurant_favicon_meta");
+
+    const settings = await kvGetWithRetry("restaurant_settings") || {};
+    settings.faviconUrl = "";
+    await kv.set("restaurant_settings", settings);
+
+    console.log("✅ Favicon deleted from storage");
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("Delete favicon error:", error);
+    return c.json({ error: `Failed to delete favicon: ${error}` }, 500);
+  }
+});
+
+// ── Public favicon proxy ─────────────────────────────────────────────
+// Serves the favicon at a permanent public URL without auth.
+// Falls back to the logo proxy or a default icon.
+app.get("/make-server-e5e192fb/public/favicon", async (c) => {
+  try {
+    const meta = await kvGetWithRetry("restaurant_favicon_meta");
+    const settings = await kvGetWithRetry("restaurant_settings");
+    const faviconUrl = meta?.signedUrl || settings?.faviconUrl;
+
+    if (faviconUrl) {
+      const imgRes = await fetch(faviconUrl);
+      if (imgRes.ok) {
+        const contentType = imgRes.headers.get("content-type") || "image/png";
+        const body = await imgRes.arrayBuffer();
+        return new Response(body, {
+          headers: {
+            "Content-Type": contentType,
+            "Cache-Control": "public, max-age=3600, s-maxage=86400",
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
+      }
+    }
+
+    // Fallback: redirect to public logo proxy
+    return c.redirect(`/make-server-e5e192fb/public/logo`);
+  } catch (error) {
+    console.error("Public favicon proxy error:", error);
+    return c.redirect(`/make-server-e5e192fb/public/logo`);
   }
 });
 
@@ -6749,12 +6969,15 @@ app.get("/make-server-e5e192fb/restaurant-status", async (c) => {
     const restaurantAddress = settings?.restaurantAddress || "";
     const restaurantLogoUrl = settings?.restaurantLogoUrl || "";
     const mascotImageUrl = settings?.mascotImageUrl || "";
+    const siteTitle = settings?.siteTitle || "";
+    const appShortName = settings?.appShortName || "";
+    const faviconUrl = settings?.faviconUrl || "";
     
     // Fetch payment gateway enabled status
     const pgConfig = await kvGetWithRetry("payment_gateway_settings");
     const onlinePaymentsEnabled = pgConfig?.enabled ?? true;
 
-    const baseInfo = { taxRate, onlinePaymentsEnabled, whatsappNumber, whatsappDisplay, restaurantName, restaurantTagline, restaurantAddress, restaurantLogoUrl, mascotImageUrl };
+    const baseInfo = { taxRate, onlinePaymentsEnabled, whatsappNumber, whatsappDisplay, restaurantName, restaurantTagline, restaurantAddress, restaurantLogoUrl, mascotImageUrl, siteTitle, appShortName, faviconUrl };
     
     if (!settings) {
       return c.json({ isOpen: true, acceptingOrders: true, ...baseInfo });
@@ -6783,7 +7006,7 @@ app.get("/make-server-e5e192fb/restaurant-status", async (c) => {
     return c.json({ isOpen: true, acceptingOrders: true, ...baseInfo });
   } catch (error) {
     console.error("Get restaurant status error:", error);
-    return c.json({ isOpen: true, acceptingOrders: true, taxRate: 11, onlinePaymentsEnabled: true, whatsappNumber: "", whatsappDisplay: "", restaurantName: "", restaurantTagline: "", restaurantAddress: "", restaurantLogoUrl: "", mascotImageUrl: "" });
+    return c.json({ isOpen: true, acceptingOrders: true, taxRate: 11, onlinePaymentsEnabled: true, whatsappNumber: "", whatsappDisplay: "", restaurantName: "", restaurantTagline: "", restaurantAddress: "", restaurantLogoUrl: "", mascotImageUrl: "", siteTitle: "", appShortName: "" });
   }
 });
 
@@ -11916,6 +12139,45 @@ async function sendBrowserPush(userId: string, payload: {
   }
 }
 
+// ── Staff Push Notifications ──
+// Staff push subscriptions use push_subs:staff_<staffId> to avoid collision with customer IDs.
+// This helper sends browser push to all active staff matching given roles.
+type StaffRole = 'superuser' | 'manager' | 'cashier' | 'kitchen' | 'delivery';
+
+async function notifyStaffByRole(roles: StaffRole[], payload: {
+  title: string;
+  body: string;
+  url?: string;
+  tag?: string;
+}): Promise<void> {
+  try {
+    const allStaff: any[] = await kvRetry(() => kv.getByPrefix('staff:'));
+    if (!allStaff || allStaff.length === 0) return;
+
+    // Always include superuser in notifications + any explicitly requested roles
+    const targetStaff = allStaff.filter((s: any) =>
+      s.active && (roles.includes(s.role) || s.role === 'superuser')
+    );
+
+    if (targetStaff.length === 0) return;
+
+    console.log(`📢 Notifying ${targetStaff.length} staff (roles: ${roles.join(', ')}) — "${payload.title}"`);
+
+    await Promise.allSettled(
+      targetStaff.map((s: any) =>
+        sendBrowserPush(`staff_${s.id}`, {
+          title: payload.title,
+          body: payload.body,
+          url: payload.url || '/staff',
+          tag: payload.tag || `staff-${Date.now()}`,
+        })
+      )
+    );
+  } catch (err: any) {
+    console.log(`⚠️ notifyStaffByRole error: ${err?.message?.substring(0, 150)}`);
+  }
+}
+
 // Helper: Push a notification to a user's notification list (max 100, FIFO)
 async function pushNotification(userId: string, notif: {
   type: string;
@@ -12318,6 +12580,403 @@ app.post("/make-server-e5e192fb/push/unsubscribe", async (c) => {
   } catch (error: any) {
     console.log(`❌ Push unsubscribe error: ${error?.message}`);
     return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// ─── Broadcast Messages (Home Page Banners) ─────────────────────────────────
+
+// Public: GET active broadcasts (no auth required)
+app.get("/make-server-e5e192fb/broadcasts/active", async (c) => {
+  try {
+    const broadcasts: any[] = (await kvRetry(() => kv.get('broadcasts'))) || [];
+    const now = new Date();
+    const active = broadcasts.filter((b: any) => {
+      if (!b.active) return false;
+      if (b.startAt && new Date(b.startAt) > now) return false;
+      if (b.endAt && new Date(b.endAt) < now) return false;
+      return true;
+    });
+    active.sort((a: any, b: any) => (a.priority ?? 99) - (b.priority ?? 99));
+    const settings = (await kvRetry(() => kv.get('broadcast_settings'))) || {};
+    return c.json({ broadcasts: active, scrollInterval: settings.scrollInterval || 7 });
+  } catch (error: any) {
+    console.log(`❌ Get active broadcasts error: ${error?.message}`);
+    return c.json({ broadcasts: [], scrollInterval: 7 });
+  }
+});
+
+// Admin: GET all broadcasts
+app.get("/make-server-e5e192fb/admin/broadcasts", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(token);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+    const broadcasts: any[] = (await kvRetry(() => kv.get('broadcasts'))) || [];
+    broadcasts.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const settings = (await kvRetry(() => kv.get('broadcast_settings'))) || {};
+    return c.json({ broadcasts, settings });
+  } catch (error: any) {
+    console.log(`❌ Get admin broadcasts error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: POST create broadcast
+app.post("/make-server-e5e192fb/admin/broadcasts", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(token);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+    const body = await c.req.json();
+    const { message, icon, bgColor, textColor, url, startAt, endAt, priority, active } = body;
+    if (!message) return c.json({ error: "Message is required" }, 400);
+
+    const broadcast = {
+      id: `bc_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+      message,
+      icon: icon || '📢',
+      bgColor: bgColor || '#FFF0F5',
+      textColor: textColor || '#9B1B5A',
+      url: url || '',
+      startAt: startAt || new Date().toISOString(),
+      endAt: endAt || '',
+      priority: priority ?? 0,
+      active: active !== false,
+      createdAt: new Date().toISOString(),
+      createdBy: adminAuth.userId,
+    };
+
+    const broadcasts: any[] = (await kvRetry(() => kv.get('broadcasts'))) || [];
+    broadcasts.push(broadcast);
+    await kvRetry(() => kv.set('broadcasts', broadcasts));
+    console.log(`📢 Broadcast created: ${broadcast.id}`);
+    return c.json({ success: true, broadcast });
+  } catch (error: any) {
+    console.log(`❌ Create broadcast error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: PUT update broadcast
+app.put("/make-server-e5e192fb/admin/broadcasts/:id", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(token);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+    const id = c.req.param('id');
+    const body = await c.req.json();
+
+    const broadcasts: any[] = (await kvRetry(() => kv.get('broadcasts'))) || [];
+    const idx = broadcasts.findIndex((b: any) => b.id === id);
+    if (idx === -1) return c.json({ error: "Broadcast not found" }, 404);
+
+    broadcasts[idx] = { ...broadcasts[idx], ...body, updatedAt: new Date().toISOString() };
+    await kvRetry(() => kv.set('broadcasts', broadcasts));
+    console.log(`📢 Broadcast updated: ${id}`);
+    return c.json({ success: true, broadcast: broadcasts[idx] });
+  } catch (error: any) {
+    console.log(`❌ Update broadcast error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: DELETE broadcast
+app.delete("/make-server-e5e192fb/admin/broadcasts/:id", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(token);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+    const id = c.req.param('id');
+
+    const broadcasts: any[] = (await kvRetry(() => kv.get('broadcasts'))) || [];
+    const updated = broadcasts.filter((b: any) => b.id !== id);
+    await kvRetry(() => kv.set('broadcasts', updated));
+    console.log(`📢 Broadcast deleted: ${id}`);
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log(`❌ Delete broadcast error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: PUT update broadcast settings (scroll interval, etc.)
+app.put("/make-server-e5e192fb/admin/broadcast-settings", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(token);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+    const body = await c.req.json();
+    const existing = (await kvRetry(() => kv.get('broadcast_settings'))) || {};
+    const updated = { ...existing, ...body, updatedAt: new Date().toISOString() };
+    await kvRetry(() => kv.set('broadcast_settings', updated));
+    return c.json({ success: true, settings: updated });
+  } catch (error: any) {
+    console.log(`❌ Update broadcast settings error: ${error?.message}`);
+    return c.json({ error: `Failed: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== CHANGE PIN ENDPOINTS ====================
+
+// Customer: Change own PIN
+app.post("/make-server-e5e192fb/change-pin", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const userAccess = await verifyUserAccess(token);
+    if (!userAccess) return c.json({ error: "Unauthorized" }, 401);
+
+    const { currentPin, newPin } = await c.req.json();
+    if (!currentPin || !newPin) return c.json({ error: "Current PIN and new PIN are required" }, 400);
+    if (!isValidPin(newPin)) return c.json({ error: "New PIN must be exactly 6 digits" }, 400);
+    if (currentPin === newPin) return c.json({ error: "New PIN must be different from current PIN" }, 400);
+
+    const userId = userAccess.userId;
+    console.log(`🔑 CHANGE PIN (Customer): User ${userId} requesting PIN change`);
+
+    const userData = await kvRetry(() => kv.get(`user:${userId}`));
+    if (!userData) return c.json({ error: "User not found" }, 404);
+
+    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const { data: { users } } = await supabase.auth.admin.listUsers();
+    const authUser = users?.find((u: any) => u.id === userId);
+    if (!authUser?.email) return c.json({ error: "Auth user not found" }, 404);
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: authUser.email,
+      password: currentPin,
+    });
+
+    if (signInError) {
+      console.log(`❌ CHANGE PIN (Customer): Current PIN incorrect for user ${userId}`);
+      return c.json({ error: "Incorrect current PIN" }, 401);
+    }
+
+    const { error: updateError } = await supabase.auth.admin.updateUserById(userId, { password: newPin });
+    if (updateError) {
+      console.log(`❌ CHANGE PIN (Customer): Failed to update - ${updateError.message}`);
+      return c.json({ error: `Failed to update PIN: ${updateError.message}` }, 500);
+    }
+
+    console.log(`✅ CHANGE PIN (Customer): PIN changed successfully for user ${userId} (${userData.name})`);
+
+    await pushNotification(userId, {
+      type: 'security',
+      title: 'PIN Changed',
+      message: 'Your login PIN was changed successfully. If you did not make this change, contact support immediately.',
+    });
+
+    return c.json({ success: true, message: "PIN changed successfully" });
+  } catch (error: any) {
+    console.log(`❌ CHANGE PIN (Customer) ERROR: ${error?.message}`);
+    return c.json({ error: `Failed to change PIN: ${error?.message}` }, 500);
+  }
+});
+
+// Staff: Change own PIN
+app.post("/make-server-e5e192fb/staff/change-pin", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const staffAccess = await verifyStaffAccess(token);
+    if (!staffAccess) return c.json({ error: "Unauthorized" }, 401);
+
+    const { currentPin, newPin } = await c.req.json();
+    if (!currentPin || !newPin) return c.json({ error: "Current PIN and new PIN are required" }, 400);
+    if (!isValidPin(newPin)) return c.json({ error: "New PIN must be exactly 6 digits" }, 400);
+    if (currentPin === newPin) return c.json({ error: "New PIN must be different from current PIN" }, 400);
+
+    const userId = staffAccess.userId;
+    console.log(`🔑 CHANGE PIN (Staff): User ${userId} (${staffAccess.role}) requesting PIN change`);
+
+    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const { data: { users } } = await supabase.auth.admin.listUsers();
+    const authUser = users?.find((u: any) => u.id === userId);
+    if (!authUser?.email) return c.json({ error: "Auth user not found" }, 404);
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: authUser.email,
+      password: currentPin,
+    });
+
+    if (signInError) {
+      console.log(`❌ CHANGE PIN (Staff): Current PIN incorrect for user ${userId}`);
+      return c.json({ error: "Incorrect current PIN" }, 401);
+    }
+
+    const { error: updateError } = await supabase.auth.admin.updateUserById(userId, { password: newPin });
+    if (updateError) {
+      console.log(`❌ CHANGE PIN (Staff): Failed to update - ${updateError.message}`);
+      return c.json({ error: `Failed to update PIN: ${updateError.message}` }, 500);
+    }
+
+    const staffData = await kvRetry(() => kv.get(`staff:${userId}`));
+    console.log(`✅ CHANGE PIN (Staff): PIN changed for ${staffData?.name || userId} (${staffAccess.role})`);
+
+    await pushNotification(userId, {
+      type: 'security',
+      title: 'Staff PIN Changed',
+      message: 'Your staff login PIN was changed successfully. If you did not make this change, contact your supervisor immediately.',
+    });
+
+    return c.json({ success: true, message: "PIN changed successfully" });
+  } catch (error: any) {
+    console.log(`❌ CHANGE PIN (Staff) ERROR: ${error?.message}`);
+    return c.json({ error: `Failed to change PIN: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== A2HS TRACKING ====================
+
+// POST /track-a2hs — Track "Add to Home Screen" install events
+app.post("/make-server-e5e192fb/track-a2hs", async (c) => {
+  try {
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const userAuth = await verifyUserAccess(accessToken);
+    if (!userAuth) return c.json({ error: "Unauthorized" }, 401);
+
+    const { method, platform } = await c.req.json();
+    const userId = userAuth.userId;
+    const phone = userAuth.phone || "";
+
+    // Get user name from profile
+    let userName = "";
+    try {
+      const profile = await kvRetry(() => kv.get(`user:${userId}`));
+      if (profile) {
+        const parsed = typeof profile === "string" ? JSON.parse(profile) : profile;
+        userName = parsed.name || "";
+      }
+    } catch {}
+
+    // Check if already tracked for this user
+    const existing = await kvRetry(() => kv.get(`a2hs_install:${userId}`));
+    if (existing) {
+      console.log(`[A2HS] Already tracked for user ${userId}`);
+      return c.json({ success: true, alreadyTracked: true });
+    }
+
+    // Store the install event
+    const installData = {
+      userId,
+      phone,
+      name: userName,
+      method: method || "unknown",
+      platform: platform || "unknown",
+      installedAt: new Date().toISOString(),
+    };
+
+    await kvRetry(() => kv.set(`a2hs_install:${userId}`, JSON.stringify(installData)));
+    console.log(`✅ [A2HS] Tracked install for user ${userId}: ${method} on ${platform}`);
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.log(`❌ [A2HS] Track error: ${error?.message}`);
+    return c.json({ error: `Failed to track A2HS install: ${error?.message}` }, 500);
+  }
+});
+
+// GET /reports/a2hs — A2HS Install report (superuser only)
+app.get("/make-server-e5e192fb/reports/a2hs", async (c) => {
+  try {
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+
+    const page = parseInt(c.req.query("page") || "1");
+    const limit = parseInt(c.req.query("limit") || "10");
+    const search = c.req.query("search") || "";
+    const startDate = c.req.query("startDate") || "";
+    const endDate = c.req.query("endDate") || "";
+    const isExport = c.req.query("export") === "true";
+
+    // Fetch all A2HS install records
+    const allRecords = await kvRetry(() => kv.getByPrefix("a2hs_install:"));
+    const installs: any[] = [];
+
+    for (const record of allRecords) {
+      try {
+        const val = typeof record.value === "string" ? JSON.parse(record.value) : record.value;
+        installs.push(val);
+      } catch {}
+    }
+
+    // Sort by installedAt desc
+    installs.sort((a, b) => new Date(b.installedAt).getTime() - new Date(a.installedAt).getTime());
+
+    // Apply filters
+    let filtered = installs;
+
+    if (search) {
+      const s = search.toLowerCase();
+      filtered = filtered.filter(
+        (i) =>
+          (i.name || "").toLowerCase().includes(s) ||
+          (i.phone || "").toLowerCase().includes(s) ||
+          (i.platform || "").toLowerCase().includes(s) ||
+          (i.method || "").toLowerCase().includes(s)
+      );
+    }
+
+    if (startDate) {
+      const start = new Date(startDate);
+      filtered = filtered.filter((i) => new Date(i.installedAt) >= start);
+    }
+
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      filtered = filtered.filter((i) => new Date(i.installedAt) <= end);
+    }
+
+    // Summary stats
+    const summary = {
+      totalInstalls: filtered.length,
+      nativeInstalls: filtered.filter((i) => i.method === "native").length,
+      manualInstalls: filtered.filter((i) => i.method === "manual_standalone").length,
+      platformBreakdown: {
+        iOS: filtered.filter((i) => (i.platform || "").toLowerCase().includes("ios")).length,
+        Android: filtered.filter((i) => (i.platform || "").toLowerCase().includes("android")).length,
+        Desktop: filtered.filter((i) => (i.platform || "").toLowerCase().includes("desktop")).length,
+        Other: filtered.filter((i) => {
+          const p = (i.platform || "").toLowerCase();
+          return !p.includes("ios") && !p.includes("android") && !p.includes("desktop");
+        }).length,
+      },
+    };
+
+    // If export, return all filtered records
+    if (isExport) {
+      return c.json({
+        installs: filtered,
+        summary,
+        pagination: { page: 1, limit: filtered.length, totalPages: 1, totalItems: filtered.length },
+        allInstalls: filtered,
+      });
+    }
+
+    // Paginate
+    const totalItems = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / limit));
+    const safePage = Math.min(page, totalPages);
+    const startIdx = (safePage - 1) * limit;
+    const paginated = filtered.slice(startIdx, startIdx + limit);
+
+    return c.json({
+      installs: paginated,
+      summary,
+      pagination: { page: safePage, limit, totalPages, totalItems },
+    });
+  } catch (error: any) {
+    console.log(`❌ [A2HS Report] Error: ${error?.message}`);
+    return c.json({ error: `Failed to generate A2HS report: ${error?.message}` }, 500);
   }
 });
 

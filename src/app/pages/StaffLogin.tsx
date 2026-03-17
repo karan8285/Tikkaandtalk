@@ -7,10 +7,11 @@ import { Label } from "../components/ui/label";
 import { Card } from "../components/ui/card";
 import { PinInput } from "../components/PinInput";
 import { CountryCodeSelect } from "../components/CountryCodeSelect";
-import { Lock, Phone, ShieldCheck } from "lucide-react";
+import { Lock, Phone } from "lucide-react";
 import { toast } from "sonner";
 import { APP_CONFIG, BRAND_COLOR } from "../lib/config";
 import { useRestaurantLogo } from "../lib/useRestaurantLogo";
+import { StaffAddToHomeScreen } from "../components/StaffAddToHomeScreen";
 
 export default function StaffLogin() {
   const navigate = useNavigate();
@@ -58,21 +59,18 @@ export default function StaffLogin() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #1e293b 100%)' }}>
-      <Card className="w-full max-w-md p-8 shadow-2xl">
+    <div className="min-h-screen flex flex-col items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #1e293b 100%)' }}>
+      <Card className="w-full max-w-md p-6 sm:p-8 shadow-2xl">
         {/* Header */}
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center" style={{ backgroundColor: `${BRAND_COLOR}15` }}>
-            <ShieldCheck className="w-8 h-8" style={{ color: BRAND_COLOR }} />
-          </div>
+        <div className="text-center mb-6">
           {!logoLoading && logoUrl && (
-            <img src={logoUrl} alt={APP_CONFIG.restaurant.name} className="h-10 mx-auto mb-2 object-contain" />
+            <img src={logoUrl} alt={APP_CONFIG.restaurant.name} className="h-14 sm:h-16 mx-auto mb-3 object-contain" />
           )}
-          <h1 className="text-2xl font-bold text-gray-900">Staff Portal</h1>
-          <p className="text-sm text-gray-500 mt-1">{APP_CONFIG.restaurant.name}</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Staff Portal</h1>
+          <p className="text-xs sm:text-sm text-gray-500 mt-1">{APP_CONFIG.restaurant.name}</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5">
           {/* Phone */}
           <div className="space-y-2">
             <Label htmlFor="phone" className="flex items-center gap-2 text-sm font-medium">
@@ -117,7 +115,7 @@ export default function StaffLogin() {
           </Button>
         </form>
 
-        <div className="mt-6 pt-4 border-t text-center">
+        <div className="mt-5 sm:mt-6 pt-3 sm:pt-4 border-t text-center">
           <p className="text-xs text-gray-400">
             This portal is for authorized staff only.
           </p>
@@ -126,6 +124,11 @@ export default function StaffLogin() {
           </p>
         </div>
       </Card>
+
+      {/* Staff Add to Home Screen */}
+      <div className="w-full max-w-md mt-3 sm:mt-4">
+        <StaffAddToHomeScreen variant="card" />
+      </div>
     </div>
   );
 }

@@ -15,6 +15,8 @@ import { Alert, AlertDescription } from "../components/ui/alert";
 import { Mascot } from "../components/Mascot";
 import { useMascot } from "../lib/mascot-context";
 import { NotificationBell } from "../components/NotificationBell";
+import { AddToHomeScreen, useShowA2HSBanner } from "../components/AddToHomeScreen";
+import { BroadcastBanner } from "../components/BroadcastBanner";
 
 interface MenuCounts {
   todaysSpecial: number;
@@ -55,6 +57,7 @@ export default function Home() {
   const { user } = useAuth();
   const { totalItems } = useCart();
   const { logo: cachedLogo, loading: logoLoading } = useRestaurantLogo();
+  const showA2HSBanner = useShowA2HSBanner();
   const [menuCounts, setMenuCounts] = useState<MenuCounts>({
     todaysSpecial: 0,
     kidsMenu: 0,
@@ -374,6 +377,9 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Broadcast Banner */}
+      <BroadcastBanner />
+
       {/* Mascot Greeting Section */}
       {APP_CONFIG.mascot.enabled && (
         <Mascot
@@ -449,6 +455,11 @@ export default function Home() {
         </div>
       ) : (
         <>
+          {/* Add to Home Screen Banner (dismissable) */}
+          {user && showA2HSBanner && (
+            <AddToHomeScreen variant="banner" />
+          )}
+
           {/* Menu Categories - Horizontal Scrollable Icon Row */}
           <div className="px-1 pb-4 sm:pb-5">
             <div className="max-w-lg mx-auto">
