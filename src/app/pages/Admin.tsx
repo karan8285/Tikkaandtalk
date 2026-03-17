@@ -33,6 +33,7 @@ import { PartyPackagesAdmin } from "../components/PartyPackagesAdmin";
 import { CelebrationCategoriesAdmin } from "../components/CelebrationCategoriesAdmin";
 import { HomeLayoutAdmin } from "../components/HomeLayoutAdmin";
 import { CustomMenuAdmin } from "../components/CustomMenuAdmin";
+import { PointsExpiryAdmin } from "../components/PointsExpiryAdmin";
 import { getShortOrderId } from "../lib/orderUtils";
 import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG } from "../lib/config";
@@ -1251,6 +1252,7 @@ export default function Admin() {
               <TabsTrigger value="vouchers">Vouchers</TabsTrigger>
               <TabsTrigger value="dinein-vouchers">Dine-In</TabsTrigger>
               <TabsTrigger value="tier-benefits">Tiers</TabsTrigger>
+              <TabsTrigger value="points-expiry">Points</TabsTrigger>
               <TabsTrigger value="regular-menu">Menu</TabsTrigger>
               <TabsTrigger value="todays-special">Special</TabsTrigger>
               <TabsTrigger value="kids-menu">Kids</TabsTrigger>
@@ -2541,6 +2543,17 @@ export default function Admin() {
           <TabsContent value="tier-benefits" className="space-y-4">
             {accessToken ? (
               <TierBenefitsAdmin customToken={accessToken} />
+            ) : (
+              <Card className="p-8 text-center">
+                <p className="text-muted-foreground">Loading authentication...</p>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* Points Expiry Tab */}
+          <TabsContent value="points-expiry" className="space-y-4">
+            {accessToken ? (
+              <PointsExpiryAdmin customToken={accessToken} />
             ) : (
               <Card className="p-8 text-center">
                 <p className="text-muted-foreground">Loading authentication...</p>

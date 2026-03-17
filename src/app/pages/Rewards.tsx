@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { getRestaurantLogo } from "../lib/useRestaurantLogo";
 import { getWhatsAppNumber, getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
 import { formatIDR } from "../lib/currency";
+import { PointsHistory } from "../components/PointsHistory";
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -361,6 +362,9 @@ export default function Rewards() {
             </span>
           </div>
         </div>
+
+        {/* Points History */}
+        {user?.id && <PointsHistory userId={user.id} />}
 
         {/* Your Vouchers & Benefits */}
         <div>

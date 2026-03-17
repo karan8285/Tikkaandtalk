@@ -27,6 +27,261 @@ async function kvRetry<T>(fn: () => Promise<T>, maxRetries = 3, delayMs = 300): 
   throw lastError;
 }
 
+// ==================== POINTS EXPIRY HELPERS ====================
+
+interface PointsLedgerEntry {
+  id: string;
+  amount: number;
+  remaining: number;
+  source: string; // 'order' | 'manual' | 'refund' | 'migration' | 'deduction'
+  orderId?: string;
+  earnedAt: string;
+  expiresAt: string | null; // null = never expires
+  expired: boolean;
+  expiredAt?: string;
+  expiredAmount?: number;
+  note?: string;
+}
+
+interface PointsExpiryConfig {
+  enabled: boolean;
+  expiryModel: 'earned_date' | 'fixed_date' | 'rolling_window';
+  expiryMonths: number;
+  fixedExpiryMonth: number;
+  fixedExpiryDay: number;
+  rollingWindowMonths: number;
+  warningEnabled: boolean;
+  warningDaysBefore: number;
+  applyToExisting: boolean;
+}
+
+const DEFAULT_EXPIRY_CONFIG: PointsExpiryConfig = {
+  enabled: false,
+  expiryModel: 'earned_date',
+  expiryMonths: 12,
+  fixedExpiryMonth: 12,
+  fixedExpiryDay: 31,
+  rollingWindowMonths: 6,
+  warningEnabled: true,
+  warningDaysBefore: 14,
+  applyToExisting: true,
+};
+
+async function getPointsExpiryConfig(): Promise<PointsExpiryConfig> {
+  const config = await kvRetry(() => kv.get('points_expiry_config'));
+  return { ...DEFAULT_EXPIRY_CONFIG, ...(config || {}) };
+}
+
+function calcExpiryDate(earnedAt: string, config: PointsExpiryConfig): string | null {
+  if (!config.enabled) return null;
+  const earned = new Date(earnedAt);
+  switch (config.expiryModel) {
+    case 'earned_date': {
+      const expiry = new Date(earned);
+      expiry.setMonth(expiry.getMonth() + config.expiryMonths);
+      return expiry.toISOString();
+    }
+    case 'fixed_date': {
+      let year = earned.getFullYear();
+      let expiry = new Date(year, config.fixedExpiryMonth - 1, config.fixedExpiryDay, 23, 59, 59);
+      if (expiry <= earned) {
+        expiry = new Date(year + 1, config.fixedExpiryMonth - 1, config.fixedExpiryDay, 23, 59, 59);
+      }
+      return expiry.toISOString();
+    }
+    case 'rolling_window': {
+      const expiry = new Date(earned);
+      expiry.setMonth(expiry.getMonth() + config.rollingWindowMonths);
+      return expiry.toISOString();
+    }
+    default:
+      return null;
+  }
+}
+
+async function addPointsLedgerEntry(
+  userId: string, amount: number, source: string, orderId?: string, note?: string
+): Promise<void> {
+  if (amount <= 0) return;
+  const config = await getPointsExpiryConfig();
+  const now = new Date().toISOString();
+  const entry: PointsLedgerEntry = {
+    id: crypto.randomUUID(),
+    amount,
+    remaining: amount,
+    source,
+    orderId,
+    earnedAt: now,
+    expiresAt: calcExpiryDate(now, config),
+    expired: false,
+    note,
+  };
+  const ledgerKey = `points_ledger:${userId}`;
+  const ledger: PointsLedgerEntry[] = (await kvRetry(() => kv.get(ledgerKey))) || [];
+  ledger.push(entry);
+  await kvRetry(() => kv.set(ledgerKey, ledger));
+  console.log(`📒 Ledger: +${amount} pts for user ${userId} (source: ${source}, expires: ${entry.expiresAt || 'never'})`);
+}
+
+async function ensurePointsLedger(userId: string): Promise<PointsLedgerEntry[]> {
+  const ledgerKey = `points_ledger:${userId}`;
+  let ledger: PointsLedgerEntry[] = (await kvRetry(() => kv.get(ledgerKey))) || [];
+  if (ledger.length === 0) {
+    const userData = await kvRetry(() => kv.get(`user:${userId}`));
+    if (userData && (userData.points || 0) > 0) {
+      const config = await getPointsExpiryConfig();
+      const earnedAt = userData.createdAt || new Date().toISOString();
+      const entry: PointsLedgerEntry = {
+        id: crypto.randomUUID(),
+        amount: userData.points,
+        remaining: userData.points,
+        source: 'migration',
+        earnedAt,
+        expiresAt: config.enabled && config.applyToExisting ? calcExpiryDate(earnedAt, config) : null,
+        expired: false,
+        note: 'Migrated from existing balance',
+      };
+      ledger = [entry];
+      await kvRetry(() => kv.set(ledgerKey, ledger));
+      console.log(`📒 Migrated ${userData.points} existing points to ledger for user ${userId}`);
+    }
+  }
+  return ledger;
+}
+
+async function processPointsExpiry(userId: string): Promise<{ expired: number; warned: boolean }> {
+  const config = await getPointsExpiryConfig();
+  if (!config.enabled) return { expired: 0, warned: false };
+
+  const ledgerKey = `points_ledger:${userId}`;
+  let ledger = await ensurePointsLedger(userId);
+  if (ledger.length === 0) return { expired: 0, warned: false };
+
+  const now = new Date();
+  let totalExpired = 0;
+  let modified = false;
+  let warned = false;
+
+  // For rolling window: update expiry dates based on last activity
+  if (config.expiryModel === 'rolling_window') {
+    const latestActivity = ledger.reduce((latest, e) => {
+      if (e.source === 'deduction' || e.expired) return latest;
+      const d = new Date(e.earnedAt);
+      return d > latest ? d : latest;
+    }, new Date(0));
+    const rollingExpiry = new Date(latestActivity);
+    rollingExpiry.setMonth(rollingExpiry.getMonth() + config.rollingWindowMonths);
+    for (const entry of ledger) {
+      if (!entry.expired && entry.remaining > 0 && entry.source !== 'deduction') {
+        const newExpiry = rollingExpiry.toISOString();
+        if (entry.expiresAt !== newExpiry) {
+          entry.expiresAt = newExpiry;
+          modified = true;
+        }
+      }
+    }
+  }
+
+  // FIFO: expire oldest entries first
+  for (const entry of ledger) {
+    if (entry.expired || entry.remaining <= 0 || !entry.expiresAt || entry.source === 'deduction') continue;
+    const expiryDate = new Date(entry.expiresAt);
+    if (now >= expiryDate) {
+      entry.expiredAmount = entry.remaining;
+      totalExpired += entry.remaining;
+      entry.remaining = 0;
+      entry.expired = true;
+      entry.expiredAt = now.toISOString();
+      modified = true;
+    }
+  }
+
+  // Send warning notification for entries expiring soon
+  if (config.warningEnabled && config.warningDaysBefore > 0) {
+    const warningThreshold = new Date(now);
+    warningThreshold.setDate(warningThreshold.getDate() + config.warningDaysBefore);
+    let soonToExpire = 0;
+    for (const entry of ledger) {
+      if (entry.expired || entry.remaining <= 0 || !entry.expiresAt || entry.source === 'deduction') continue;
+      const expiryDate = new Date(entry.expiresAt);
+      if (expiryDate <= warningThreshold && expiryDate > now) {
+        soonToExpire += entry.remaining;
+      }
+    }
+    if (soonToExpire > 0) {
+      const warnKey = `points_expiry_warned:${userId}`;
+      const lastWarn = await kvRetry(() => kv.get(warnKey));
+      const lastWarnTime = lastWarn ? new Date(lastWarn) : new Date(0);
+      const hoursSinceWarn = (now.getTime() - lastWarnTime.getTime()) / (1000 * 60 * 60);
+      if (hoursSinceWarn >= 24) {
+        try {
+          await pushNotification(userId, {
+            type: 'points_expiry_warning',
+            title: 'Points Expiring Soon! ⏰',
+            message: `${soonToExpire} of your loyalty points will expire within ${config.warningDaysBefore} days. Use them before they're gone!`,
+            url: '/rewards',
+          });
+        } catch (e) { /* non-critical */ }
+        await kvRetry(() => kv.set(warnKey, now.toISOString()));
+        warned = true;
+        console.log(`⏰ Warned user ${userId} about ${soonToExpire} points expiring soon`);
+      }
+    }
+  }
+
+  if (totalExpired > 0) {
+    const userData = await kvRetry(() => kv.get(`user:${userId}`));
+    if (userData) {
+      const oldPoints = userData.points || 0;
+      userData.points = Math.max(0, oldPoints - totalExpired);
+      await kvRetry(() => kv.set(`user:${userId}`, userData));
+      console.log(`🕐 Expired ${totalExpired} points for user ${userId} (${oldPoints} -> ${userData.points})`);
+    }
+    try {
+      await pushNotification(userId, {
+        type: 'points_expired',
+        title: 'Points Expired',
+        message: `${totalExpired} loyalty points have expired. Keep ordering to earn more!`,
+        url: '/rewards',
+      });
+    } catch (e) { /* non-critical */ }
+  }
+
+  if (modified) {
+    await kvRetry(() => kv.set(ledgerKey, ledger));
+  }
+
+  return { expired: totalExpired, warned };
+}
+
+async function deductPointsFromLedger(userId: string, amount: number, reason: string): Promise<void> {
+  if (amount <= 0) return;
+  const ledgerKey = `points_ledger:${userId}`;
+  const ledger = await ensurePointsLedger(userId);
+  let remaining = amount;
+  const activeEntries = ledger
+    .filter(e => !e.expired && e.remaining > 0 && e.source !== 'deduction')
+    .sort((a, b) => new Date(a.earnedAt).getTime() - new Date(b.earnedAt).getTime());
+  for (const entry of activeEntries) {
+    if (remaining <= 0) break;
+    const deduct = Math.min(entry.remaining, remaining);
+    entry.remaining -= deduct;
+    remaining -= deduct;
+  }
+  ledger.push({
+    id: crypto.randomUUID(),
+    amount: -amount,
+    remaining: 0,
+    source: 'deduction',
+    earnedAt: new Date().toISOString(),
+    expiresAt: null,
+    expired: false,
+    note: reason,
+  });
+  await kvRetry(() => kv.set(ledgerKey, ledger));
+  console.log(`📒 Deducted ${amount} points from ledger for user ${userId} (reason: ${reason})`);
+}
+
 const app = new Hono();
 
 // Custom JWT secret for our own token system (bypasses Supabase Auth mismatch)
@@ -993,8 +1248,48 @@ app.get("/make-server-e5e192fb/profile", async (c) => {
       console.warn(`⚠️ Profile GET - Phone migration failed (non-fatal): ${migrationErr}`);
     }
 
+    // Process points expiry (auto, non-blocking-ish)
+    try {
+      const expiryResult = await processPointsExpiry(userData.id);
+      if (expiryResult.expired > 0) {
+        // Re-read user data after expiry processing
+        const refreshedUser = await kvGetWithRetry(`user:${payload.userId}`);
+        if (refreshedUser) {
+          Object.assign(userData, refreshedUser);
+          console.log(`🕐 Profile GET - Expired ${expiryResult.expired} points for user ${payload.userId}`);
+        }
+      }
+    } catch (expiryErr) {
+      console.log(`⚠️ Profile GET - Points expiry check failed (non-fatal): ${expiryErr}`);
+    }
+
+    // Include points expiry info for the frontend
+    let expiryInfo = null;
+    try {
+      const config = await getPointsExpiryConfig();
+      if (config.enabled) {
+        const ledger = await ensurePointsLedger(userData.id);
+        const now = new Date();
+        const warningThreshold = new Date(now);
+        warningThreshold.setDate(warningThreshold.getDate() + config.warningDaysBefore);
+        let soonToExpire = 0;
+        let nearestExpiry: string | null = null;
+        for (const entry of ledger) {
+          if (entry.expired || entry.remaining <= 0 || !entry.expiresAt || entry.source === 'deduction') continue;
+          const expiryDate = new Date(entry.expiresAt);
+          if (expiryDate <= warningThreshold && expiryDate > now) {
+            soonToExpire += entry.remaining;
+            if (!nearestExpiry || expiryDate < new Date(nearestExpiry)) {
+              nearestExpiry = entry.expiresAt;
+            }
+          }
+        }
+        expiryInfo = { enabled: true, soonToExpire, nearestExpiry, warningDays: config.warningDaysBefore };
+      }
+    } catch (e) { /* non-critical */ }
+
     console.log(`✅ Profile GET - User data:`, { id: userData.id, name: userData.name, points: userData.points });
-    return c.json({ user: userData });
+    return c.json({ user: userData, pointsExpiryInfo: expiryInfo });
   } catch (error) {
     console.log(`❌ Profile error: ${error?.message || error}`);
     return c.json({ error: `Failed to get profile: ${error?.message || error}` }, 500);
@@ -1679,6 +1974,13 @@ app.post("/make-server-e5e192fb/link-guest-order", async (c) => {
         
         pointsAwarded = pointsToAward;
         console.log(`✅ Retroactively awarded ${pointsToAward} points (${oldPoints} -> ${userData.points}), tier: ${userData.tier}`);
+
+        // Add to points ledger for expiry tracking
+        try {
+          await addPointsLedgerEntry(userAuth.userId, pointsToAward, 'order', orderId, `Order ${updatedOrder.orderNumber || orderId} (retroactive)`);
+        } catch (ledgerErr) {
+          console.log(`⚠️ Non-critical: Failed to add retroactive points ledger entry: ${ledgerErr}`);
+        }
 
         // Auto-assign vouchers if tier changed after retroactive points
         if (userData.tier !== oldTier) {
@@ -5135,6 +5437,7 @@ app.post("/make-server-e5e192fb/orders/:id/cancel", async (c) => {
       userData.points = Math.max(0, (userData.points || 0) - order.pointsEarned);
       await kvRetry(() => kv.set(`user:${userId}`, userData));
       console.log(`Refunded ${order.pointsEarned} points to user ${userId}`);
+      try { await deductPointsFromLedger(userId, order.pointsEarned, `Refund: Order ${order.orderNumber || orderId} cancelled`); } catch (e) { console.log(`⚠️ Ledger deduction failed: ${e}`); }
     }
     
     return c.json({ 
@@ -5379,6 +5682,7 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
         userData.points = Math.max(0, (userData.points || 0) - order.pointsEarned);
         await kv.set(`user:${order.userId}`, userData);
         console.log(`Admin cancelled order: Refunded ${order.pointsEarned} points to user ${order.userId}`);
+        try { await deductPointsFromLedger(order.userId, order.pointsEarned, `Refund: Order ${order.orderNumber || orderId} cancelled by admin`); } catch (e) { console.log(`⚠️ Ledger deduction failed: ${e}`); }
       }
       
       await kv.set(`order:${orderId}`, order);
@@ -5628,6 +5932,13 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
           order.pointsAwarded = true;
           order.pointsEarned = pointsToAward;
           console.log(`✅ Successfully awarded ${pointsToAward} points to user ${order.userId} (${oldPoints} -> ${userData.points}), tier: ${userData.tier}`);
+
+          // Add to points ledger for expiry tracking
+          try {
+            await addPointsLedgerEntry(order.userId, pointsToAward, 'order', orderId, `Order ${order.orderNumber || orderId}`);
+          } catch (ledgerErr) {
+            console.log(`⚠️ Non-critical: Failed to add points ledger entry: ${ledgerErr}`);
+          }
 
           // Auto-assign vouchers if tier changed (e.g., Silver -> Gold unlocks Gold-tier vouchers)
           if (userData.tier !== oldTier) {
@@ -13766,6 +14077,236 @@ app.get("/make-server-e5e192fb/admin/dinein-vouchers/:id/redemptions", async (c)
   } catch (error: any) {
     console.log(`❌ Get dine-in voucher redemptions error: ${error}`);
     return c.json({ error: `Failed to get redemptions: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== POINTS EXPIRY ENDPOINTS ====================
+
+// Admin: Get points expiry config
+app.get("/make-server-e5e192fb/admin/points-expiry-config", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+    const config = await getPointsExpiryConfig();
+    return c.json(config);
+  } catch (error: any) {
+    console.log(`❌ Get points expiry config error: ${error}`);
+    return c.json({ error: `Failed to get config: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Update points expiry config
+app.put("/make-server-e5e192fb/admin/points-expiry-config", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+    const body = await c.req.json();
+    const config: PointsExpiryConfig = {
+      enabled: !!body.enabled,
+      expiryModel: body.expiryModel || 'earned_date',
+      expiryMonths: Math.max(1, parseInt(body.expiryMonths) || 12),
+      fixedExpiryMonth: Math.min(12, Math.max(1, parseInt(body.fixedExpiryMonth) || 12)),
+      fixedExpiryDay: Math.min(31, Math.max(1, parseInt(body.fixedExpiryDay) || 31)),
+      rollingWindowMonths: Math.max(1, parseInt(body.rollingWindowMonths) || 6),
+      warningEnabled: body.warningEnabled !== false,
+      warningDaysBefore: Math.max(1, parseInt(body.warningDaysBefore) || 14),
+      applyToExisting: body.applyToExisting !== false,
+    };
+    await kvRetry(() => kv.set('points_expiry_config', config));
+    console.log(`✅ Points expiry config updated:`, JSON.stringify(config));
+
+    // If enabling expiry with applyToExisting, update existing ledger entries
+    if (config.enabled && config.applyToExisting) {
+      try {
+        const allUsers = await kvRetry(() => kv.getByPrefix('user:'));
+        let updatedCount = 0;
+        for (const user of (allUsers || [])) {
+          if (user.isAdmin || !user.id) continue;
+          const ledger = await ensurePointsLedger(user.id);
+          let modified = false;
+          for (const entry of ledger) {
+            if (!entry.expired && entry.remaining > 0 && !entry.expiresAt && entry.source !== 'deduction') {
+              entry.expiresAt = calcExpiryDate(entry.earnedAt, config);
+              modified = true;
+            }
+          }
+          if (modified) {
+            await kvRetry(() => kv.set(`points_ledger:${user.id}`, ledger));
+            updatedCount++;
+          }
+        }
+        console.log(`📒 Updated expiry dates for ${updatedCount} users' ledger entries`);
+      } catch (e) {
+        console.log(`⚠️ Non-critical: Failed to update existing ledger entries: ${e}`);
+      }
+    }
+
+    return c.json({ success: true, config });
+  } catch (error: any) {
+    console.log(`❌ Update points expiry config error: ${error}`);
+    return c.json({ error: `Failed to update config: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Process points expiry for all users
+app.post("/make-server-e5e192fb/admin/process-all-points-expiry", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const config = await getPointsExpiryConfig();
+    if (!config.enabled) return c.json({ error: "Points expiry is not enabled" }, 400);
+
+    const allUsers = await kvRetry(() => kv.getByPrefix('user:'));
+    let totalExpired = 0;
+    let usersAffected = 0;
+    let usersWarned = 0;
+
+    for (const user of (allUsers || [])) {
+      if (user.isAdmin || !user.id) continue;
+      try {
+        const result = await processPointsExpiry(user.id);
+        if (result.expired > 0) {
+          totalExpired += result.expired;
+          usersAffected++;
+        }
+        if (result.warned) usersWarned++;
+      } catch (e) {
+        console.log(`⚠️ Failed to process expiry for user ${user.id}: ${e}`);
+      }
+    }
+
+    console.log(`✅ Bulk points expiry: ${totalExpired} points expired for ${usersAffected} users, ${usersWarned} warned`);
+    return c.json({ success: true, totalExpired, usersAffected, usersWarned });
+  } catch (error: any) {
+    console.log(`❌ Process all points expiry error: ${error}`);
+    return c.json({ error: `Failed to process expiry: ${error?.message}` }, 500);
+  }
+});
+
+// Admin: Points expiry report
+app.get("/make-server-e5e192fb/admin/points-expiry-report", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth?.isAdmin) return c.json({ error: "Admin access required" }, 403);
+
+    const allUsers = await kvRetry(() => kv.getByPrefix('user:'));
+    const config = await getPointsExpiryConfig();
+    const now = new Date();
+    const warningThreshold = new Date(now);
+    warningThreshold.setDate(warningThreshold.getDate() + (config.warningDaysBefore || 14));
+
+    let totalActivePoints = 0;
+    let totalExpiredPoints = 0;
+    let totalSoonToExpire = 0;
+    const userDetails: any[] = [];
+
+    for (const user of (allUsers || [])) {
+      if (user.isAdmin || !user.id) continue;
+      try {
+        const ledger: PointsLedgerEntry[] = (await kvRetry(() => kv.get(`points_ledger:${user.id}`))) || [];
+        let active = 0;
+        let expired = 0;
+        let soonToExpire = 0;
+        let nearestExpiry: string | null = null;
+
+        for (const entry of ledger) {
+          if (entry.source === 'deduction') continue;
+          if (entry.expired) {
+            expired += entry.expiredAmount || 0;
+          } else if (entry.remaining > 0) {
+            active += entry.remaining;
+            if (entry.expiresAt) {
+              const expiryDate = new Date(entry.expiresAt);
+              if (expiryDate <= warningThreshold && expiryDate > now) {
+                soonToExpire += entry.remaining;
+              }
+              if (!nearestExpiry || expiryDate < new Date(nearestExpiry)) {
+                nearestExpiry = entry.expiresAt;
+              }
+            }
+          }
+        }
+
+        if (active > 0 || expired > 0) {
+          totalActivePoints += active;
+          totalExpiredPoints += expired;
+          totalSoonToExpire += soonToExpire;
+          userDetails.push({
+            userId: user.id,
+            name: user.name || 'Unknown',
+            phone: user.phone || '',
+            activePoints: active,
+            expiredPoints: expired,
+            soonToExpire,
+            nearestExpiry,
+            currentBalance: user.points || 0,
+          });
+        }
+      } catch (e) {
+        // skip
+      }
+    }
+
+    // Sort by soonToExpire descending
+    userDetails.sort((a: any, b: any) => b.soonToExpire - a.soonToExpire);
+
+    return c.json({
+      config,
+      summary: {
+        totalActivePoints,
+        totalExpiredPoints,
+        totalSoonToExpire,
+        usersWithPoints: userDetails.length,
+      },
+      users: userDetails.slice(0, 100),
+    });
+  } catch (error: any) {
+    console.log(`❌ Points expiry report error: ${error}`);
+    return c.json({ error: `Failed to get report: ${error?.message}` }, 500);
+  }
+});
+
+// Customer: Get my points history (ledger)
+app.get("/make-server-e5e192fb/my-points-history", async (c) => {
+  try {
+    const userId = c.req.query('userId');
+    if (!userId) return c.json({ error: 'userId required' }, 400);
+
+    const ledger = await ensurePointsLedger(userId);
+    const config = await getPointsExpiryConfig();
+
+    // Sort by earnedAt descending (most recent first)
+    const sorted = [...ledger].sort((a, b) => new Date(b.earnedAt).getTime() - new Date(a.earnedAt).getTime());
+
+    // Map to a cleaner format
+    const history = sorted.map(entry => ({
+      id: entry.id,
+      type: entry.source === 'deduction' ? 'deduction' : entry.expired ? 'expired' : 'earned',
+      amount: entry.amount,
+      remaining: entry.remaining,
+      source: entry.source,
+      orderId: entry.orderId,
+      date: entry.earnedAt,
+      expiresAt: entry.expiresAt,
+      expired: entry.expired,
+      expiredAt: entry.expiredAt,
+      expiredAmount: entry.expiredAmount,
+      note: entry.note,
+    }));
+
+    return c.json({ history, expiryEnabled: config.enabled });
+  } catch (error: any) {
+    console.log(`❌ Get points history error: ${error}`);
+    return c.json({ error: `Failed to get points history: ${error?.message}` }, 500);
   }
 });
 
