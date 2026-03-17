@@ -46,7 +46,7 @@ export const ROLE_COLORS: Record<StaffRole, string> = {
 // Permission definitions
 export const ROLE_PERMISSIONS: Record<StaffRole, string[]> = {
   superuser: ['all'],
-  manager: ['orders', 'customers', 'sales', 'analytics', 'vouchers', 'tiers', 'menu', 'special', 'kids', 'flash', 'parties', 'celebrations', 'layout', 'custom', 'insights', 'payments', 'notifications', 'broadcast'],
+  manager: ['orders', 'customers', 'sales', 'analytics', 'vouchers', 'tiers', 'points', 'menu', 'special', 'kids', 'flash', 'parties', 'celebrations', 'layout', 'custom', 'insights', 'payments', 'notifications', 'broadcast'],
   cashier: ['orders', 'payments'],
   kitchen: ['kitchen'],
   delivery: ['delivery'],

@@ -38,6 +38,7 @@ import { PartyPackagesAdmin } from "../components/PartyPackagesAdmin";
 import { CelebrationCategoriesAdmin } from "../components/CelebrationCategoriesAdmin";
 import { HomeLayoutAdmin } from "../components/HomeLayoutAdmin";
 import { CustomMenuAdmin } from "../components/CustomMenuAdmin";
+import { PointsExpiryAdmin } from "../components/PointsExpiryAdmin";
 import { StaffManagement } from "../components/StaffManagement";
 import { StaffAddToHomeScreen, useShowStaffA2HSBanner } from "../components/StaffAddToHomeScreen";
 import { StaffPushToggle } from "../components/StaffPushToggle";
@@ -72,6 +73,7 @@ const TAB_DEFINITIONS: { value: string; label: string; permission: string }[] = 
   { value: "vouchers", label: "Vouchers", permission: "vouchers" },
   { value: "dinein-vouchers", label: "Dine-In", permission: "vouchers" },
   { value: "tier-benefits", label: "Tiers", permission: "tiers" },
+  { value: "points-expiry", label: "Points", permission: "points" },
   { value: "regular-menu", label: "Menu", permission: "menu" },
   { value: "todays-special", label: "Special", permission: "special" },
   { value: "kids-menu", label: "Kids", permission: "kids" },
@@ -207,6 +209,10 @@ export default function StaffAdmin() {
 
           <TabsContent value="tier-benefits">
             <TierBenefitsAdmin customToken={accessToken} />
+          </TabsContent>
+
+          <TabsContent value="points-expiry">
+            <PointsExpiryAdmin customToken={accessToken} />
           </TabsContent>
 
           <TabsContent value="regular-menu">
