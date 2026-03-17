@@ -6,6 +6,7 @@ import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Switch } from "./ui/switch";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
 import { DeliveryZonesAdmin } from "./DeliveryZonesAdmin";
 import { Input } from "./ui/input";
@@ -59,7 +60,7 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
     
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/settings`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/settings`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -101,7 +102,7 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
     
     setSaving(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/settings`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/settings`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -147,7 +148,7 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
       const formData = new FormData();
       formData.append("logo", file);
 
-      const response = await fetch(`${API_BASE}/admin/upload-logo`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/upload-logo`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
@@ -185,7 +186,7 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
 
     setUploading(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/delete-logo`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/delete-logo`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
@@ -247,7 +248,7 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
       const formData = new FormData();
       formData.append("mascot", file);
 
-      const response = await fetch(`${API_BASE}/admin/upload-mascot`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/upload-mascot`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
@@ -289,7 +290,7 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
 
     setMascotUploading(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/delete-mascot`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/delete-mascot`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
@@ -356,7 +357,7 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
       const formData = new FormData();
       formData.append("favicon", file);
 
-      const response = await fetch(`${API_BASE}/admin/upload-favicon`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/upload-favicon`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
@@ -393,7 +394,7 @@ export function RestaurantSettingsAdmin({ customToken }: { customToken: string |
 
     setFaviconUploading(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/delete-favicon`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/delete-favicon`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,

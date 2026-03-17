@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { APP_CONFIG } from "../lib/config";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -135,7 +136,7 @@ export function BroadcastAdmin({ customToken }: { customToken: string }) {
   const fetchBroadcasts = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/admin/broadcasts`, { headers });
+      const res = await fetchWithRetry(`${API_BASE}/admin/broadcasts`, { headers });
       if (res.ok) {
         const data = await res.json();
         setBroadcasts(data.broadcasts || []);
@@ -189,13 +190,13 @@ export function BroadcastAdmin({ customToken }: { customToken: string }) {
 
       let res;
       if (editingId) {
-        res = await fetch(`${API_BASE}/admin/broadcasts/${editingId}`, {
+        res = await fetchWithRetry(`${API_BASE}/admin/broadcasts/${editingId}`, {
           method: "PUT",
           headers,
           body: JSON.stringify(payload),
         });
       } else {
-        res = await fetch(`${API_BASE}/admin/broadcasts`, {
+        res = await fetchWithRetry(`${API_BASE}/admin/broadcasts`, {
           method: "POST",
           headers,
           body: JSON.stringify(payload),
@@ -219,7 +220,7 @@ export function BroadcastAdmin({ customToken }: { customToken: string }) {
 
   const handleDelete = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE}/admin/broadcasts/${id}`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/broadcasts/${id}`, {
         method: "DELETE",
         headers,
       });
@@ -237,7 +238,7 @@ export function BroadcastAdmin({ customToken }: { customToken: string }) {
 
   const handleToggleActive = async (broadcast: Broadcast) => {
     try {
-      const res = await fetch(`${API_BASE}/admin/broadcasts/${broadcast.id}`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/broadcasts/${broadcast.id}`, {
         method: "PUT",
         headers,
         body: JSON.stringify({ active: !broadcast.active }),
@@ -254,7 +255,7 @@ export function BroadcastAdmin({ customToken }: { customToken: string }) {
   const handleSaveSettings = async () => {
     setSavingSettings(true);
     try {
-      const res = await fetch(`${API_BASE}/admin/broadcast-settings`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/broadcast-settings`, {
         method: "PUT",
         headers,
         body: JSON.stringify({ scrollInterval }),

@@ -1,4 +1,5 @@
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -64,7 +65,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
   const fetchItems = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE}/admin/regular-menu`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/regular-menu`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -96,7 +97,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
 
     try {
       setSeeding(true);
-      const response = await fetch(`${API_BASE}/admin/regular-menu/seed`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/regular-menu/seed`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -128,7 +129,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
 
     try {
       setLoadingImage(true);
-      const response = await fetch(`${API_BASE}/admin/regular-menu/update-images`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/regular-menu/update-images`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -160,7 +161,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/admin/regular-menu`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/regular-menu`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -200,7 +201,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/admin/regular-menu/${selectedItem.id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/regular-menu/${selectedItem.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -238,7 +239,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
     if (!selectedItem) return;
 
     try {
-      const response = await fetch(`${API_BASE}/admin/regular-menu/${selectedItem.id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/regular-menu/${selectedItem.id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
@@ -264,7 +265,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
 
   const handleToggleAvailability = async (item: MenuItem) => {
     try {
-      const response = await fetch(`${API_BASE}/admin/regular-menu/${item.id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/regular-menu/${item.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -290,7 +291,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
 
   const handleToggleOutOfStock = async (item: MenuItem) => {
     try {
-      const response = await fetch(`${API_BASE}/admin/menu/${item.id}/stock`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/menu/${item.id}/stock`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -316,7 +317,7 @@ export function RegularMenuAdmin({ customToken }: RegularMenuAdminProps) {
 
   const handleToggleBadge = async (item: MenuItem, field: "isBestSeller" | "isChefSpecial") => {
     try {
-      const response = await fetch(`${API_BASE}/admin/regular-menu/${item.id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/regular-menu/${item.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

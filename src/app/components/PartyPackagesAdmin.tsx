@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { APP_CONFIG } from "../lib/config";
 import { formatIDR } from "../lib/currency";
 import { Button } from "./ui/button";
@@ -98,11 +99,11 @@ export function PartyPackagesAdmin({ customToken }: Props) {
     setLoading(true);
     try {
       const [pkgRes, settingsRes, catRes] = await Promise.all([
-        fetch(`${API_BASE}/admin/party-packages`, { headers }),
-        fetch(`${API_BASE}/party-packages-settings`, {
+        fetchWithRetry(`${API_BASE}/admin/party-packages`, { headers }),
+        fetchWithRetry(`${API_BASE}/party-packages-settings`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         }),
-        fetch(`${API_BASE}/admin/celebration-categories`, { headers }),
+        fetchWithRetry(`${API_BASE}/admin/celebration-categories`, { headers }),
       ]);
 
       if (pkgRes.ok) {
@@ -185,7 +186,7 @@ export function PartyPackagesAdmin({ customToken }: Props) {
         : `${API_BASE}/admin/party-packages`;
       const method = editingItem ? "PUT" : "POST";
 
-      const res = await fetch(url, {
+      const res = await fetchWithRetry(url, {
         method,
         headers,
         body: JSON.stringify(formData),
@@ -208,7 +209,7 @@ export function PartyPackagesAdmin({ customToken }: Props) {
 
   const deletePackage = async (pkg: PartyPackage) => {
     try {
-      const res = await fetch(`${API_BASE}/admin/party-packages/${pkg.id}`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/party-packages/${pkg.id}`, {
         method: "DELETE",
         headers,
       });
@@ -226,7 +227,7 @@ export function PartyPackagesAdmin({ customToken }: Props) {
 
   const toggleEnabled = async (pkg: PartyPackage) => {
     try {
-      const res = await fetch(`${API_BASE}/admin/party-packages/${pkg.id}`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/party-packages/${pkg.id}`, {
         method: "PUT",
         headers,
         body: JSON.stringify({ enabled: !pkg.enabled }),
@@ -243,7 +244,7 @@ export function PartyPackagesAdmin({ customToken }: Props) {
   const saveSettings = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_BASE}/admin/party-packages-settings`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/party-packages-settings`, {
         method: "PUT",
         headers,
         body: JSON.stringify(settings),

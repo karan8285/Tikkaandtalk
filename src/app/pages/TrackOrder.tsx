@@ -8,6 +8,7 @@ import { getShortOrderId } from "../lib/orderUtils";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { LOGO_ALT, APP_CONFIG } from "../lib/config";
 import { PaymentReceiptBadge } from "../components/PaymentReceiptUpload";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -124,7 +125,7 @@ export default function TrackOrder() {
     try {
       if (showToast) setRefreshing(true);
 
-      const response = await fetch(`${API_BASE}/track/${orderNumber}`, {
+      const response = await fetchWithRetry(`${API_BASE}/track/${orderNumber}`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
         },
@@ -495,20 +496,13 @@ export default function TrackOrder() {
               <span>Rp {(order.tax || 0).toLocaleString()}</span>
             </div>
             {order.deliveryMethod === 'delivery' && (() => {
-              const feeKnown = order.deliveryFee != null && order.deliveryFee >= 0 &&
-                (order.deliveryFee > 0 || order.lastModifiedAt ||
-                 ['ready', 'out_for_delivery', 'delivered', 'closed'].includes(order.status));
               return (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Delivery Fee</span>
                   <span className={
-                    feeKnown
-                      ? (order.deliveryFee === 0 ? "text-green-600 font-medium" : "")
-                      : "text-amber-600 italic text-xs"
+                    order.deliveryFee === 0 ? "text-green-600 font-medium" : ""
                   }>
-                    {feeKnown
-                      ? (order.deliveryFee === 0 ? "Free" : `Rp ${order.deliveryFee!.toLocaleString()}`)
-                      : "To be Calculated"}
+                    {(order.deliveryFee || 0) === 0 ? "Free" : `Rp ${order.deliveryFee!.toLocaleString()}`}
                   </span>
                 </div>
               );

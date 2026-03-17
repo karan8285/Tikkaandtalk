@@ -4,6 +4,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { APP_CONFIG } from "../lib/config";
@@ -25,7 +26,7 @@ export function DeliveryZonesAdmin({ customToken }: { customToken: string | null
   const fetchConfig = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/delivery-zones`, {
+      const response = await fetchWithRetry(`${API_BASE}/delivery-zones`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
       const data = await response.json();
@@ -64,7 +65,7 @@ export function DeliveryZonesAdmin({ customToken }: { customToken: string | null
 
     setSaving(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/delivery-zones`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/delivery-zones`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

@@ -2,6 +2,7 @@ import { formatIDR } from "../lib/currency";
 import { APP_CONFIG } from "../lib/config";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
@@ -193,7 +194,7 @@ export function BusinessInsightsAdmin({ customToken }: { customToken: string | n
   const fetchActiveUsers = useCallback(async () => {
     if (!customToken) return;
     try {
-      const response = await fetch(`${API_BASE}/admin/active-users`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/active-users`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -225,7 +226,7 @@ export function BusinessInsightsAdmin({ customToken }: { customToken: string | n
     if (!customToken) return;
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/business-insights`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/business-insights`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,

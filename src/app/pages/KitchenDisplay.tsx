@@ -9,6 +9,7 @@ import { ChefHat, Clock, Phone, MapPin, Package, Flame, CheckCircle2, ArrowLeft 
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -49,13 +50,13 @@ export default function KitchenDisplay() {
   const fetchOrders = useCallback(async (signal?: AbortSignal) => {
     if (!accessTokenRef.current) return;
     try {
-      const response = await fetch(`${API_BASE}/admin/orders?page=1&limit=100&status=all&payment=all&delivery=all&date=all&tab=active`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders?page=1&limit=100&status=all&payment=all&delivery=all&date=all&tab=active`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": accessTokenRef.current,
         },
         signal,
-      });
+      }, { signal });
 
       if (response.ok) {
         const data = await response.json();
@@ -105,7 +106,7 @@ export default function KitchenDisplay() {
     try {
       setUpdatingStatus(orderId);
       
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${orderId}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

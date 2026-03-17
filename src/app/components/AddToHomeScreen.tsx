@@ -13,6 +13,7 @@ import { Download, Share, CheckCircle2, X, Smartphone, Plus, ChevronDown, Chevro
 import { APP_CONFIG } from "../lib/config";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -380,7 +381,7 @@ async function trackA2HSInstall(method: "native" | "manual_standalone", platform
   try {
     const accessToken = localStorage.getItem("accessToken");
     if (!accessToken) return; // Only track logged-in users
-    await fetch(`${API_BASE}/track-a2hs`, {
+    await fetchWithRetry(`${API_BASE}/track-a2hs`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -27,7 +27,7 @@ import {
   Ticket,
 } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { loadSnapJs, openSnapPayment } from "../lib/midtrans";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { PushNotificationPrompt } from "../components/PushNotificationPrompt";
 import { AddToHomeScreen } from "../components/AddToHomeScreen";
 
@@ -96,7 +96,7 @@ export default function OrderSuccess() {
           
           console.log("Fetch URL:", url);
           
-          const response = await fetch(url, {
+          const response = await fetchWithRetry(url, {
             headers: {
               Authorization: `Bearer ${publicAnonKey}`,
             },
@@ -330,7 +330,7 @@ export default function OrderSuccess() {
         toast.loading("Linking your order to your account...", { id: "link-order" });
         
         // Link the guest order to the newly created user account
-        const response = await fetch(`${API_BASE}/link-guest-order`, {
+        const response = await fetchWithRetry(`${API_BASE}/link-guest-order`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -357,7 +357,7 @@ export default function OrderSuccess() {
           console.log(`🔄 Refreshing order data with userId: ${newUserId}`);
           
           // Refresh the order data to show updated userId
-          const orderResponse = await fetch(`${API_BASE}/orders/${order.id}?userId=${newUserId}`, {
+          const orderResponse = await fetchWithRetry(`${API_BASE}/orders/${order.id}?userId=${newUserId}`, {
             headers: {
               Authorization: `Bearer ${freshAccessToken}`,
             },
@@ -425,7 +425,7 @@ export default function OrderSuccess() {
       
       // Create a fresh payment token
       console.log("💳 [RETRY] Creating new payment token for order:", order.id);
-      const paymentResponse = await fetch(`${API_BASE}/create-payment`, {
+      const paymentResponse = await fetchWithRetry(`${API_BASE}/create-payment`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -452,7 +452,7 @@ export default function OrderSuccess() {
       if (snapResult.status === "success") {
         // Confirm on server immediately (don't wait for webhook)
         try {
-          await fetch(`${API_BASE}/confirm-payment-frontend`, {
+          await fetchWithRetry(`${API_BASE}/confirm-payment-frontend`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -805,14 +805,16 @@ export default function OrderSuccess() {
               <span className="text-muted-foreground">Tax (PPN{order.taxRate ? ` ${order.taxRate}%` : ''})</span>
               <span>{formatIDR(order.tax)}</span>
             </div>
-            {order.deliveryMethod === 'delivery' && (
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">Delivery Fee</span>
-                <span className={(order.deliveryFee || 0) > 0 ? "" : "text-amber-600"}>
-                  {(order.deliveryFee || 0) > 0 ? `Rp ${order.deliveryFee.toLocaleString()}` : "To be Calculated"}
-                </span>
-              </div>
-            )}
+            {order.deliveryMethod === 'delivery' && (() => {
+              return (
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Delivery Fee</span>
+                  <span className={order.deliveryFee === 0 ? "text-green-600 font-medium" : ""}>
+                    {(order.deliveryFee || 0) === 0 ? "Free" : `Rp ${order.deliveryFee.toLocaleString()}`}
+                  </span>
+                </div>
+              );
+            })()}
             <div className="flex justify-between text-sm font-bold pt-1.5 mt-1.5 border-t">
               <span>Total</span>
               <span className="text-primary">{formatIDR(order.total)}</span>

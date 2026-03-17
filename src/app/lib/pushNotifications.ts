@@ -4,6 +4,7 @@
  * and syncing subscriptions with the server.
  */
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "./fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -35,7 +36,7 @@ export function getPushPermissionStatus(): NotificationPermission | "unsupported
 /** Fetch the VAPID public key from the server */
 async function getVapidPublicKey(): Promise<string | null> {
   try {
-    const res = await fetch(`${API_BASE}/push/vapid-key`, {
+    const res = await fetchWithRetry(`${API_BASE}/push/vapid-key`, {
       headers: { Authorization: `Bearer ${publicAnonKey}` },
     });
     if (!res.ok) return null;
@@ -186,7 +187,7 @@ export async function subscribeToPush(userId: string, customToken?: string): Pro
     });
 
     // 5. Send subscription to server
-    const res = await fetch(`${API_BASE}/push/subscribe`, {
+    const res = await fetchWithRetry(`${API_BASE}/push/subscribe`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -226,7 +227,7 @@ export async function unsubscribeFromPush(userId: string, customToken?: string):
     if (subscription) {
       // Tell server to remove this subscription
       try {
-        await fetch(`${API_BASE}/push/unsubscribe`, {
+        await fetchWithRetry(`${API_BASE}/push/unsubscribe`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

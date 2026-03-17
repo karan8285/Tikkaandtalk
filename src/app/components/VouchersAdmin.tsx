@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Gift, Plus, Pencil, Trash2, Ticket, Car, UtensilsCrossed, Award, Users, Search, X, Eye, UserPlus, Crown, Percent, DollarSign, Truck as TruckIcon, Tag, ChefHat, Check } from "lucide-react";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { formatIDR } from "../lib/currency";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -142,7 +143,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
   const fetchVouchers = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE}/admin/vouchers`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/vouchers`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -167,7 +168,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
     if (allUsers.length > 0) return; // Cache
     try {
       setLoadingUsers(true);
-      const response = await fetch(`${API_BASE}/admin/users-list`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/users-list`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -188,7 +189,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
     if (menuCategories.length > 0) return; // Cache
     try {
       setLoadingCategories(true);
-      const response = await fetch(`${API_BASE}/regular-menu/categories`, {
+      const response = await fetchWithRetry(`${API_BASE}/regular-menu/categories`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
         },
@@ -207,7 +208,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
   const fetchAssignments = async (voucherId: string) => {
     try {
       setLoadingAssignments(true);
-      const response = await fetch(`${API_BASE}/admin/vouchers/${voucherId}/assignments`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/vouchers/${voucherId}/assignments`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -292,7 +293,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
         ? `${API_BASE}/admin/vouchers/${currentVoucher.id}`
         : `${API_BASE}/admin/vouchers`;
 
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         method: currentVoucher ? "PUT" : "POST",
         headers: {
           "Content-Type": "application/json",
@@ -327,7 +328,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
 
     try {
       setDeleting(true);
-      const response = await fetch(`${API_BASE}/admin/vouchers/${currentVoucher.id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/vouchers/${currentVoucher.id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
@@ -379,7 +380,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
       }
       try {
         setAssigning(true);
-        const response = await fetch(`${API_BASE}/admin/vouchers/${currentVoucher.id}/assign`, {
+        const response = await fetchWithRetry(`${API_BASE}/admin/vouchers/${currentVoucher.id}/assign`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -407,7 +408,7 @@ export function VouchersAdmin({ customToken }: VouchersAdminProps) {
       // Bulk tier assignment
       try {
         setAssigning(true);
-        const response = await fetch(`${API_BASE}/admin/vouchers/${currentVoucher.id}/assign-tier`, {
+        const response = await fetchWithRetry(`${API_BASE}/admin/vouchers/${currentVoucher.id}/assign-tier`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

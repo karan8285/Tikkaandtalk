@@ -1,4 +1,5 @@
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { ShoppingCart, Gift, AlertCircle, MessageCircle, Package } from "lucide-react";
 import { getIconComponent } from "../lib/iconMap";
 import { setWhatsAppConfig, getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
@@ -80,7 +81,7 @@ export default function Home() {
     const fetchRestaurantStatus = async () => {
       try {
         const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
-        const response = await fetch(`${API_BASE}/restaurant-status`, {
+        const response = await fetchWithRetry(`${API_BASE}/restaurant-status`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         });
         
@@ -117,7 +118,7 @@ export default function Home() {
     const fetchHomeLayout = async () => {
       try {
         const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
-        const res = await fetch(`${API_BASE}/home-layout`, {
+        const res = await fetchWithRetry(`${API_BASE}/home-layout`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         });
         if (res.ok) {
@@ -141,16 +142,16 @@ export default function Home() {
 
         // Fetch all menu data in parallel
         const [todaysSpecialRes, kidsMenuRes, flashSaleRes, regularMenuRes] = await Promise.all([
-          fetch(`${API_BASE}/todays-special`, {
+          fetchWithRetry(`${API_BASE}/todays-special`, {
             headers: { Authorization: `Bearer ${publicAnonKey}` },
           }),
-          fetch(`${API_BASE}/kids-menu`, {
+          fetchWithRetry(`${API_BASE}/kids-menu`, {
             headers: { Authorization: `Bearer ${publicAnonKey}` },
           }),
-          fetch(`${API_BASE}/flash-sale`, {
+          fetchWithRetry(`${API_BASE}/flash-sale`, {
             headers: { Authorization: `Bearer ${publicAnonKey}` },
           }),
-          fetch(`${API_BASE}/regular-menu`, {
+          fetchWithRetry(`${API_BASE}/regular-menu`, {
             headers: { Authorization: `Bearer ${publicAnonKey}` },
           }),
         ]);
@@ -188,7 +189,7 @@ export default function Home() {
         const ordersTimeout = setTimeout(() => ordersController.abort(), 10000); // 10s timeout
 
         try {
-          const ordersRes = await fetch(`${API_BASE}/orders?userId=${user.id}`, {
+          const ordersRes = await fetchWithRetry(`${API_BASE}/orders?userId=${user.id}`, {
             headers: {
               Authorization: `Bearer ${publicAnonKey}`,
               ...(customToken && { "X-Custom-Auth": customToken }),
@@ -209,7 +210,7 @@ export default function Home() {
             const rewardsTimeout = setTimeout(() => rewardsController.abort(), 10000); // 10s timeout
 
             try {
-              const rewardsRes = await fetch(`${API_BASE}/rewards`, {
+              const rewardsRes = await fetchWithRetry(`${API_BASE}/rewards`, {
                 headers: {
                   Authorization: `Bearer ${publicAnonKey}`,
                   ...(customToken && { "X-Custom-Auth": customToken }),
@@ -281,7 +282,7 @@ export default function Home() {
         customCats.map(async (cat) => {
           try {
             const slug = cat.route.replace("/menu/", "");
-            const res = await fetch(`${API_BASE}/custom-menu/${slug}`, {
+            const res = await fetchWithRetry(`${API_BASE}/custom-menu/${slug}`, {
               headers: { Authorization: `Bearer ${publicAnonKey}` },
             });
             if (res.ok) {

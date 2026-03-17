@@ -5,6 +5,7 @@ import { Label } from "./ui/label";
 import { Upload, X, Image as ImageIcon, Link, Loader2, Info } from "lucide-react";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -63,7 +64,7 @@ export function MenuImageUpload({
         const formData = new FormData();
         formData.append("image", file);
 
-        const response = await fetch(`${API_BASE}/admin/upload-menu-image`, {
+        const response = await fetchWithRetry(`${API_BASE}/admin/upload-menu-image`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${publicAnonKey}`,

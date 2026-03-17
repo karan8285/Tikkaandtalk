@@ -4,6 +4,7 @@
  */
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "./fetchWithRetry";
 import { useAuth } from "./auth";
 import { APP_CONFIG } from "./config";
 
@@ -57,7 +58,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       if (!silent) setLoading(true);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10000);
-      const res = await fetch(`${API_BASE}/notifications/${user.id}`, {
+      const res = await fetchWithRetry(`${API_BASE}/notifications/${user.id}`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
         signal: controller.signal,
       });
@@ -105,7 +106,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     // Optimistic update
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
     try {
-      await fetch(`${API_BASE}/notifications/${user.id}/read`, {
+      await fetchWithRetry(`${API_BASE}/notifications/${user.id}/read`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}` },
         body: JSON.stringify({ notificationId: id }),
@@ -119,7 +120,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     if (!user?.id) return;
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
     try {
-      await fetch(`${API_BASE}/notifications/${user.id}/read-all`, {
+      await fetchWithRetry(`${API_BASE}/notifications/${user.id}/read-all`, {
         method: "POST",
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
@@ -133,7 +134,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     setNotifications([]);
     prevCountRef.current = 0;
     try {
-      await fetch(`${API_BASE}/notifications/${user.id}/clear`, {
+      await fetchWithRetry(`${API_BASE}/notifications/${user.id}/clear`, {
         method: "POST",
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });

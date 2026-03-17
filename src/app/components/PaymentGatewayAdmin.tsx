@@ -6,6 +6,7 @@ import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 import { Badge } from "./ui/badge";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
 import {
   CreditCard,
@@ -80,7 +81,7 @@ export function PaymentGatewayAdmin({ customToken }: { customToken: string | nul
     if (!customToken) return;
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/payment-gateway`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/payment-gateway`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -132,7 +133,7 @@ export function PaymentGatewayAdmin({ customToken }: { customToken: string | nul
 
     setSaving(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/payment-gateway`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/payment-gateway`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -164,7 +165,7 @@ export function PaymentGatewayAdmin({ customToken }: { customToken: string | nul
     setTesting(true);
     setTestResult(null);
     try {
-      const response = await fetch(`${API_BASE}/admin/payment-gateway/test`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/payment-gateway/test`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -3,7 +3,8 @@ import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
 import { getShortOrderId } from "../lib/orderUtils";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { ChevronRight } from "lucide-react";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
+import { ChevronRight, CalendarClock } from "lucide-react";
 import { APP_CONFIG } from "../lib/config";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -17,6 +18,7 @@ interface ActiveOrder {
   deliveryMethod: string;
   items: Array<{ title: string; quantity: number }>;
   createdAt: string;
+  scheduledAt?: string;
 }
 
 const DELIVERY_STEPS = [
@@ -45,6 +47,21 @@ const statusMeta: Record<string, { label: string; color: string; bgColor: string
 
 const ACTIVE_STATUSES = ["pending", "confirmed", "cooking", "ready", "out_for_delivery"];
 
+// Format scheduled time helper
+function formatScheduledTime(scheduledAt: string): string {
+  const d = new Date(scheduledAt);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const isTomorrow = d.toDateString() === tomorrow.toDateString();
+  
+  const time = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  if (isToday) return `Today at ${time}`;
+  if (isTomorrow) return `Tomorrow at ${time}`;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ` at ${time}`;
+}
+
 export const ActiveOrderBar = memo(function ActiveOrderBar() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -62,7 +79,7 @@ export const ActiveOrderBar = memo(function ActiveOrderBar() {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
 
-      const res = await fetch(`${API_BASE}/orders?userId=${user.id}`, {
+      const res = await fetchWithRetry(`${API_BASE}/orders?userId=${user.id}`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           ...(customToken && { "X-Custom-Auth": customToken }),
@@ -89,6 +106,16 @@ export const ActiveOrderBar = memo(function ActiveOrderBar() {
         if (prev?.status === "delivered") {
           return { ...prev, status: "delivered" };
         }
+      }
+
+      // If no active or delivered, show upcoming scheduled orders
+      const scheduled = sorted.filter((o: any) => o.status === "scheduled" && o.scheduledAt);
+      if (scheduled.length > 0) {
+        // Show the nearest upcoming scheduled order
+        const upcoming = scheduled.sort(
+          (a: any, b: any) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
+        );
+        return upcoming[0];
       }
 
       return null;
@@ -148,9 +175,11 @@ export const ActiveOrderBar = memo(function ActiveOrderBar() {
         return;
       }
 
-      if (ACTIVE_STATUSES.includes(latest.status)) {
+      if (ACTIVE_STATUSES.includes(latest.status) || latest.status === "scheduled") {
         setOrder(latest);
-        prevOrderIdRef.current = latest.id;
+        if (latest.status !== "scheduled") {
+          prevOrderIdRef.current = latest.id;
+        }
         setCelebrating(false);
         setVisible(true);
       }
@@ -168,6 +197,7 @@ export const ActiveOrderBar = memo(function ActiveOrderBar() {
 
   if (!order) return null;
 
+  const isScheduled = order.status === "scheduled";
   const isDelivery = order.deliveryMethod === "delivery";
   const steps = isDelivery ? DELIVERY_STEPS : PICKUP_STEPS;
   const currentStepIndex = steps.findIndex((s) => s.key === order.status);
@@ -176,6 +206,97 @@ export const ActiveOrderBar = memo(function ActiveOrderBar() {
   const itemCount = order.items?.reduce((sum, i) => sum + i.quantity, 0) || 0;
   const itemSummary =
     itemCount === 1 ? order.items[0]?.title || "1 item" : `${itemCount} items`;
+
+  // Scheduled order — completely different card
+  if (isScheduled) {
+    return (
+      <div
+        className={`px-3 sm:px-6 pb-1.5 transition-all duration-400 ease-in-out ${
+          visible
+            ? "opacity-100 max-h-[200px] translate-y-0"
+            : "opacity-0 max-h-0 -translate-y-2 overflow-hidden"
+        }`}
+      >
+        <div className="max-w-lg mx-auto">
+          <button
+            onClick={() => navigate(`/order-tracking/${order.id}`)}
+            className="w-full rounded-2xl p-4 shadow-md hover:shadow-lg transition-all duration-200 active:scale-[0.98] text-left relative overflow-hidden"
+            style={{
+              background: "linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 50%, #C7D2FE 100%)",
+              border: "2px solid #818CF8",
+            }}
+          >
+            {/* Subtle shimmer */}
+            <div className="absolute inset-0 pointer-events-none scheduled-shimmer opacity-40" />
+
+            {/* Top row: SCHEDULED badge */}
+            <div className="flex items-center gap-2 mb-3">
+              <span className="flex items-center gap-1.5">
+                <CalendarClock className="w-3.5 h-3.5 text-indigo-500" />
+                <span className="text-[11px] font-extrabold text-white bg-indigo-500 px-1.5 py-0.5 rounded-sm tracking-wide">
+                  SCHEDULED
+                </span>
+              </span>
+              <span className="text-sm font-bold text-gray-800">
+                Upcoming Order
+              </span>
+            </div>
+
+            {/* Scheduled info row */}
+            <div className="flex items-center justify-between mb-2 bg-white/60 rounded-xl px-3 py-2.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className="text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0"
+                  style={{
+                    backgroundColor: isDelivery ? "#FFF0E6" : "#E8F5E9",
+                    color: isDelivery ? "#E67E22" : "#2E7D32",
+                    border: `1px solid ${isDelivery ? "#E67E2230" : "#2E7D3230"}`,
+                  }}
+                >
+                  {isDelivery ? "🛵 Delivery" : "🏪 Pickup"}
+                </span>
+                <span className="text-xs font-medium text-gray-600 truncate max-w-[100px]">
+                  {order.items?.[0]?.title || itemSummary}
+                </span>
+                {itemCount > 1 && (
+                  <span className="text-[10px] text-gray-400 font-medium flex-shrink-0">
+                    +{itemCount - 1} more
+                  </span>
+                )}
+              </div>
+              <span className="text-[11px] font-semibold text-gray-500 flex items-center gap-0.5 flex-shrink-0">
+                View <span className="text-sm">→</span>
+              </span>
+            </div>
+
+            {/* Scheduled time display */}
+            <div className="flex items-center gap-2 bg-indigo-50 rounded-lg px-3 py-2">
+              <span className="text-lg">📅</span>
+              <div className="flex flex-col">
+                <span className="text-xs text-indigo-600 font-semibold">
+                  {order.scheduledAt ? formatScheduledTime(order.scheduledAt) : "Scheduled"}
+                </span>
+                <span className="text-[10px] text-indigo-400">
+                  Order #{shortId} • Will be prepared when time arrives
+                </span>
+              </div>
+            </div>
+          </button>
+        </div>
+
+        <style>{`
+          .scheduled-shimmer {
+            background: linear-gradient(90deg, transparent 0%, rgba(129,140,248,0.12) 50%, transparent 100%);
+            animation: shimmer 3s infinite;
+          }
+          @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+          }
+        `}</style>
+      </div>
+    );
+  }
 
   return (
     <div

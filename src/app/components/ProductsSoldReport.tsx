@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { formatCurrency } from "../lib/currency";
 import { APP_CONFIG } from "../lib/config";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { format } from "date-fns";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 
@@ -89,7 +90,7 @@ export function ProductsSoldReport({ customToken }: Props) {
         ...(endDate && { endDate }),
         ...(isExport && { export: "true" }),
       });
-      const res = await fetch(`${API_BASE}/reports/product-analytics?${params}`, {
+      const res = await fetchWithRetry(`${API_BASE}/reports/product-analytics?${params}`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,

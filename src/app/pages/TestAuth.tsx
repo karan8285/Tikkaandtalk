@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "../components/ui/button";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 export default function TestAuth() {
   const [testResults, setTestResults] = useState<string[]>([]);
@@ -22,7 +23,7 @@ export default function TestAuth() {
       const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
       addResult(`📡 Testing health endpoint: ${API_BASE}/health`);
       
-      const healthResponse = await fetch(`${API_BASE}/health`);
+      const healthResponse = await fetchWithRetry(`${API_BASE}/health`);
       addResult(`✅ Health check status: ${healthResponse.status}`);
       
       if (healthResponse.ok) {
@@ -39,7 +40,7 @@ export default function TestAuth() {
       const testPhone = `555${Math.floor(Math.random() * 1000000).toString().padStart(7, '0')}`;
       addResult(`📝 Testing signup with phone: ${testPhone}`);
       
-      const signupResponse = await fetch(`${API_BASE}/signup`, {
+      const signupResponse = await fetchWithRetry(`${API_BASE}/signup`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -60,7 +61,7 @@ export default function TestAuth() {
         // Test 4: Test signin with the same user
         addResult(`🔐 Testing signin with same credentials...`);
         
-        const signinResponse = await fetch(`${API_BASE}/signin`, {
+        const signinResponse = await fetchWithRetry(`${API_BASE}/signin`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -94,7 +95,7 @@ export default function TestAuth() {
       const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
       addResult(`👑 Testing admin login with +629999999999...`);
       
-      const adminSigninResponse = await fetch(`${API_BASE}/signin`, {
+      const adminSigninResponse = await fetchWithRetry(`${API_BASE}/signin`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

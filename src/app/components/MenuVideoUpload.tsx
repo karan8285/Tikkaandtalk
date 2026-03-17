@@ -5,6 +5,7 @@ import { Label } from "./ui/label";
 import { Upload, X, Video, Link, Loader2, Info, Play } from "lucide-react";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -71,7 +72,7 @@ export function MenuVideoUpload({
         const formData = new FormData();
         formData.append("video", file);
 
-        const response = await fetch(`${API_BASE}/admin/upload-menu-video`, {
+        const response = await fetchWithRetry(`${API_BASE}/admin/upload-menu-video`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${publicAnonKey}`,

@@ -1,4 +1,5 @@
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../lib/auth";
@@ -101,7 +102,7 @@ export default function RegularMenu() {
     if (!user?.id) return;
     setLoadingFavorites(true);
     try {
-      const res = await fetch(`${API_BASE}/user-favorites?userId=${user.id}`, {
+      const res = await fetchWithRetry(`${API_BASE}/user-favorites?userId=${user.id}`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
       if (res.ok) {
@@ -134,7 +135,7 @@ export default function RegularMenu() {
     });
 
     try {
-      const res = await fetch(`${API_BASE}/user-favorites/toggle`, {
+      const res = await fetchWithRetry(`${API_BASE}/user-favorites/toggle`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

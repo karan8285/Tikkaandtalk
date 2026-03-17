@@ -10,6 +10,7 @@ import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { Truck, Clock, Phone, MapPin, LogOut, RefreshCw, Package, CheckCircle2, Navigation, Camera, X, ImageIcon, Upload, Loader2, MessageSquare, ChevronLeft, ChevronRight, Volume2, VolumeX, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
@@ -66,7 +67,7 @@ export default function StaffDelivery() {
   const fetchOrders = useCallback(async (signal?: AbortSignal) => {
     if (!accessTokenRef.current) return;
     try {
-      const response = await fetch(`${API_BASE}/admin/orders?page=1&limit=100&status=all&payment=all&delivery=delivery&date=all&tab=active`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders?page=1&limit=100&status=all&payment=all&delivery=delivery&date=all&tab=active`, {
         headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessTokenRef.current },
         signal,
       });
@@ -110,7 +111,7 @@ export default function StaffDelivery() {
       if (proofOfDeliveryUrl) {
         body.proofOfDeliveryUrl = proofOfDeliveryUrl;
       }
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${orderId}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -184,7 +185,7 @@ export default function StaffDelivery() {
         formData.append("image", podImage);
         formData.append("orderId", podModalOrder.id);
 
-        const uploadRes = await fetch(`${API_BASE}/delivery/upload-pod`, {
+        const uploadRes = await fetchWithRetry(`${API_BASE}/delivery/upload-pod`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${publicAnonKey}`,

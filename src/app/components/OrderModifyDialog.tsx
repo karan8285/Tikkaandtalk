@@ -11,6 +11,7 @@ import { Label } from "./ui/label";
 import { Badge } from "./ui/badge";
 import { Card } from "./ui/card";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
@@ -151,7 +152,7 @@ export function OrderModifyDialog({ order, open, onOpenChange, accessToken, onMo
     }
     try {
       setSearchLoading(true);
-      const res = await fetch(`${API_BASE}/admin/menu-search?q=${encodeURIComponent(query)}`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/menu-search?q=${encodeURIComponent(query)}`, {
         headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
       });
       if (res.ok) {
@@ -287,7 +288,7 @@ export function OrderModifyDialog({ order, open, onOpenChange, accessToken, onMo
     if (!hasChanges) { toast.info("No changes to save"); return; }
     try {
       setSaving(true);
-      const res = await fetch(`${API_BASE}/admin/orders/${order.id}/modify`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/orders/${order.id}/modify`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -328,18 +329,20 @@ export function OrderModifyDialog({ order, open, onOpenChange, accessToken, onMo
               <Edit3 className="w-5 h-5" style={{ color: BRAND }} />
               Modify Order
             </DialogTitle>
-            <DialogDescription className="flex items-center gap-2 flex-wrap">
+            <DialogDescription asChild>
+              <div className="flex items-center gap-2 flex-wrap text-sm text-muted-foreground">
               <span className="font-mono font-bold">{getShortOrderId(order.orderNumber || order.id)}</span>
               <Badge variant="outline" className="text-[10px]">{order.status}</Badge>
               {order.paymentStatus && (
                 <Badge variant="outline" className={`text-[10px] ${
                   order.paymentStatus === 'paid' ? 'text-green-700 border-green-300' :
-                  order.paymentStatus === 'partial' ? 'text-orange-700 border-orange-300' :
+                  order.paymentStatus === 'partial' ? 'text-yellow-700 border-yellow-300' :
                   'text-red-700 border-red-300'
                 }`}>
                   {order.paymentStatus === 'paid' ? 'Paid' : order.paymentStatus === 'partial' ? 'Partial' : 'Unpaid'}
                 </Badge>
               )}
+              </div>
             </DialogDescription>
           </DialogHeader>
         </div>

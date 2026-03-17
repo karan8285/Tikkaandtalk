@@ -7,6 +7,7 @@
  */
 
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "./fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -30,7 +31,7 @@ export async function getMidtransConfig(): Promise<MidtransRuntimeConfig> {
 
   configFetchPromise = (async () => {
     try {
-      const res = await fetch(`${API_BASE}/midtrans-config`, {
+      const res = await fetchWithRetry(`${API_BASE}/midtrans-config`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
       if (!res.ok) throw new Error(`Config fetch failed: ${res.status}`);

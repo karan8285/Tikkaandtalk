@@ -475,32 +475,42 @@ const MASCOT_FILE_PATH = "mascot-image";
 const FAVICON_FILE_PATH = "favicon-image";
 let logoBucketReady = false;
 
-async function ensureLogoBucket() {
-  try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-    );
-    const { data: buckets } = await supabase.storage.listBuckets();
-    const bucketExists = buckets?.some((bucket: any) => bucket.name === LOGO_BUCKET);
-    if (!bucketExists) {
-      const { error } = await supabase.storage.createBucket(LOGO_BUCKET, { public: false });
-      if (error) {
-        if (error.message?.includes('already exists')) {
-          console.log(`✅ Logo storage bucket already exists: ${LOGO_BUCKET}`);
+async function ensureLogoBucket(maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const supabase = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+      );
+      const { data: buckets, error: listError } = await supabase.storage.listBuckets();
+      if (listError) throw new Error(`listBuckets failed: ${listError.message}`);
+      const bucketExists = buckets?.some((bucket: any) => bucket.name === LOGO_BUCKET);
+      if (!bucketExists) {
+        const { error } = await supabase.storage.createBucket(LOGO_BUCKET, { public: false });
+        if (error) {
+          if (error.message?.includes('already exists')) {
+            console.log(`✅ Logo storage bucket already exists: ${LOGO_BUCKET}`);
+          } else {
+            throw new Error(`createBucket failed: ${error.message}`);
+          }
         } else {
-          console.error(`❌ Failed to create bucket ${LOGO_BUCKET}:`, error.message);
-          return;
+          console.log(`✅ Created storage bucket: ${LOGO_BUCKET}`);
         }
       } else {
-        console.log(`✅ Created storage bucket: ${LOGO_BUCKET}`);
+        console.log(`✅ Logo storage bucket already exists: ${LOGO_BUCKET}`);
       }
-    } else {
-      console.log(`✅ Logo storage bucket already exists: ${LOGO_BUCKET}`);
+      logoBucketReady = true;
+      return; // success — exit retry loop
+    } catch (error: any) {
+      console.error(`⚠️ ensureLogoBucket attempt ${attempt}/${maxRetries} failed:`, error?.message || error);
+      if (attempt < maxRetries) {
+        const backoff = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
+        console.log(`⏳ Retrying ensureLogoBucket in ${backoff}ms...`);
+        await new Promise(r => setTimeout(r, backoff));
+      } else {
+        console.error(`❌ ensureLogoBucket failed after ${maxRetries} attempts. Will retry on first upload request.`);
+      }
     }
-    logoBucketReady = true;
-  } catch (error) {
-    console.error("⚠️ Failed to ensure logo bucket:", error);
   }
 }
 // Initialize bucket in background
@@ -2139,7 +2149,7 @@ app.get("/make-server-e5e192fb/admin/orders", async (c) => {
     const deliveryFilter = c.req.query("delivery") || "all";
     const dateFilter = c.req.query("date") || "all";
     const searchQuery = (c.req.query("search") || "").toLowerCase().trim();
-    const tabFilter = c.req.query("tab") || "all"; // "active" | "closed" | "all"
+    const tabFilter = c.req.query("tab") || "all"; // "all" | "active" | "closed" | specific status like "pending", "confirmed", etc.
 
     console.log(`Admin orders: page=${page} limit=${limit} status=${statusFilter} payment=${paymentFilter} delivery=${deliveryFilter} date=${dateFilter} tab=${tabFilter} search="${searchQuery}"`);
 
@@ -2165,6 +2175,10 @@ app.get("/make-server-e5e192fb/admin/orders", async (c) => {
     let activeCount = 0;
     let closedCount = 0, cancelledCount = 0;
     let scheduledCount = 0;
+    // Per-status counts for status tabs
+    const statusCounts: Record<string, number> = {};
+    const ORDER_STATUSES_LIST = ["scheduled", "pending", "confirmed", "cooking", "ready", "out_for_delivery", "delivered", "closed", "cancelled"];
+    for (const s of ORDER_STATUSES_LIST) statusCounts[s] = 0;
 
     for (const order of visibleOrders) {
       const eps = order.paymentStatus || (order.paymentReceived ? 'paid' : 'unpaid');
@@ -2188,6 +2202,10 @@ app.get("/make-server-e5e192fb/admin/orders", async (c) => {
       if (order.status === "closed") closedCount++;
       if (order.status === "cancelled") cancelledCount++;
       if (order.status === "scheduled") scheduledCount++;
+      // Count per status
+      if (order.status && statusCounts[order.status] !== undefined) {
+        statusCounts[order.status]++;
+      }
     }
 
     // Preload user map for customer name search and enrichment
@@ -2203,11 +2221,14 @@ app.get("/make-server-e5e192fb/admin/orders", async (c) => {
 
     // Apply filters
     const filtered = visibleOrders.filter((order: any) => {
-      // Tab filter (top-level split between active vs closed/cancelled)
+      // Tab filter: supports "all", "active" (non-closed/cancelled), "closed" (closed+cancelled), or a specific status
       if (tabFilter === "active") {
         if (["closed", "cancelled"].includes(order.status)) return false;
       } else if (tabFilter === "closed") {
         if (!["closed", "cancelled"].includes(order.status)) return false;
+      } else if (tabFilter !== "all") {
+        // Specific status tab (e.g., "pending", "confirmed", "cooking", etc.)
+        if (order.status !== tabFilter) return false;
       }
       // Status filter
       if (statusFilter !== "all") {
@@ -2291,6 +2312,7 @@ app.get("/make-server-e5e192fb/admin/orders", async (c) => {
         closedCount,
         cancelledCount,
         scheduledCount,
+        statusCounts,
       },
     });
   } catch (error) {
@@ -8256,6 +8278,29 @@ app.post("/make-server-e5e192fb/admin/create-custom-order", async (c) => {
     await kv.set(userOrdersKey, [...existingOrders, orderId]);
     
     console.log(`✅ Custom order created successfully: ${orderNumber}`);
+
+    // Push notification to customer (non-blocking)
+    if (orderData.userId) {
+      try {
+        if (orderData.scheduledAt) {
+          const scheduledDate = new Date(orderData.scheduledAt);
+          const formattedDate = scheduledDate.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+          const shortId = getShortOrderIdServer(orderNumber);
+          await pushNotification(orderData.userId, {
+            title: `Scheduled Order ${shortId} Created`,
+            message: `You have a scheduled order for ${formattedDate}. We'll start preparing it when the time arrives!`,
+            type: 'order_update',
+            orderId: orderId,
+            orderNumber: orderNumber,
+          });
+          console.log(`🔔 Scheduled order notification sent to customer ${orderData.userId}`);
+        } else {
+          await pushOrderNotification(order, 'status_change');
+        }
+      } catch (notifErr: any) {
+        console.log(`⚠️ Non-critical: notification push failed for custom order: ${notifErr?.message}`);
+      }
+    }
     
     return c.json({ 
       success: true,
@@ -13090,6 +13135,168 @@ app.get("/make-server-e5e192fb/reports/a2hs", async (c) => {
   } catch (error: any) {
     console.log(`❌ [A2HS Report] Error: ${error?.message}`);
     return c.json({ error: `Failed to generate A2HS report: ${error?.message}` }, 500);
+  }
+});
+
+// GET /reports/menu-catalog — Menu Catalog report (superuser only)
+// Lists all menu items across all menu types with price, category, and active/inactive status
+app.get("/make-server-e5e192fb/reports/menu-catalog", async (c) => {
+  try {
+    const accessToken = getCustomToken(c);
+    if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
+    const adminAuth = await verifyAdminAccess(accessToken);
+    if (!adminAuth) return c.json({ error: "Admin access required" }, 403);
+
+    // Verify superuser role
+    const staffData = await kv.get(`staff:${adminAuth.userId}`);
+    if (!staffData || staffData.role !== "superuser") {
+      return c.json({ error: "Super User access required" }, 403);
+    }
+
+    // Parse query params
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const limit = parseInt(c.req.query("limit") || "20", 10);
+    const search = (c.req.query("search") || "").toLowerCase().trim();
+    const menuType = c.req.query("menuType") || "all";
+    const category = c.req.query("category") || "all";
+    const status = c.req.query("status") || "all"; // all | active | inactive
+    const sortBy = c.req.query("sortBy") || "name"; // name | price | category | menuType
+    const isExport = c.req.query("export") === "true";
+
+    console.log(`📋 [Menu Catalog Report] page=${page} limit=${limit} search="${search}" menuType=${menuType} category=${category} status=${status} sort=${sortBy}`);
+
+    // Fetch all menu types with retry
+    const [regularItems, kidsItems, specialItems, flashItems] = await Promise.all([
+      kvRetry(() => kv.getByPrefix("regular_menu:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("kids_menu:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("todays_special:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("flash_sale:")).catch(() => []),
+    ]);
+
+    // Also check menu:regular:, menu:kids:, menu:special: prefixes (used in some routes)
+    const [menuRegular, menuKids, menuSpecial] = await Promise.all([
+      kvRetry(() => kv.getByPrefix("menu:regular:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("menu:kids:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("menu:special:")).catch(() => []),
+    ]);
+
+    // Build unified list, deduplicating by id
+    const seenIds = new Set<string>();
+    const allItems: any[] = [];
+
+    const addItems = (items: any[], typeName: string) => {
+      for (const item of items) {
+        const itemId = String(item.id || item._id || "");
+        if (itemId && seenIds.has(itemId)) continue;
+        if (itemId) seenIds.add(itemId);
+
+        const isActive = item.isAvailable !== false && item.active !== false && item.isActive !== false;
+        allItems.push({
+          id: itemId || `${typeName}_${allItems.length}`,
+          name: item.name || item.title || "Unnamed",
+          category: item.category || "Uncategorized",
+          price: item.price || 0,
+          image: item.image || "",
+          menuType: typeName,
+          isActive,
+          description: item.description || "",
+          createdAt: item.createdAt || "",
+          updatedAt: item.updatedAt || "",
+        });
+      }
+    };
+
+    addItems(regularItems, "Regular Menu");
+    addItems(menuRegular, "Regular Menu");
+    addItems(kidsItems, "Kids Menu");
+    addItems(menuKids, "Kids Menu");
+    addItems(specialItems, "Today's Special");
+    addItems(menuSpecial, "Today's Special");
+    addItems(flashItems, "Flash Sale");
+
+    // Collect unique categories and menu types
+    const allCategories = [...new Set(allItems.map((i: any) => i.category))].sort();
+    const allMenuTypes = [...new Set(allItems.map((i: any) => i.menuType))].sort();
+
+    // Apply filters
+    let filtered = allItems;
+
+    if (search) {
+      filtered = filtered.filter((i: any) =>
+        i.name.toLowerCase().includes(search) ||
+        i.category.toLowerCase().includes(search) ||
+        i.menuType.toLowerCase().includes(search)
+      );
+    }
+
+    if (menuType !== "all") {
+      filtered = filtered.filter((i: any) => i.menuType === menuType);
+    }
+
+    if (category !== "all") {
+      filtered = filtered.filter((i: any) => i.category === category);
+    }
+
+    if (status === "active") {
+      filtered = filtered.filter((i: any) => i.isActive);
+    } else if (status === "inactive") {
+      filtered = filtered.filter((i: any) => !i.isActive);
+    }
+
+    // Sort
+    filtered.sort((a: any, b: any) => {
+      switch (sortBy) {
+        case "price": return a.price - b.price;
+        case "price_desc": return b.price - a.price;
+        case "category": return a.category.localeCompare(b.category) || a.name.localeCompare(b.name);
+        case "menuType": return a.menuType.localeCompare(b.menuType) || a.name.localeCompare(b.name);
+        case "status": return (a.isActive === b.isActive ? 0 : a.isActive ? -1 : 1);
+        default: return a.name.localeCompare(b.name);
+      }
+    });
+
+    // Summary
+    const summary = {
+      totalItems: allItems.length,
+      activeItems: allItems.filter((i: any) => i.isActive).length,
+      inactiveItems: allItems.filter((i: any) => !i.isActive).length,
+      totalCategories: allCategories.length,
+      filteredCount: filtered.length,
+      menuTypeCounts: allMenuTypes.reduce((acc: Record<string, number>, mt: string) => {
+        acc[mt] = allItems.filter((i: any) => i.menuType === mt).length;
+        return acc;
+      }, {}),
+    };
+
+    // If export, return all filtered items
+    if (isExport) {
+      return c.json({
+        items: [],
+        allItems: filtered,
+        summary,
+        categories: allCategories,
+        menuTypes: allMenuTypes,
+        pagination: { page: 1, limit: filtered.length, totalPages: 1, totalItems: filtered.length },
+      });
+    }
+
+    // Paginate
+    const totalItems = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / limit));
+    const safePage = Math.min(page, totalPages);
+    const startIdx = (safePage - 1) * limit;
+    const paginated = filtered.slice(startIdx, startIdx + limit);
+
+    return c.json({
+      items: paginated,
+      summary,
+      categories: allCategories,
+      menuTypes: allMenuTypes,
+      pagination: { page: safePage, limit, totalPages, totalItems },
+    });
+  } catch (error: any) {
+    console.log(`❌ [Menu Catalog Report] Error: ${error?.message}`);
+    return c.json({ error: `Failed to generate menu catalog report: ${error?.message}` }, 500);
   }
 });
 

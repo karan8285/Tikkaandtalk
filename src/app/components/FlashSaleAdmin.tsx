@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Zap, Plus, Pencil, Trash2, ImageIcon, Clock, Video } from "lucide-react";
 import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { APP_CONFIG } from "../lib/config";
 import { MenuImageUpload } from "./MenuImageUpload";
 import { MenuVideoUpload } from "./MenuVideoUpload";
@@ -66,7 +67,7 @@ export function FlashSaleAdmin({ customToken }: Props) {
   const fetchItems = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/flash-sale`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/flash-sale`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -149,7 +150,7 @@ export function FlashSaleAdmin({ customToken }: Props) {
         ? `${API_BASE}/admin/flash-sale/${editingItem.id}`
         : `${API_BASE}/admin/flash-sale`;
 
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         method: editingItem ? "PUT" : "POST",
         headers: {
           "Content-Type": "application/json",
@@ -179,7 +180,7 @@ export function FlashSaleAdmin({ customToken }: Props) {
     if (!confirm("Are you sure you want to delete this item?")) return;
 
     try {
-      const response = await fetch(`${API_BASE}/admin/flash-sale/${id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/flash-sale/${id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
@@ -201,7 +202,7 @@ export function FlashSaleAdmin({ customToken }: Props) {
 
   const handleToggleEnabled = async (item: FlashSaleItem) => {
     try {
-      const response = await fetch(`${API_BASE}/admin/flash-sale/${item.id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/flash-sale/${item.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

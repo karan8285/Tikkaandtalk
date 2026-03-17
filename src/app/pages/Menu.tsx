@@ -4,6 +4,7 @@ import { useCart } from "../lib/cart";
 import { APP_CONFIG } from "../lib/config";
 import { ArrowLeft, Plus, ShoppingCart } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -40,7 +41,7 @@ export default function Menu() {
     setLoading(true);
     try {
       // Fetch special offers
-      const specialsResponse = await fetch(`${API_BASE}/special-offers`, {
+      const specialsResponse = await fetchWithRetry(`${API_BASE}/special-offers`, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,

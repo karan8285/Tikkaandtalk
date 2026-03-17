@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useLocation } from "react-router";
 import { useAuth } from "./auth";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "./fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const HEARTBEAT_INTERVAL = 30000; // 30 seconds
@@ -24,7 +25,7 @@ async function sendHeartbeat(payload: {
   isGuest: boolean;
 }) {
   try {
-    await fetch(`${API_BASE}/heartbeat`, {
+    await fetchWithRetry(`${API_BASE}/heartbeat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -4,6 +4,7 @@ import { router } from "./routes";
 import { Toaster } from "./components/ui/sonner";
 import { APP_CONFIG } from "./lib/config";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "./lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const LOGO_URL = `${API_BASE}/public/logo`;
@@ -79,7 +80,7 @@ function useDynamicBranding() {
       if (cancelled) return;
 
       try {
-        const res = await fetch(`${API_BASE}/restaurant-status`, {
+        const res = await fetchWithRetry(`${API_BASE}/restaurant-status`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
           signal: controller.signal,
         });

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { APP_CONFIG } from "./config";
+import { fetchWithRetry } from "./fetchWithRetry";
 
 interface User {
   id: string;
@@ -57,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = async (phone: string, pin: string, name: string) => {
     try {
-      const response = await fetch(`${API_BASE}/signup`, {
+      const response = await fetchWithRetry(`${API_BASE}/signup`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -86,7 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signedOutRef.current = false;
     
     try {
-      const response = await fetch(`${API_BASE}/signin`, {
+      const response = await fetchWithRetry(`${API_BASE}/signin`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -138,7 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/profile`, {
+      const response = await fetchWithRetry(`${API_BASE}/profile`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": accessToken,

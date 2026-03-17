@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -53,7 +54,7 @@ export function NotificationsAdmin({ customToken }: { customToken: string }) {
   const fetchHistory = useCallback(async () => {
     try {
       setLoadingHistory(true);
-      const res = await fetch(`${API_BASE}/admin/notifications`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/notifications`, {
         headers: {
           "X-Custom-Auth": customToken,
           Authorization: `Bearer ${publicAnonKey}`,
@@ -93,7 +94,7 @@ export function NotificationsAdmin({ customToken }: { customToken: string }) {
       if (notifType === "targeted") body.targetPhone = targetPhone.trim();
       if (scheduledAt) body.scheduledAt = new Date(scheduledAt).toISOString();
 
-      const res = await fetch(`${API_BASE}/admin/notifications`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/notifications`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -126,7 +127,7 @@ export function NotificationsAdmin({ customToken }: { customToken: string }) {
 
   const handleDelete = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE}/admin/notifications/${id}`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/notifications/${id}`, {
         method: "DELETE",
         headers: {
           "X-Custom-Auth": customToken,

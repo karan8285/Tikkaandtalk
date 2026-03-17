@@ -15,7 +15,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin, MessageSquare, Save, Filter, X, Share2, CheckSquare, Loader2, Ban, Plus, Star, Edit3, Volume2, VolumeX, KeyRound } from "lucide-react";
+import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin, MessageSquare, Save, Filter, X, Share2, CheckSquare, Loader2, Ban, Plus, Star, Edit3, Volume2, VolumeX, KeyRound, AlertCircle, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
@@ -27,6 +27,10 @@ import { StaffAddToHomeScreen } from "../components/StaffAddToHomeScreen";
 import { StaffPushToggle } from "../components/StaffPushToggle";
 import { ChangePinDialog } from "../components/ChangePinDialog";
 import { PaymentReceiptUpload, PaymentReceiptBadge } from "../components/PaymentReceiptUpload";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
+import { OrderStatusTabs } from "../components/OrderStatusTabs";
+import { PrinterSettings } from "../components/PrinterSettings";
+import { isPrinterConnected, printInvoice, connectPrinter, ensureConnected } from "../lib/thermalPrinter";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -98,7 +102,8 @@ export default function StaffCashier() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [changePinOpen, setChangePinOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"active" | "closed">("active");
+  const [printerSettingsOpen, setPrinterSettingsOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>("pending");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [paymentFilter, setPaymentFilter] = useState<string>("all");
@@ -106,7 +111,7 @@ export default function StaffCashier() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalFiltered, setTotalFiltered] = useState(0);
-  const [stats, setStats] = useState({ activeCount: 0, closedCount: 0, cancelledCount: 0, unpaidCount: 0, unpaidTotal: 0, paidCount: 0, paidTotal: 0, todayCount: 0, todayRevenue: 0 });
+  const [stats, setStats] = useState({ activeCount: 0, closedCount: 0, cancelledCount: 0, unpaidCount: 0, unpaidTotal: 0, paidCount: 0, paidTotal: 0, todayCount: 0, todayRevenue: 0, totalOrders: 0, statusCounts: {} as Record<string, number> });
 
   // Payment dialog
   const [paymentOrder, setPaymentOrder] = useState<Order | null>(null);
@@ -151,7 +156,7 @@ export default function StaffCashier() {
       });
       if (debouncedSearch) params.set("search", debouncedSearch);
 
-      const response = await fetch(`${API_BASE}/admin/orders?${params}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders?${params}`, {
         headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessTokenRef.current },
       });
       if (response.ok) {
@@ -162,8 +167,8 @@ export default function StaffCashier() {
         setCurrentPage(data.page);
         if (data.stats) setStats(data.stats);
 
-        // Check for new orders and play sound alert (only on active tab)
-        if (activeTab === "active") {
+        // Check for new orders and play sound alert (on non-closed/cancelled tabs)
+        if (!["closed", "cancelled"].includes(activeTab)) {
           checkForNewOrders((data.orders || []).map((o: Order) => o.id));
         }
       }
@@ -201,7 +206,7 @@ export default function StaffCashier() {
       setPaymentLoading(true);
       const addPayment: any = { amount, method: paymentMethod };
       if (paymentReceiptUrl) addPayment.receiptUrl = paymentReceiptUrl;
-      const response = await fetch(`${API_BASE}/admin/orders/${paymentOrder.id}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${paymentOrder.id}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -231,7 +236,7 @@ export default function StaffCashier() {
     const remaining = order.total - (order.paidAmount || 0);
     if (remaining <= 0) return;
     try {
-      const response = await fetch(`${API_BASE}/admin/orders/${order.id}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${order.id}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -249,6 +254,61 @@ export default function StaffCashier() {
     }
   };
 
+  // ─── Print Invoice Handler ───
+  const [printingOrder, setPrintingOrder] = useState<string | null>(null);
+
+  const handlePrintInvoice = async (order: Order) => {
+    setPrintingOrder(order.id);
+    try {
+      // Try silent reconnect first, then prompt scanner if needed
+      const ready = await ensureConnected();
+      if (!ready) {
+        toast.info("Reconnecting to printer...");
+        const result = await connectPrinter();
+        if (!result.success) {
+          toast.error(result.error || "Please connect your printer in Settings > Printer tab first.");
+          return;
+        }
+        toast.success(`Connected to ${result.name}`);
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      const restaurantName = (() => { try { return localStorage.getItem("tikka_restaurant_name") || APP_CONFIG.restaurant.name; } catch { return APP_CONFIG.restaurant.name; } })();
+      const restaurantTagline = (() => { try { return localStorage.getItem("tikka_restaurant_tagline") || APP_CONFIG.restaurant.tagline; } catch { return APP_CONFIG.restaurant.tagline; } })();
+      const restaurantAddress = (() => { try { return localStorage.getItem("tikka_restaurant_address") || APP_CONFIG.restaurant.defaultAddress; } catch { return APP_CONFIG.restaurant.defaultAddress; } })();
+      const restaurantPhone = (() => { try { return localStorage.getItem("tikka_whatsapp_display") || APP_CONFIG.whatsapp.defaultDisplay; } catch { return APP_CONFIG.whatsapp.defaultDisplay; } })();
+
+      const invoiceData = {
+        name: restaurantName,
+        tagline: restaurantTagline,
+        address: restaurantAddress,
+        phone: restaurantPhone,
+      };
+
+      const staffName = staff?.role === 'superuser' ? 'Admin' : (staff?.name || "Cashier");
+
+      try {
+        await printInvoice(order, invoiceData, staffName);
+      } catch (firstErr: any) {
+        console.warn("[Print] First attempt failed, trying reconnect:", firstErr.message);
+        const reconnected = await ensureConnected();
+        if (reconnected) {
+          await new Promise(r => setTimeout(r, 300));
+          await printInvoice(order, invoiceData, staffName);
+        } else {
+          throw firstErr;
+        }
+      }
+
+      toast.success("Invoice printed successfully!");
+    } catch (err: any) {
+      console.error("[Print] Final failure:", err);
+      toast.error(`Print failed: ${err.message}`);
+    } finally {
+      setPrintingOrder(null);
+    }
+  };
+
   // Unified save: status + admin message + delivery note in one API call
   const saveAllChanges = async (order: Order) => {
     const payload: Record<string, any> = {};
@@ -261,7 +321,7 @@ export default function StaffCashier() {
     if (Object.keys(payload).length === 0) { toast.info("No changes to save"); return; }
     try {
       setSavingOrder(order.id);
-      const response = await fetch(`${API_BASE}/admin/orders/${order.id}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${order.id}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -342,7 +402,7 @@ export default function StaffCashier() {
 
       for (const orderId of ordersToClose) {
         try {
-          const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+          const response = await fetchWithRetry(`${API_BASE}/admin/orders/${orderId}/status`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -376,7 +436,7 @@ export default function StaffCashier() {
     if (!cancelOrderTarget || !cancelReason) return;
     try {
       setCancelLoading(true);
-      const response = await fetch(`${API_BASE}/admin/orders/${cancelOrderTarget.id}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${cancelOrderTarget.id}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -424,6 +484,7 @@ export default function StaffCashier() {
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => navigate("/staff/create-order")}><Plus className="w-4 h-4" /></Button>
             <Button variant="outline" size="sm" onClick={fetchOrders}><RefreshCw className="w-4 h-4" /></Button>
+            <Button variant="outline" size="sm" onClick={() => setPrinterSettingsOpen(true)} title="Printer Settings"><Printer className="w-4 h-4" /></Button>
             <Button variant="outline" size="sm" onClick={() => setChangePinOpen(true)} title="Change PIN"><KeyRound className="w-4 h-4" /></Button>
             <Button variant="outline" size="sm" onClick={handleSignOut}><LogOut className="w-4 h-4" /></Button>
           </div>
@@ -468,23 +529,20 @@ export default function StaffCashier() {
           </Card>
         </div>
 
-        {/* Tabs */}
-        <div className="flex rounded-lg border overflow-hidden">
-          <button
-            onClick={() => { setActiveTab("active"); setCurrentPage(1); }}
-            className={`flex-1 py-2 text-sm font-semibold ${activeTab === "active" ? "text-white" : "bg-white text-gray-600"}`}
-            style={activeTab === "active" ? { backgroundColor: BRAND_COLOR } : {}}
-          >
-            <ShoppingCart className="w-4 h-4 inline mr-1" /> Active ({stats.activeCount})
-          </button>
-          <button
-            onClick={() => { setActiveTab("closed"); setCurrentPage(1); }}
-            className={`flex-1 py-2 text-sm font-semibold ${activeTab === "closed" ? "text-white" : "bg-white text-gray-600"}`}
-            style={activeTab === "closed" ? { backgroundColor: BRAND_COLOR } : {}}
-          >
-            <Archive className="w-4 h-4 inline mr-1" /> Closed
-          </button>
-        </div>
+        {/* Status Tabs — horizontal scrollable */}
+        <OrderStatusTabs
+          activeTab={activeTab}
+          onTabChange={(tab) => {
+            setActiveTab(tab);
+            setPaymentFilter("all");
+            setDeliveryFilter("all");
+            setSearchQuery("");
+            setCurrentPage(1);
+          }}
+          statusCounts={stats.statusCounts || {}}
+          totalOrders={stats.totalOrders || 0}
+          brandColor={BRAND_COLOR}
+        />
 
         {/* Search */}
         <Input placeholder="Search by order #, phone..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
@@ -543,8 +601,8 @@ export default function StaffCashier() {
           </div>
         ) : (
           <div className="space-y-2">
-            {/* Bulk Select Bar — only on active tab */}
-            {activeTab === "active" && (
+            {/* Bulk Select Bar — non-closed/cancelled tabs only */}
+            {!["closed", "cancelled"].includes(activeTab) && (
               <Card className="p-3 bg-gray-50">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 justify-between">
                   <div className="flex items-center gap-3">
@@ -599,7 +657,7 @@ export default function StaffCashier() {
                 <Card key={order.id} className={`p-4 ${selectedOrders.has(order.id) ? 'ring-2 ring-offset-1' : ''} shadow-sm`} style={{ ...cardStyle, ...(selectedOrders.has(order.id) ? { ringColor: BRAND_COLOR } : {}) }}>
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-start gap-3 min-w-0 flex-1">
-                      {activeTab === "active" && (
+                      {!["closed", "cancelled"].includes(activeTab) && (
                         <Checkbox
                           checked={selectedOrders.has(order.id)}
                           onCheckedChange={() => toggleSelectOrder(order.id)}
@@ -612,6 +670,20 @@ export default function StaffCashier() {
                           <Badge className={`text-[10px] text-white ${STATUS_COLORS[order.status]}`}>
                             {STATUS_LABELS[order.status]}
                           </Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0"
+                            title="Print Invoice"
+                            disabled={printingOrder === order.id}
+                            onClick={() => handlePrintInvoice(order)}
+                          >
+                            {printingOrder === order.id ? (
+                              <span className="w-3.5 h-3.5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: BRAND_COLOR, borderTopColor: 'transparent' }} />
+                            ) : (
+                              <Printer className="h-3.5 w-3.5" style={{ color: BRAND_COLOR }} />
+                            )}
+                          </Button>
                         </div>
                         <p className="text-sm mt-1 text-gray-800">{order.itemTitle}</p>
                         <div className="flex items-center gap-2 text-xs text-gray-600 mt-1 flex-wrap">
@@ -700,6 +772,26 @@ export default function StaffCashier() {
                           ))}
                         </SelectContent>
                       </Select>
+
+                      {/* Save All Changes — right below status */}
+                      {hasChanges(order) && (
+                        <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                          <p className="text-[10px] text-amber-600 font-medium flex items-center gap-1.5">
+                            <AlertCircle className="w-3.5 h-3.5" />
+                            You have unsaved changes
+                          </p>
+                          <Button
+                            size="sm"
+                            className="w-full h-9 text-xs font-semibold text-white"
+                            style={{ backgroundColor: BRAND_COLOR }}
+                            disabled={savingOrder === order.id}
+                            onClick={() => saveAllChanges(order)}
+                          >
+                            <Save className="w-3.5 h-3.5 mr-1.5" />
+                            {savingOrder === order.id ? "Saving All Changes..." : "Save All Changes"}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -731,25 +823,6 @@ export default function StaffCashier() {
                       rows={2}
                       className="text-xs resize-none mt-1"
                     />
-                  </div>
-
-                  {/* Unified Save Button */}
-                  <div className="mt-3 pt-3 border-t">
-                    <Button
-                      size="sm"
-                      className="w-full h-9 text-xs font-semibold text-white"
-                      style={{ backgroundColor: hasChanges(order) ? BRAND_COLOR : '#9ca3af' }}
-                      disabled={savingOrder === order.id || !hasChanges(order)}
-                      onClick={() => saveAllChanges(order)}
-                    >
-                      <Save className="w-3.5 h-3.5 mr-1.5" />
-                      {savingOrder === order.id ? "Saving All Changes..." : hasChanges(order) ? "Save All Changes" : "No Changes"}
-                    </Button>
-                    {hasChanges(order) && (
-                      <p className="text-[10px] text-amber-600 mt-1 text-center font-medium">
-                        You have unsaved changes
-                      </p>
-                    )}
                   </div>
 
                   {/* Share Tracking Link */}
@@ -989,6 +1062,19 @@ export default function StaffCashier() {
           userId={staff.id}
         />
       )}
+
+      {/* Printer Settings Dialog */}
+      <Dialog open={printerSettingsOpen} onOpenChange={setPrinterSettingsOpen}>
+        <DialogContent className="max-w-sm max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Printer className="w-5 h-5" style={{ color: BRAND_COLOR }} />
+              Printer Settings
+            </DialogTitle>
+          </DialogHeader>
+          <PrinterSettings />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

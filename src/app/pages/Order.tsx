@@ -13,6 +13,7 @@ import { ShoppingBag, Truck, MapPin, Phone, MessageSquare, ChevronRight, CreditC
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { JAKARTA_AREAS, getAreasByDistrict } from "../lib/delivery";
 import type { DeliveryZone } from "../lib/delivery";
 import { getMidtransConfig } from "../lib/midtrans";
@@ -173,7 +174,7 @@ export default function Order() {
   useEffect(() => {
     const fetchTaxRate = async () => {
       try {
-        const res = await fetch(`${API_BASE}/restaurant-status`, {
+        const res = await fetchWithRetry(`${API_BASE}/restaurant-status`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         });
         const data = await res.json();
@@ -212,7 +213,7 @@ export default function Order() {
     if (!user?.id) return;
     setLoadingPromos(true);
     try {
-      const res = await fetch(`${API_BASE}/user-vouchers?userId=${user.id}`, {
+      const res = await fetchWithRetry(`${API_BASE}/user-vouchers?userId=${user.id}`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
       const data = await res.json();
@@ -256,7 +257,7 @@ export default function Order() {
     }
     setClaimingVoucherId(userVoucherId);
     try {
-      const res = await fetch(`${API_BASE}/claim-voucher`, {
+      const res = await fetchWithRetry(`${API_BASE}/claim-voucher`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -292,7 +293,7 @@ export default function Order() {
     const fetchSavedAddresses = async () => {
       setLoadingSavedAddresses(true);
       try {
-        const res = await fetch(`${API_BASE}/user-addresses?userId=${user.id}`, {
+        const res = await fetchWithRetry(`${API_BASE}/user-addresses?userId=${user.id}`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         });
         const data = await res.json();
@@ -350,7 +351,7 @@ export default function Order() {
     } else if (addr.address) {
       // Try geocoding
       try {
-        const res = await fetch(`${API_BASE}/geocode-address`, {
+        const res = await fetchWithRetry(`${API_BASE}/geocode-address`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -373,7 +374,7 @@ export default function Order() {
     if (!user?.id) return;
     setDeletingAddressId(addressId);
     try {
-      const res = await fetch(`${API_BASE}/user-addresses/${addressId}?userId=${user.id}`, {
+      const res = await fetchWithRetry(`${API_BASE}/user-addresses/${addressId}?userId=${user.id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
@@ -403,7 +404,7 @@ export default function Order() {
     if (!user?.id || !address.trim()) return;
     setSavingAddress(true);
     try {
-      const res = await fetch(`${API_BASE}/user-addresses`, {
+      const res = await fetchWithRetry(`${API_BASE}/user-addresses`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -474,7 +475,7 @@ export default function Order() {
     setCalculatingFee(true);
     setDeliveryFeeResult(null);
     try {
-      const response = await fetch(`${API_BASE}/calculate-delivery-fee`, {
+      const response = await fetchWithRetry(`${API_BASE}/calculate-delivery-fee`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -498,7 +499,7 @@ export default function Order() {
     let resolvedAddress = "";
     try {
       // Call our server reverse-geocode endpoint
-      const geoRes = await fetch(`${API_BASE}/reverse-geocode`, {
+      const geoRes = await fetchWithRetry(`${API_BASE}/reverse-geocode`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -662,7 +663,7 @@ export default function Order() {
     setGeocoding(true);
     setDeliveryFeeResult(null);
     try {
-      const response = await fetch(`${API_BASE}/geocode-address`, {
+      const response = await fetchWithRetry(`${API_BASE}/geocode-address`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -721,7 +722,7 @@ export default function Order() {
 
     searchDebounceRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(
+        const res = await fetchWithRetry(
           `${API_BASE}/search-places?q=${encodeURIComponent(query.trim())}`,
           { headers: { Authorization: `Bearer ${publicAnonKey}` } }
         );
@@ -826,7 +827,7 @@ export default function Order() {
         category: (item as any).category || "Uncategorized",
       }));
       console.log("🔍 Applying promo code:", code, "Cart categories:", cartPayload.map(i => i.category));
-      const response = await fetch(`${API_BASE}/validate-promo`, {
+      const response = await fetchWithRetry(`${API_BASE}/validate-promo`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

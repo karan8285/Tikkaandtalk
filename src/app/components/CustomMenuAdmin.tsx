@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { APP_CONFIG } from "../lib/config";
 import { getIconComponent } from "../lib/iconMap";
 import { Button } from "./ui/button";
@@ -109,7 +110,7 @@ export function CustomMenuAdmin({ customToken }: Props) {
   const fetchCategories = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/admin/home-layout`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/home-layout`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -148,7 +149,7 @@ export function CustomMenuAdmin({ customToken }: Props) {
     if (!selectedSlug) return;
     setLoadingItems(true);
     try {
-      const res = await fetch(`${API_BASE}/admin/custom-menu/${selectedSlug}`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/custom-menu/${selectedSlug}`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -225,7 +226,7 @@ export function CustomMenuAdmin({ customToken }: Props) {
         item.id = editingItem.id;
       }
 
-      const res = await fetch(
+      const res = await fetchWithRetry(
         `${API_BASE}/admin/custom-menu/${selectedSlug}/item`,
         {
           method: "PUT",
@@ -258,7 +259,7 @@ export function CustomMenuAdmin({ customToken }: Props) {
     if (!selectedSlug || !deletingItem) return;
     setSaving(true);
     try {
-      const res = await fetch(
+      const res = await fetchWithRetry(
         `${API_BASE}/admin/custom-menu/${selectedSlug}/item/${deletingItem.id}`,
         {
           method: "DELETE",
@@ -288,7 +289,7 @@ export function CustomMenuAdmin({ customToken }: Props) {
   const handleToggleEnabled = async (item: CustomMenuItem) => {
     if (!selectedSlug) return;
     try {
-      const res = await fetch(
+      const res = await fetchWithRetry(
         `${API_BASE}/admin/custom-menu/${selectedSlug}/item`,
         {
           method: "PUT",
@@ -327,7 +328,7 @@ export function CustomMenuAdmin({ customToken }: Props) {
 
     // Save reorder to server
     try {
-      const res = await fetch(
+      const res = await fetchWithRetry(
         `${API_BASE}/admin/custom-menu/${selectedSlug}/reorder`,
         {
           method: "PUT",
@@ -356,7 +357,7 @@ export function CustomMenuAdmin({ customToken }: Props) {
     setImportCategoryFilter("all");
     setLoadingRegular(true);
     try {
-      const res = await fetch(`${API_BASE}/regular-menu`, {
+      const res = await fetchWithRetry(`${API_BASE}/regular-menu`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
       if (res.ok) {
@@ -433,7 +434,7 @@ export function CustomMenuAdmin({ customToken }: Props) {
     if (!selectedSlug || selectedImportIds.size === 0) return;
     setImporting(true);
     try {
-      const res = await fetch(
+      const res = await fetchWithRetry(
         `${API_BASE}/admin/custom-menu/${selectedSlug}/import-regular`,
         {
           method: "POST",

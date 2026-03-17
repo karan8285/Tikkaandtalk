@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Lock, ShieldCheck, AlertTriangle, CheckCircle2, Loader2, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { APP_CONFIG } from "../lib/config";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -167,7 +168,7 @@ export function ChangePinDialog({ open, onOpenChange, variant, accessToken, user
     setLoading(true);
     try {
       const endpoint = variant === "staff" ? "/staff/change-pin" : "/change-pin";
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+      const res = await fetchWithRetry(`${API_BASE}${endpoint}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

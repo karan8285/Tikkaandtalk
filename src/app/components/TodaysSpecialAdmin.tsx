@@ -13,6 +13,7 @@ import { MenuVideoUpload } from "./MenuVideoUpload";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -64,7 +65,7 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
   const fetchItems = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/todays-special`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/todays-special`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -144,7 +145,7 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
         ? `${API_BASE}/admin/todays-special/${editingItem.id}`
         : `${API_BASE}/admin/todays-special`;
 
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         method: editingItem ? "PUT" : "POST",
         headers: {
           "Content-Type": "application/json",
@@ -176,7 +177,7 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
     }
 
     try {
-      const response = await fetch(`${API_BASE}/admin/todays-special/${itemId}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/todays-special/${itemId}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
@@ -198,7 +199,7 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
 
   const toggleEnabled = async (item: TodaysSpecialItem) => {
     try {
-      const response = await fetch(`${API_BASE}/admin/todays-special/${item.id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/todays-special/${item.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -230,7 +231,7 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
 
     setSeeding(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/todays-special/seed`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/todays-special/seed`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,

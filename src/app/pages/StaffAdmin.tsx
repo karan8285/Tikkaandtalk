@@ -18,7 +18,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save, Ban, Star, Edit3, Volume2, VolumeX } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save, Ban, Star, Edit3, Volume2, VolumeX, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -51,6 +51,10 @@ import { useNewOrderAlert } from "../lib/useNewOrderAlert";
 import { OrderTimeline } from "../components/OrderTimeline";
 import { OrderModifyDialog } from "../components/OrderModifyDialog";
 import { PaymentReceiptUpload, PaymentReceiptBadge } from "../components/PaymentReceiptUpload";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
+import { OrderStatusTabs } from "../components/OrderStatusTabs";
+import { PrinterSettings } from "../components/PrinterSettings";
+import { isPrinterConnected, printInvoice, connectPrinter, ensureConnected } from "../lib/thermalPrinter";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -78,6 +82,7 @@ const TAB_DEFINITIONS: { value: string; label: string; permission: string }[] = 
   { value: "payments", label: "Payments", permission: "payments" },
   { value: "notifications", label: "Notifs", permission: "notifications" },
   { value: "settings", label: "Settings", permission: "settings" },
+  { value: "printer", label: "Printer", permission: "orders" },
   { value: "health", label: "Health", permission: "health" },
   { value: "staff", label: "Staff", permission: "staff" },
   { value: "reports", label: "Reports", permission: "reports" },
@@ -242,6 +247,10 @@ export default function StaffAdmin() {
             <NotificationsAdmin customToken={accessToken} />
           </TabsContent>
 
+          <TabsContent value="printer">
+            <PrinterSettings />
+          </TabsContent>
+
           {(role === 'superuser' || role === 'manager') && (
             <TabsContent value="broadcast">
               <BroadcastAdmin customToken={accessToken} />
@@ -367,14 +376,14 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [ordersPerPage] = useState(10);
-  const [orderSubTab, setOrderSubTab] = useState<"active" | "closed">("active");
+  const [orderSubTab, setOrderSubTab] = useState<string>("pending");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [paymentFilter, setPaymentFilter] = useState<string>("all");
   const [deliveryFilter, setDeliveryFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [orderStats, setOrderStats] = useState({ totalOrders: 0, activeCount: 0, closedCount: 0, cancelledCount: 0, scheduledCount: 0, unpaidCount: 0, unpaidTotal: 0, partialCount: 0, partialTotal: 0, paidCount: 0, paidTotal: 0, todayCount: 0, todayRevenue: 0 });
+  const [orderStats, setOrderStats] = useState({ totalOrders: 0, activeCount: 0, closedCount: 0, cancelledCount: 0, scheduledCount: 0, unpaidCount: 0, unpaidTotal: 0, partialCount: 0, partialTotal: 0, paidCount: 0, paidTotal: 0, todayCount: 0, todayRevenue: 0, statusCounts: {} as Record<string, number> });
 
   // Bulk actions
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
@@ -423,7 +432,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
       });
       if (debouncedSearch) params.set("search", debouncedSearch);
 
-      const response = await fetch(`${API_BASE}/admin/orders?${params}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders?${params}`, {
         headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessTokenRef.current },
       });
       if (response.ok) {
@@ -434,8 +443,8 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
         setCurrentPage(data.page);
         if (data.stats) setOrderStats(data.stats);
 
-        // Check for new orders and play sound alert (only on active tab)
-        if (orderSubTab === "active") {
+        // Check for new orders and play sound alert (on non-closed/cancelled tabs)
+        if (!["closed", "cancelled"].includes(orderSubTab)) {
           checkForNewOrders((data.orders || []).map((o: Order) => o.id));
         }
       }
@@ -466,7 +475,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
     if (Object.keys(payload).length === 0) { toast.info("No changes to save"); return; }
     try {
       setSavingOrder(order.id);
-      const response = await fetch(`${API_BASE}/admin/orders/${order.id}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${order.id}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
         body: JSON.stringify(payload),
@@ -489,6 +498,61 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
     finally { setSavingOrder(null); }
   };
 
+  // ─── Print Invoice Handler ───
+  const [printingOrder, setPrintingOrder] = useState<string | null>(null);
+
+  const handlePrintInvoice = async (order: Order) => {
+    setPrintingOrder(order.id);
+    try {
+      // Try silent reconnect first, then prompt scanner if needed
+      const ready = await ensureConnected();
+      if (!ready) {
+        toast.info("Reconnecting to printer...");
+        const result = await connectPrinter();
+        if (!result.success) {
+          toast.error(result.error || "Please connect your printer in Settings > Printer tab first.");
+          return;
+        }
+        toast.success(`Connected to ${result.name}`);
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      const restaurantName = (() => { try { return localStorage.getItem("tikka_restaurant_name") || APP_CONFIG.restaurant.name; } catch { return APP_CONFIG.restaurant.name; } })();
+      const restaurantTagline = (() => { try { return localStorage.getItem("tikka_restaurant_tagline") || APP_CONFIG.restaurant.tagline; } catch { return APP_CONFIG.restaurant.tagline; } })();
+      const restaurantAddress = (() => { try { return localStorage.getItem("tikka_restaurant_address") || APP_CONFIG.restaurant.defaultAddress; } catch { return APP_CONFIG.restaurant.defaultAddress; } })();
+      const restaurantPhone = (() => { try { return localStorage.getItem("tikka_whatsapp_display") || APP_CONFIG.whatsapp.defaultDisplay; } catch { return APP_CONFIG.whatsapp.defaultDisplay; } })();
+
+      const invoiceData = {
+        name: restaurantName,
+        tagline: restaurantTagline,
+        address: restaurantAddress,
+        phone: restaurantPhone,
+      };
+
+      const staffName = staff?.role === 'superuser' ? 'Admin' : (staff?.name || "Staff");
+
+      try {
+        await printInvoice(order, invoiceData, staffName);
+      } catch (firstErr: any) {
+        console.warn("[Print] First attempt failed, trying reconnect:", firstErr.message);
+        const reconnected = await ensureConnected();
+        if (reconnected) {
+          await new Promise(r => setTimeout(r, 300));
+          await printInvoice(order, invoiceData, staffName);
+        } else {
+          throw firstErr;
+        }
+      }
+
+      toast.success("Invoice printed successfully!");
+    } catch (err: any) {
+      console.error("[Print] Final failure:", err);
+      toast.error(`Print failed: ${err.message}`);
+    } finally {
+      setPrintingOrder(null);
+    }
+  };
+
   // Check if an order has unsaved changes
   const hasChanges = (order: Order): boolean => {
     const statusChanged = pendingStatuses[order.id] !== undefined && pendingStatuses[order.id] !== order.status;
@@ -502,7 +566,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
     if (!cancelOrderTarget || !cancelReason) return;
     try {
       setCancelLoading(true);
-      const response = await fetch(`${API_BASE}/admin/orders/${cancelOrderTarget.id}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${cancelOrderTarget.id}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
         body: JSON.stringify({ status: "cancelled", cancellationReason: cancelReason }),
@@ -525,7 +589,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
       setPaymentLoading(orderId);
       const addPayment: any = { amount, method, note };
       if (receiptUrl) addPayment.receiptUrl = receiptUrl;
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${orderId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
         body: JSON.stringify({ addPayment }),
@@ -544,7 +608,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   const handlePaymentStatusChange = async (orderId: string, newStatus: string) => {
     try {
       setPaymentLoading(orderId);
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${orderId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
         body: JSON.stringify({ paymentStatus: newStatus, paymentReceived: newStatus === 'paid' }),
@@ -735,23 +799,21 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
         </Button>
       </div>
 
-      {/* Sub-tabs */}
-      <div className="flex rounded-lg border overflow-hidden">
-        <button
-          onClick={() => { setOrderSubTab("active"); setStatusFilter("all"); setSearchQuery(""); }}
-          className={`flex-1 py-2.5 text-sm font-semibold transition-all ${orderSubTab === "active" ? "text-white" : "bg-white text-gray-600"}`}
-          style={orderSubTab === "active" ? { backgroundColor: BRAND } : {}}
-        >
-          <ShoppingCart className="w-4 h-4 inline mr-1" /> Active ({orderStats.activeCount})
-        </button>
-        <button
-          onClick={() => { setOrderSubTab("closed"); setStatusFilter("all"); setSearchQuery(""); }}
-          className={`flex-1 py-2.5 text-sm font-semibold transition-all ${orderSubTab === "closed" ? "text-white" : "bg-white text-gray-600"}`}
-          style={orderSubTab === "closed" ? { backgroundColor: BRAND } : {}}
-        >
-          <Archive className="w-4 h-4 inline mr-1" /> Closed ({orderStats.closedCount + orderStats.cancelledCount})
-        </button>
-      </div>
+      {/* Status Tabs — horizontal scrollable */}
+      <OrderStatusTabs
+        activeTab={orderSubTab}
+        onTabChange={(tab) => {
+          setOrderSubTab(tab);
+          setStatusFilter("all");
+          setPaymentFilter("all");
+          setDeliveryFilter("all");
+          setSearchQuery("");
+          setSelectedOrders(new Set());
+        }}
+        statusCounts={orderStats.statusCounts || {}}
+        totalOrders={orderStats.totalOrders}
+        brandColor={BRAND}
+      />
 
       {/* Search */}
       <Input
@@ -766,17 +828,6 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
           <Filter className="w-4 h-4 text-gray-400" />
           <span className="text-xs font-medium text-gray-500">Filters:</span>
         </div>
-        <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}>
-          <SelectTrigger className="h-8 w-[130px] text-xs">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all" className="text-xs">All Status</SelectItem>
-            {ORDER_STATUSES.map(s => (
-              <SelectItem key={s} value={s} className="text-xs">{STATUS_LABELS[s]}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
         <Select value={paymentFilter} onValueChange={(v) => { setPaymentFilter(v); setCurrentPage(1); }}>
           <SelectTrigger className="h-8 w-[130px] text-xs">
             <CircleDollarSign className="w-3.5 h-3.5 mr-1" />
@@ -801,20 +852,20 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
             <SelectItem value="dine_in" className="text-xs">Dine In</SelectItem>
           </SelectContent>
         </Select>
-        {(statusFilter !== "all" || paymentFilter !== "all" || deliveryFilter !== "all") && (
+        {(paymentFilter !== "all" || deliveryFilter !== "all") && (
           <Button
             variant="ghost"
             size="sm"
             className="h-8 text-xs text-gray-500 hover:text-gray-700"
-            onClick={() => { setStatusFilter("all"); setPaymentFilter("all"); setDeliveryFilter("all"); setCurrentPage(1); }}
+            onClick={() => { setPaymentFilter("all"); setDeliveryFilter("all"); setCurrentPage(1); }}
           >
             <X className="w-3.5 h-3.5 mr-1" /> Clear
           </Button>
         )}
       </div>
 
-      {/* Bulk Actions Bar — active tab only */}
-      {orderSubTab === "active" && orders.length > 0 && (
+      {/* Bulk Actions Bar — non-closed/cancelled tabs only */}
+      {!["closed", "cancelled"].includes(orderSubTab) && orders.length > 0 && (
         <Card className="p-4">
           <div className="flex flex-col md:flex-row items-start md:items-center gap-3 justify-between">
             <div className="flex items-center gap-3">
@@ -863,7 +914,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
           <Card key={order.id} className="p-4 shadow-sm" style={STATUS_BG_STYLE[order.status] || { backgroundColor: '#f9fafb', borderColor: '#e5e7eb' }}>
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-3 min-w-0 flex-1">
-                {orderSubTab === "active" && (
+                {!["closed", "cancelled"].includes(orderSubTab) && (
                   <Checkbox
                     checked={selectedOrders.has(order.id)}
                     onCheckedChange={() => toggleSelectOrder(order.id)}
@@ -878,6 +929,20 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                     <Badge className={`text-[10px] text-white ${STATUS_COLORS[order.status]}`}>
                       {STATUS_LABELS[order.status] || order.status}
                     </Badge>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0"
+                      title="Print Invoice"
+                      disabled={printingOrder === order.id}
+                      onClick={() => handlePrintInvoice(order)}
+                    >
+                      {printingOrder === order.id ? (
+                        <span className="w-3.5 h-3.5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: BRAND, borderTopColor: 'transparent' }} />
+                      ) : (
+                        <Printer className="h-3.5 w-3.5" style={{ color: BRAND }} />
+                      )}
+                    </Button>
                     {order.paymentStatus && (
                       <Badge variant="outline" className={`text-[10px] ${
                         order.paymentStatus === 'paid' ? 'text-green-700 border-green-300' :
@@ -916,6 +981,26 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                 </Select>
               )}
             </div>
+
+            {/* Save All Changes — right below status */}
+            {hasChanges(order) && (
+              <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                <p className="text-[10px] text-amber-600 font-medium flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  You have unsaved changes
+                </p>
+                <Button
+                  size="sm"
+                  className="w-full h-9 text-xs font-semibold text-white"
+                  style={{ backgroundColor: BRAND }}
+                  disabled={savingOrder === order.id}
+                  onClick={() => saveAllChanges(order)}
+                >
+                  <Save className="w-3.5 h-3.5 mr-1.5" />
+                  {savingOrder === order.id ? "Saving All Changes..." : "Save All Changes"}
+                </Button>
+              </div>
+            )}
 
             {/* Payment Status Management */}
             {(() => {
@@ -1105,25 +1190,6 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
                 rows={2}
                 className="text-xs resize-none mt-1"
               />
-            </div>
-
-            {/* Unified Save Button */}
-            <div className="mt-3 pt-3 border-t">
-              <Button
-                size="sm"
-                className="w-full h-9 text-xs font-semibold text-white"
-                style={{ backgroundColor: hasChanges(order) ? BRAND : '#9ca3af' }}
-                disabled={savingOrder === order.id || !hasChanges(order)}
-                onClick={() => saveAllChanges(order)}
-              >
-                <Save className="w-3.5 h-3.5 mr-1.5" />
-                {savingOrder === order.id ? "Saving All Changes..." : hasChanges(order) ? "Save All Changes" : "No Changes"}
-              </Button>
-              {hasChanges(order) && (
-                <p className="text-[10px] text-amber-600 mt-1 text-center font-medium">
-                  You have unsaved changes
-                </p>
-              )}
             </div>
 
             {/* Order Timeline */}
@@ -1415,7 +1481,7 @@ function StaffCustomersTab({ accessToken }: { accessToken: string }) {
 
   const fetchUsers = async () => {
     try {
-      const res = await fetch(`${API_BASE}/admin/users`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/users`, {
         headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
       });
       if (res.ok) {

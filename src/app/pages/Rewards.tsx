@@ -4,6 +4,7 @@ import { useAuth } from "../lib/auth";
 import { APP_CONFIG } from "../lib/config";
 import { Button } from "../components/ui/button";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { Gift, ChevronLeft, Award, Ticket, Car, UtensilsCrossed, RefreshCw, Percent, Truck, Tag, Clock, CheckCircle, Crown, Copy, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 import { getRestaurantLogo } from "../lib/useRestaurantLogo";
@@ -102,7 +103,7 @@ export default function Rewards() {
       setLoadingData(true);
       
       // Fetch user vouchers
-      const vouchersResponse = await fetch(`${API_BASE}/user-vouchers?userId=${user?.id}`, {
+      const vouchersResponse = await fetchWithRetry(`${API_BASE}/user-vouchers?userId=${user?.id}`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": accessToken || "",
@@ -115,7 +116,7 @@ export default function Rewards() {
       }
 
       // Fetch tier benefits
-      const benefitsResponse = await fetch(`${API_BASE}/tier-benefits`, {
+      const benefitsResponse = await fetchWithRetry(`${API_BASE}/tier-benefits`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
         },
@@ -158,7 +159,7 @@ export default function Rewards() {
     
     setClaiming(userVoucherId);
     try {
-      const response = await fetch(`${API_BASE}/claim-voucher`, {
+      const response = await fetchWithRetry(`${API_BASE}/claim-voucher`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

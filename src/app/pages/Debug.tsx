@@ -5,6 +5,7 @@ import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { CheckCircle2, XCircle, Loader2, RefreshCw } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -20,7 +21,7 @@ export default function Debug() {
 
     // Test 1: Health Check
     try {
-      const healthResponse = await fetch(`${API_BASE}/health`, {
+      const healthResponse = await fetchWithRetry(`${API_BASE}/health`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` }
       });
       newResults.health = {
@@ -38,7 +39,7 @@ export default function Debug() {
     // Test 2: Check Auth
     if (user && accessToken) {
       try {
-        const profileResponse = await fetch(`${API_BASE}/profile`, {
+        const profileResponse = await fetchWithRetry(`${API_BASE}/profile`, {
           headers: { Authorization: `Bearer ${accessToken}` },
         });
         const profileData = await profileResponse.json();
@@ -64,7 +65,7 @@ export default function Debug() {
 
     // Test 3: Get Special Offers
     try {
-      const offersResponse = await fetch(`${API_BASE}/special-offers`, {
+      const offersResponse = await fetchWithRetry(`${API_BASE}/special-offers`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` }
       });
       const offersData = await offersResponse.json();
@@ -85,7 +86,7 @@ export default function Debug() {
     // Test 4: Get Orders (if logged in)
     if (user && accessToken) {
       try {
-        const ordersResponse = await fetch(`${API_BASE}/orders`, {
+        const ordersResponse = await fetchWithRetry(`${API_BASE}/orders`, {
           headers: { Authorization: `Bearer ${accessToken}` },
         });
         const ordersData = await ordersResponse.json();
@@ -215,7 +216,7 @@ export default function Debug() {
           onClick={async () => {
             try {
               toast.info("Creating test order...");
-              const response = await fetch(`${API_BASE}/orders`, {
+              const response = await fetchWithRetry(`${API_BASE}/orders`, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",

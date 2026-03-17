@@ -13,7 +13,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, Camera, MessageSquare, Save, Star } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, Camera, MessageSquare, Save, Star, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -37,6 +37,10 @@ import { formatPhoneForWhatsApp } from "../lib/whatsapp";
 import { APP_CONFIG } from "../lib/config";
 import { OrderTimeline } from "../components/OrderTimeline";
 import { PaymentReceiptUpload, PaymentReceiptBadge } from "../components/PaymentReceiptUpload";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
+import { OrderStatusTabs } from "../components/OrderStatusTabs";
+import { PrinterSettings } from "../components/PrinterSettings";
+import { isPrinterConnected, printInvoice, connectPrinter, ensureConnected } from "../lib/thermalPrinter";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -137,6 +141,7 @@ export default function Admin() {
     closedCount: 0,
     cancelledCount: 0,
     scheduledCount: 0,
+    statusCounts: {} as Record<string, number>,
   });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -158,8 +163,8 @@ export default function Admin() {
   const [addPaymentReceiptUrl, setAddPaymentReceiptUrl] = useState<string | null>(null);
   const [expandedTimeline, setExpandedTimeline] = useState<string | null>(null);
 
-  // Order sub-tab: "active" vs "closed"
-  const [orderSubTab, setOrderSubTab] = useState<"active" | "closed">("active");
+  // Order sub-tab: per-status tab or "all"
+  const [orderSubTab, setOrderSubTab] = useState<string>("pending");
   
   // Order filters
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -238,7 +243,7 @@ export default function Admin() {
     if (!accessToken) return;
     try {
       const params = buildOrderParams(pageOverride);
-      const response = await fetch(`${API_BASE}/admin/orders?${params}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders?${params}`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": accessToken,
@@ -273,7 +278,7 @@ export default function Admin() {
   const pollOrderCount = useCallback(async () => {
     if (!accessToken) return;
     try {
-      const response = await fetch(`${API_BASE}/admin/orders/count`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/count`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": accessToken,
@@ -341,13 +346,13 @@ export default function Admin() {
       setLoading(true);
       
       const [usersResponse, ordersResponse] = await Promise.all([
-        fetch(`${API_BASE}/admin/users`, {
+        fetchWithRetry(`${API_BASE}/admin/users`, {
           headers: { 
             Authorization: `Bearer ${publicAnonKey}`,
             "X-Custom-Auth": accessToken 
           },
         }),
-        fetch(`${API_BASE}/admin/orders?page=1&limit=${ordersPerPage}&status=all&payment=all&delivery=all&date=all&tab=active`, {
+        fetchWithRetry(`${API_BASE}/admin/orders?page=1&limit=${ordersPerPage}&status=all&payment=all&delivery=all&date=all&tab=pending`, {
           headers: { 
             Authorization: `Bearer ${publicAnonKey}`,
             "X-Custom-Auth": accessToken 
@@ -402,7 +407,7 @@ export default function Admin() {
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
     try {
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${orderId}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -428,7 +433,7 @@ export default function Admin() {
 
   const togglePaymentReceived = async (orderId: string, currentValue: boolean) => {
     try {
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${orderId}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -447,6 +452,63 @@ export default function Admin() {
     } catch (error) {
       console.error("Failed to update payment status:", error);
       toast.error("Failed to update payment status");
+    }
+  };
+
+  // ─── Print Invoice Handler ───
+  const [printingOrder, setPrintingOrder] = useState<string | null>(null);
+
+  const handlePrintInvoice = async (order: Order) => {
+    setPrintingOrder(order.id);
+    try {
+      // Try silent reconnect first, then prompt scanner if needed
+      const ready = await ensureConnected();
+      if (!ready) {
+        toast.info("Reconnecting to printer...");
+        const result = await connectPrinter();
+        if (!result.success) {
+          toast.error(result.error || "Please connect your printer in Settings > Printer tab first.");
+          return;
+        }
+        toast.success(`Connected to ${result.name}`);
+        // Let the connection stabilize after fresh connect
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      const restaurantName = (() => { try { return localStorage.getItem("tikka_restaurant_name") || APP_CONFIG.restaurant.name; } catch { return APP_CONFIG.restaurant.name; } })();
+      const restaurantTagline = (() => { try { return localStorage.getItem("tikka_restaurant_tagline") || APP_CONFIG.restaurant.tagline; } catch { return APP_CONFIG.restaurant.tagline; } })();
+      const restaurantAddress = (() => { try { return localStorage.getItem("tikka_restaurant_address") || APP_CONFIG.restaurant.defaultAddress; } catch { return APP_CONFIG.restaurant.defaultAddress; } })();
+      const restaurantPhone = (() => { try { return localStorage.getItem("tikka_whatsapp_display") || APP_CONFIG.whatsapp.defaultDisplay; } catch { return APP_CONFIG.whatsapp.defaultDisplay; } })();
+
+      const invoiceData = {
+        name: restaurantName,
+        tagline: restaurantTagline,
+        address: restaurantAddress,
+        phone: restaurantPhone,
+      };
+
+      const staffName = user?.name || "Admin";
+
+      // Try printing — if first attempt fails, reconnect and retry once
+      try {
+        await printInvoice(order, invoiceData, staffName);
+      } catch (firstErr: any) {
+        console.warn("[Print] First attempt failed, trying reconnect:", firstErr.message);
+        const reconnected = await ensureConnected();
+        if (reconnected) {
+          await new Promise(r => setTimeout(r, 300));
+          await printInvoice(order, invoiceData, staffName);
+        } else {
+          throw firstErr;
+        }
+      }
+
+      toast.success("Invoice printed successfully!");
+    } catch (err: any) {
+      console.error("[Print] Final failure:", err);
+      toast.error(`Print failed: ${err.message}`);
+    } finally {
+      setPrintingOrder(null);
     }
   };
 
@@ -503,7 +565,7 @@ export default function Admin() {
   const saveAdminMessage = async (orderId: string, message: string) => {
     try {
       setSubmitting(orderId);
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${orderId}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -539,7 +601,7 @@ export default function Admin() {
       setSubmitting(orderId);
       const addPayment: any = { amount, method, note };
       if (receiptUrl) addPayment.receiptUrl = receiptUrl;
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${orderId}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -570,7 +632,7 @@ export default function Admin() {
 
     try {
       setSubmitting(orderId);
-      const response = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${orderId}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -624,7 +686,7 @@ export default function Admin() {
 
     try {
       setCancelling(true);
-      const response = await fetch(`${API_BASE}/admin/orders/${selectedOrder.id}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${selectedOrder.id}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -832,7 +894,7 @@ export default function Admin() {
     try {
       setResettingPin(true);
 
-      const response = await fetch(
+      const response = await fetchWithRetry(
         `${API_BASE}/admin/users/${resetPinCustomer.id}/reset-pin`,
         {
           method: "POST",
@@ -873,7 +935,7 @@ export default function Admin() {
     try {
       setBlockingUser(true);
 
-      const response = await fetch(
+      const response = await fetchWithRetry(
         `${API_BASE}/admin/users/${blockCustomer.id}/block`,
         {
           method: "POST",
@@ -915,7 +977,7 @@ export default function Admin() {
     try {
       setDeletingUser(true);
 
-      const response = await fetch(
+      const response = await fetchWithRetry(
         `${API_BASE}/admin/users/${deleteCustomer.id}`,
         {
           method: "DELETE",
@@ -956,7 +1018,7 @@ export default function Admin() {
     return users.find(u => u.id === userId);
   };
 
-  const hasActiveFilters = statusFilter !== "all" || paymentFilter !== "all" || deliveryFilter !== "all" || dateFilter !== "all" || searchQuery !== "";
+  const hasActiveFilters = paymentFilter !== "all" || deliveryFilter !== "all" || dateFilter !== "all" || searchQuery !== "";
   
   const clearAllFilters = () => {
     setStatusFilter("all");
@@ -1018,8 +1080,9 @@ export default function Admin() {
               outlineOffset: '-2px',
             }}
             onClick={() => {
-              const wasUnpaid = paymentFilter === 'unpaid';
+              const wasUnpaid = paymentFilter === 'unpaid' && orderSubTab === 'all';
               clearAllFilters();
+              setOrderSubTab('all');
               if (!wasUnpaid) {
                 setPaymentFilter('unpaid');
               }
@@ -1047,8 +1110,9 @@ export default function Admin() {
               outlineOffset: '-2px',
             }}
             onClick={() => {
-              const wasPartial = paymentFilter === 'partial';
+              const wasPartial = paymentFilter === 'partial' && orderSubTab === 'all';
               clearAllFilters();
+              setOrderSubTab('all');
               if (!wasPartial) {
                 setPaymentFilter('partial');
               }
@@ -1075,8 +1139,9 @@ export default function Admin() {
               outlineOffset: '-2px',
             }}
             onClick={() => {
-              const wasToday = dateFilter === 'today';
+              const wasToday = dateFilter === 'today' && orderSubTab === 'all';
               clearAllFilters();
+              setOrderSubTab('all');
               if (!wasToday) {
                 setDateFilter('today');
               }
@@ -1099,15 +1164,12 @@ export default function Admin() {
             className="p-4 cursor-pointer transition-all hover:shadow-md"
             style={{
               borderLeft: '4px solid #F59E0B',
-              outline: statusFilter === 'active_group' ? '2px solid #F59E0B' : 'none',
+              outline: orderSubTab === 'all' && !hasActiveFilters ? '2px solid #F59E0B' : 'none',
               outlineOffset: '-2px',
             }}
             onClick={() => {
-              const wasActive = statusFilter === 'active_group';
               clearAllFilters();
-              if (!wasActive) {
-                setStatusFilter('active_group');
-              }
+              setOrderSubTab('all');
             }}
           >
             <div className="flex items-center gap-3">
@@ -1133,8 +1195,9 @@ export default function Admin() {
               outlineOffset: '-2px',
             }}
             onClick={() => {
-              const wasPaid = paymentFilter === 'paid';
+              const wasPaid = paymentFilter === 'paid' && orderSubTab === 'all';
               clearAllFilters();
+              setOrderSubTab('all');
               if (!wasPaid) {
                 setPaymentFilter('paid');
               }
@@ -1157,10 +1220,10 @@ export default function Admin() {
             className="p-4 cursor-pointer transition-all hover:shadow-md"
             style={{
               borderLeft: '4px solid #6B7280',
-              outline: !hasActiveFilters ? '2px solid #6B7280' : 'none',
+              outline: orderSubTab === 'all' && !hasActiveFilters ? '2px solid #6B7280' : 'none',
               outlineOffset: '-2px',
             }}
-            onClick={() => clearAllFilters()}
+            onClick={() => { clearAllFilters(); setOrderSubTab('all'); }}
           >
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-gray-500/10 flex items-center justify-center">
@@ -1195,71 +1258,29 @@ export default function Admin() {
               <TabsTrigger value="insights">Insights</TabsTrigger>
               <TabsTrigger value="payments">Payments</TabsTrigger>
               <TabsTrigger value="settings">Settings</TabsTrigger>
+              <TabsTrigger value="printer">Printer</TabsTrigger>
               <TabsTrigger value="health">Health</TabsTrigger>
             </TabsList>
           </div>
 
           {/* Orders Tab */}
           <TabsContent value="orders" className="space-y-4">
-            {/* Active / Closed Sub-tabs */}
-            <div className="flex rounded-lg border overflow-hidden">
-              <button
-                onClick={() => {
-                  setOrderSubTab("active");
-                  setStatusFilter("all");
-                  setPaymentFilter("all");
-                  setDeliveryFilter("all");
-                  setDateFilter("all");
-                  setSearchQuery("");
-                  setDebouncedSearch("");
-                  setSelectedOrders(new Set());
-                }}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 text-sm font-semibold transition-all ${
-                  orderSubTab === "active"
-                    ? "text-white"
-                    : "bg-white text-gray-600 hover:bg-gray-50"
-                }`}
-                style={orderSubTab === "active" ? { backgroundColor: BRAND } : {}}
-              >
-                <ShoppingCart className="w-4 h-4" />
-                Active
-                {orderStats.activeCount > 0 && (
-                  <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
-                    orderSubTab === "active" ? "bg-white/25 text-white" : "bg-gray-200 text-gray-700"
-                  }`}>
-                    {orderStats.activeCount}
-                  </span>
-                )}
-              </button>
-              <button
-                onClick={() => {
-                  setOrderSubTab("closed");
-                  setStatusFilter("all");
-                  setPaymentFilter("all");
-                  setDeliveryFilter("all");
-                  setDateFilter("all");
-                  setSearchQuery("");
-                  setDebouncedSearch("");
-                  setSelectedOrders(new Set());
-                }}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 text-sm font-semibold transition-all ${
-                  orderSubTab === "closed"
-                    ? "text-white"
-                    : "bg-white text-gray-600 hover:bg-gray-50"
-                }`}
-                style={orderSubTab === "closed" ? { backgroundColor: "#6B7280" } : {}}
-              >
-                <Archive className="w-4 h-4" />
-                Closed
-                {(orderStats.closedCount + orderStats.cancelledCount) > 0 && (
-                  <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
-                    orderSubTab === "closed" ? "bg-white/25 text-white" : "bg-gray-200 text-gray-700"
-                  }`}>
-                    {orderStats.closedCount + orderStats.cancelledCount}
-                  </span>
-                )}
-              </button>
-            </div>
+            {/* Status Tabs — horizontal scrollable */}
+            <OrderStatusTabs
+              activeTab={orderSubTab}
+              onTabChange={(tab) => {
+                setOrderSubTab(tab);
+                setPaymentFilter("all");
+                setDeliveryFilter("all");
+                setDateFilter("all");
+                setSearchQuery("");
+                setDebouncedSearch("");
+                setSelectedOrders(new Set());
+              }}
+              statusCounts={orderStats.statusCounts || {}}
+              totalOrders={orderStats.totalOrders}
+              brandColor={BRAND}
+            />
 
             {/* Search + Filter Row */}
             <div className="flex flex-col gap-3">
@@ -1271,7 +1292,7 @@ export default function Admin() {
                   className="max-w-md"
                 />
                 <div className="flex gap-2 w-full md:w-auto">
-                  {orderSubTab === "active" && (
+                  {!["closed", "cancelled"].includes(orderSubTab) && (
                     <>
                       <Button
                         variant="default"
@@ -1310,29 +1331,6 @@ export default function Admin() {
               <div className="flex flex-wrap gap-2 items-center">
                 <Filter className="w-4 h-4 text-muted-foreground hidden md:block" />
                 
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-[140px] h-9 text-xs">
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    {orderSubTab === "active" ? (
-                      <>
-                        {ORDER_STATUSES.filter(s => !["closed", "cancelled"].includes(s)).map(status => (
-                          <SelectItem key={status} value={status}>
-                            {STATUS_LABELS[status]}
-                          </SelectItem>
-                        ))}
-                      </>
-                    ) : (
-                      <>
-                        <SelectItem value="closed">Closed</SelectItem>
-                        <SelectItem value="cancelled">Cancelled</SelectItem>
-                      </>
-                    )}
-                  </SelectContent>
-                </Select>
-
                 <Select value={paymentFilter} onValueChange={setPaymentFilter}>
                   <SelectTrigger className="w-[130px] h-9 text-xs">
                     <SelectValue placeholder="Payment" />
@@ -1370,15 +1368,15 @@ export default function Admin() {
               </div>
 
               {/* Filter Results Counter & Per-Page Selector */}
-              <div className="flex items-center justify-between rounded-lg px-3 py-2" style={{ backgroundColor: orderSubTab === "closed" ? "#F3F4F6" : '#FFF1F5' }}>
-                <p className="text-xs font-medium" style={{ color: orderSubTab === "closed" ? "#6B7280" : BRAND }}>
+              <div className="flex items-center justify-between rounded-lg px-3 py-2" style={{ backgroundColor: '#FFF1F5' }}>
+                <p className="text-xs font-medium" style={{ color: BRAND }}>
                   {totalFiltered === 0 
                     ? (hasActiveFilters 
-                      ? `0 ${orderSubTab === "active" ? "active" : "closed"} orders match filters` 
-                      : orderSubTab === "active" ? "No active orders" : "No closed orders")
+                      ? `0 orders match filters` 
+                      : `No ${orderSubTab === "all" ? "" : STATUS_LABELS[orderSubTab]?.toLowerCase() + " "}orders`)
                     : hasActiveFilters 
                       ? `${(currentPage - 1) * ordersPerPage + 1}–${Math.min(currentPage * ordersPerPage, totalFiltered)} of ${totalFiltered} filtered`
-                      : `${(currentPage - 1) * ordersPerPage + 1}–${Math.min(currentPage * ordersPerPage, totalFiltered)} of ${totalFiltered} ${orderSubTab === "active" ? "active" : "closed"} orders`
+                      : `${(currentPage - 1) * ordersPerPage + 1}–${Math.min(currentPage * ordersPerPage, totalFiltered)} of ${totalFiltered} ${orderSubTab === "all" ? "" : STATUS_LABELS[orderSubTab]?.toLowerCase() + " "}orders`
                   }
                 </p>
                 <div className="flex items-center gap-2">
@@ -1406,8 +1404,8 @@ export default function Admin() {
               </div>
             </div>
 
-            {/* Bulk Actions Bar — active tab only */}
-            {orderSubTab === "active" && totalFiltered > 0 && (
+            {/* Bulk Actions Bar — non-closed/cancelled tabs only */}
+            {!["closed", "cancelled"].includes(orderSubTab) && totalFiltered > 0 && (
               <Card className="p-4">
                 <div className="flex flex-col md:flex-row items-start md:items-center gap-3 justify-between">
                   <div className="flex items-center gap-3">
@@ -1452,13 +1450,9 @@ export default function Admin() {
 
             {totalFiltered === 0 ? (
               <Card className="p-8 text-center">
-                {orderSubTab === "active" ? (
-                  <ShoppingCart className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
-                ) : (
-                  <Archive className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
-                )}
+                <ShoppingCart className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
                 <p className="text-muted-foreground">
-                  {orderSubTab === "active" ? "No active orders" : "No closed or cancelled orders"}
+                  No {orderSubTab === "all" ? "" : (STATUS_LABELS[orderSubTab]?.toLowerCase() + " ")}orders
                 </p>
                 {hasActiveFilters && (
                   <Button
@@ -1492,7 +1486,7 @@ export default function Admin() {
                         {/* Order Header */}
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
                           <div className="flex items-center gap-3 flex-1">
-                            {orderSubTab === "active" && (
+                            {!["closed", "cancelled"].includes(orderSubTab) && (
                               <Checkbox
                                 checked={selectedOrders.has(order.id)}
                                 onCheckedChange={() => toggleSelectOrder(order.id)}
@@ -1518,6 +1512,20 @@ export default function Admin() {
                                 <Badge className={`${STATUS_COLORS[order.status]} text-white`}>
                                   {STATUS_LABELS[order.status]}
                                 </Badge>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-7 p-0"
+                                  title="Print Invoice"
+                                  disabled={printingOrder === order.id}
+                                  onClick={() => handlePrintInvoice(order)}
+                                >
+                                  {printingOrder === order.id ? (
+                                    <span className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: BRAND, borderTopColor: 'transparent' }} />
+                                  ) : (
+                                    <Printer className="h-4 w-4" style={{ color: BRAND }} />
+                                  )}
+                                </Button>
                                 <span 
                                   className="inline-flex items-center px-2 py-0.5 text-[11px] font-semibold rounded-full"
                                   style={{ 
@@ -1680,7 +1688,7 @@ export default function Admin() {
                         )}
 
                         {/* Admin Message Display (read-only on closed/cancelled) */}
-                        {order.adminMessage && (orderSubTab === "closed" || order.status === "cancelled") && (
+                        {order.adminMessage && (["closed", "cancelled"].includes(order.status)) && (
                           <div className="text-sm bg-blue-50 border border-blue-200 rounded-lg p-3">
                             <div className="flex items-center gap-2 mb-1">
                               <span className="font-medium text-blue-900 flex items-center gap-1.5">
@@ -1720,8 +1728,8 @@ export default function Admin() {
                           </div>
                         )}
 
-                        {/* Status Update and Payment — hidden on closed sub-tab */}
-                        {orderSubTab === "active" && !["cancelled"].includes(order.status) && (
+                        {/* Status Update and Payment — hidden on closed/cancelled orders */}
+                        {!["closed", "cancelled"].includes(order.status) && (
                           <div className="pt-2 border-t space-y-3">
                             <div>
                               <Label className="text-sm mb-2 block">Update Status:</Label>
@@ -1742,6 +1750,36 @@ export default function Admin() {
                               </Select>
                             </div>
                             
+                            {/* Save All Changes Button — right below status */}
+                            {orderChanges[order.id] && (
+                              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                                <p className="text-xs font-medium text-amber-800 flex items-center gap-1.5">
+                                  <AlertCircle className="w-3.5 h-3.5" />
+                                  You have unsaved changes
+                                </p>
+                                <div className="flex gap-2">
+                                  <Button
+                                    onClick={() => submitOrderChanges(order.id)}
+                                    disabled={submitting === order.id}
+                                    className="flex-1"
+                                    size="sm"
+                                    style={{ backgroundColor: BRAND }}
+                                  >
+                                    <Save className="w-4 h-4 mr-1.5" />
+                                    {submitting === order.id ? "Saving..." : "Save All Changes"}
+                                  </Button>
+                                  <Button
+                                    onClick={() => cancelOrderChanges(order.id)}
+                                    disabled={submitting === order.id}
+                                    variant="outline"
+                                    size="sm"
+                                  >
+                                    Discard
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+
                             {/* Admin Message to Customer */}
                             <div>
                               <Label className="text-sm font-medium mb-1.5 flex items-center gap-1.5">
@@ -1987,36 +2025,6 @@ export default function Admin() {
                               )}
                             </div>
                             
-                            {/* Save All Changes Button */}
-                            {orderChanges[order.id] && (
-                              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
-                                <p className="text-xs font-medium text-amber-800 flex items-center gap-1.5">
-                                  <AlertCircle className="w-3.5 h-3.5" />
-                                  You have unsaved changes
-                                </p>
-                                <div className="flex gap-2">
-                                  <Button
-                                    onClick={() => submitOrderChanges(order.id)}
-                                    disabled={submitting === order.id}
-                                    className="flex-1"
-                                    size="sm"
-                                    style={{ backgroundColor: BRAND }}
-                                  >
-                                    <Save className="w-4 h-4 mr-1.5" />
-                                    {submitting === order.id ? "Saving..." : "Save All Changes"}
-                                  </Button>
-                                  <Button
-                                    onClick={() => cancelOrderChanges(order.id)}
-                                    disabled={submitting === order.id}
-                                    variant="outline"
-                                    size="sm"
-                                  >
-                                    Discard
-                                  </Button>
-                                </div>
-                              </div>
-                            )}
-
                             {/* Share Tracking Link Buttons */}
                             <div className="pt-2 border-t space-y-2">
                               <div className="grid grid-cols-2 gap-2">
@@ -2084,8 +2092,8 @@ export default function Admin() {
                           </div>
                         )}
 
-                        {/* Closed tab: simplified read-only footer */}
-                        {orderSubTab === "closed" && (
+                        {/* Closed/cancelled orders: simplified read-only footer */}
+                        {["closed", "cancelled"].includes(order.status) && (
                           <div className="pt-2 border-t space-y-2">
                             {/* Points Info */}
                             {order.pointsAwarded && order.pointsEarned && (
@@ -2570,6 +2578,11 @@ export default function Admin() {
                 <p className="text-muted-foreground">Loading authentication...</p>
               </Card>
             )}
+          </TabsContent>
+
+          {/* Printer Settings Tab */}
+          <TabsContent value="printer" className="space-y-4">
+            <PrinterSettings />
           </TabsContent>
 
           {/* System Health Tab */}

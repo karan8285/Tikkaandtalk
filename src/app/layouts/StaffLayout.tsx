@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { APP_CONFIG } from "../lib/config";
 import { cacheRestaurantLogo, notifyLogoUpdate, isBrandingFetched, notifyBrandingFetched } from "../lib/useRestaurantLogo";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const LOGO_URL = `${API_BASE}/public/logo`;
@@ -69,7 +70,7 @@ function StaffBrandingPrefetch() {
     if (isBrandingFetched()) return;
     const fetchBranding = async () => {
       try {
-        const response = await fetch(`${API_BASE}/restaurant-status`, {
+        const response = await fetchWithRetry(`${API_BASE}/restaurant-status`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         });
         if (response.ok) {

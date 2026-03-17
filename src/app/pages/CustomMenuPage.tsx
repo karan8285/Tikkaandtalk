@@ -4,6 +4,7 @@ import { useCart } from "../lib/cart";
 import { APP_CONFIG } from "../lib/config";
 import { getIconComponent } from "../lib/iconMap";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";
@@ -53,7 +54,7 @@ export default function CustomMenuPage() {
   useEffect(() => {
     const fetchMeta = async () => {
       try {
-        const res = await fetch(`${API_BASE}/home-layout`, {
+        const res = await fetchWithRetry(`${API_BASE}/home-layout`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         });
         if (res.ok) {
@@ -78,7 +79,7 @@ export default function CustomMenuPage() {
       if (!slug) return;
       setLoading(true);
       try {
-        const res = await fetch(`${API_BASE}/custom-menu/${slug}`, {
+        const res = await fetchWithRetry(`${API_BASE}/custom-menu/${slug}`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         });
         if (res.ok) {

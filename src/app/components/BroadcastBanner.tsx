@@ -8,6 +8,7 @@ import { useNavigate } from "react-router";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { ChevronRight } from "lucide-react";
 import { APP_CONFIG } from "../lib/config";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -38,7 +39,7 @@ export function BroadcastBanner() {
   useEffect(() => {
     const fetchBroadcasts = async () => {
       try {
-        const res = await fetch(`${API_BASE}/broadcasts/active`, {
+        const res = await fetchWithRetry(`${API_BASE}/broadcasts/active`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         });
         if (res.ok) {

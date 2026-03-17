@@ -13,6 +13,7 @@ import { cacheRestaurantLogo, notifyLogoUpdate, notifyBrandingFetched, isBrandin
 import { cacheRestaurantMascot, notifyMascotUpdate } from "../lib/useRestaurantMascot";
 import { setWhatsAppConfig } from "../lib/whatsapp";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 function PresenceTracker() {
   usePresence();
@@ -32,7 +33,7 @@ function BrandingPrefetch() {
     const fetchBranding = async () => {
       try {
         const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
-        const response = await fetch(`${API_BASE}/restaurant-status`, {
+        const response = await fetchWithRetry(`${API_BASE}/restaurant-status`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         });
 

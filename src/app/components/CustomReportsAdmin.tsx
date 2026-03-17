@@ -9,7 +9,7 @@ import { Button } from "./ui/button";
 import {
   FileBarChart2, Lock, Construction, ChevronRight,
   ChevronLeft, Users, TrendingUp, BarChart3, UtensilsCrossed, UserCheck, UserX, Star,
-  CreditCard, Download,
+  CreditCard, Download, ClipboardList,
 } from "lucide-react";
 import { APP_CONFIG } from "../lib/config";
 import { CRMCustomerReport } from "./CRMCustomerReport";
@@ -22,6 +22,7 @@ import { RevenueBreakdownReport } from "./RevenueBreakdownReport";
 import { StaffPerformanceReport } from "./StaffPerformanceReport";
 import { DailySummaryReport } from "./DailySummaryReport";
 import { A2HSReport } from "./A2HSReport";
+import { MenuCatalogReport } from "./MenuCatalogReport";
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -108,6 +109,13 @@ const REPORT_SLOTS: ReportDefinition[] = [
     icon: Download,
     status: "active",
   },
+  {
+    id: "menu-catalog",
+    title: "Menu Catalog",
+    description: "Complete listing of all menu items with price, category, menu type, and active/inactive status.",
+    icon: ClipboardList,
+    status: "active",
+  },
 ];
 
 interface Props {
@@ -162,6 +170,9 @@ export function CustomReportsAdmin({ customToken }: Props) {
         )}
         {selectedReport === "a2hs-report" && (
           <A2HSReport customToken={customToken} />
+        )}
+        {selectedReport === "menu-catalog" && (
+          <MenuCatalogReport customToken={customToken} />
         )}
       </div>
     );

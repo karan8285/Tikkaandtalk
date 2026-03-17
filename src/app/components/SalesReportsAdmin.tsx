@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Badge } from "./ui/badge";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
 import { TrendingUp, DollarSign, ShoppingCart, XCircle, Clock, CheckCircle2, Package, Loader2 } from "lucide-react";
 
@@ -59,7 +60,7 @@ export function SalesReportsAdmin({ customToken }: { customToken: string | null 
     
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/reports/sales?period=${period}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/reports/sales?period=${period}`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -87,7 +88,7 @@ export function SalesReportsAdmin({ customToken }: { customToken: string | null 
 
     setLoadingDetail(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/orders`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,

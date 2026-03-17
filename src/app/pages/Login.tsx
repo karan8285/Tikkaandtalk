@@ -9,7 +9,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { PinInput } from "../components/PinInput";
-import { ArrowLeft, Info } from "lucide-react";
+import { ArrowLeft, Home, Info } from "lucide-react";
 import { toast } from "sonner";
 
 // Login page component
@@ -76,19 +76,22 @@ export default function Login() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
       <div className="max-w-md w-full space-y-8">
         {/* Back Button */}
-        <button
-          onClick={() => {
-            if (window.history.state?.idx > 0) {
-              navigate(-1);
-            } else {
-              navigate("/", { replace: true });
-            }
-          }}
-          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5" />
-          <span>Back</span>
-        </button>
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => navigate(-1)}
+            className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            <span>Back</span>
+          </button>
+          <button
+            onClick={() => navigate("/")}
+            className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Home className="w-5 h-5" />
+            <span>Home</span>
+          </button>
+        </div>
 
         {/* Header */}
         <div className="text-center">

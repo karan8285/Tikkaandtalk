@@ -6,6 +6,7 @@ import { Button } from "../components/ui/button";
 import { Header } from "../components/Header";
 import { Textarea } from "../components/ui/textarea";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
 import {
   RefreshCw, MapPin, Phone, Clock, CheckCircle2,
@@ -267,7 +268,7 @@ export default function OrderTracking() {
     try {
       if (showToast) setRefreshing(true);
       
-      const response = await fetch(`${API_BASE}/orders/${orderId}?userId=${user.id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/orders/${orderId}?userId=${user.id}`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
         },
@@ -306,7 +307,7 @@ export default function OrderTracking() {
     if (!order || !user || ratingValue === 0) return;
     try {
       setSubmittingRating(true);
-      const response = await fetch(`${API_BASE}/orders/${order.id}/rate`, {
+      const response = await fetchWithRetry(`${API_BASE}/orders/${order.id}/rate`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -345,7 +346,7 @@ export default function OrderTracking() {
       const payAmount = (order.total || 0) - (order.paidAmount || 0);
       console.log(`💳 [TRACKING-PAY] Creating payment intent for order ${order.id}, amount: ${payAmount}`);
 
-      const intentResponse = await fetch(`${API_BASE}/create-payment-intent`, {
+      const intentResponse = await fetchWithRetry(`${API_BASE}/create-payment-intent`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -380,7 +381,7 @@ export default function OrderTracking() {
         // Confirm payment on server
         try {
           console.log("💳 [TRACKING-PAY] Confirming payment on server...");
-          await fetch(`${API_BASE}/confirm-payment-frontend`, {
+          await fetchWithRetry(`${API_BASE}/confirm-payment-frontend`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -829,20 +830,18 @@ export default function OrderTracking() {
               <span>Rp {(order.tax || 0).toLocaleString()}</span>
             </div>
             {order.deliveryMethod === 'delivery' && (() => {
+              const deliveryFeeExplicitlySet = order.statusHistory?.some((h: any) => h.status === 'delivery_fee_set');
               const feeKnown = order.deliveryFee != null && order.deliveryFee >= 0 &&
                 (order.deliveryFee > 0 || order.createdByAdmin || order.lastModifiedAt ||
+                 deliveryFeeExplicitlySet ||
                  ['ready', 'out_for_delivery', 'delivered', 'closed'].includes(order.status));
               return (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Delivery Fee</span>
                   <span className={
-                    feeKnown
-                      ? (order.deliveryFee === 0 ? "text-green-600 font-medium" : "")
-                      : "text-amber-600 italic text-xs"
+                    order.deliveryFee === 0 ? "text-green-600 font-medium" : ""
                   }>
-                    {feeKnown
-                      ? (order.deliveryFee === 0 ? "Free" : `Rp ${order.deliveryFee!.toLocaleString()}`)
-                      : "To be Calculated"}
+                    {(order.deliveryFee || 0) === 0 ? "Free" : `Rp ${order.deliveryFee!.toLocaleString()}`}
                   </span>
                 </div>
               );

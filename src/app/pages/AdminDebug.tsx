@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { Link, useNavigate } from "react-router";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -31,7 +32,7 @@ export default function AdminDebug() {
       
       try {
         // NOTE: Try using ANON_KEY instead of user JWT to bypass platform validation
-        const pingResponse = await fetch(`${API_BASE}/debug/ping`, {
+        const pingResponse = await fetchWithRetry(`${API_BASE}/debug/ping`, {
           headers: { 
             Authorization: `Bearer ${publicAnonKey}` 
           },
@@ -58,7 +59,7 @@ export default function AdminDebug() {
       setResult(prev => prev + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
       
       try {
-        const jwtResponse = await fetch(`${API_BASE}/debug/validate-jwt`, {
+        const jwtResponse = await fetchWithRetry(`${API_BASE}/debug/validate-jwt`, {
           headers: { 
             Authorization: `Bearer ${accessToken}` 
           },
@@ -124,7 +125,7 @@ export default function AdminDebug() {
       setResult(prev => prev + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
       
       try {
-        const adminResponse = await fetch(`${API_BASE}/admin/users`, {
+        const adminResponse = await fetchWithRetry(`${API_BASE}/admin/users`, {
           headers: { 
             Authorization: `Bearer ${accessToken}` 
           },
@@ -168,7 +169,7 @@ export default function AdminDebug() {
       
       // First test: Simple ping (no auth required)
       setResult(prev => prev + "📡 Test 1: Calling /debug/ping (no auth)...\n");
-      const pingResponse = await fetch(`${API_BASE}/debug/ping`);
+      const pingResponse = await fetchWithRetry(`${API_BASE}/debug/ping`);
       const pingData = await pingResponse.json();
       
       if (pingResponse.ok) {
@@ -179,7 +180,7 @@ export default function AdminDebug() {
       
       // Second test: JWT validation
       setResult(prev => prev + "📡 Test 2: Calling /debug/validate-jwt (with auth)...\n");
-      const response = await fetch(`${API_BASE}/debug/validate-jwt`, {
+      const response = await fetchWithRetry(`${API_BASE}/debug/validate-jwt`, {
         headers: { 
           Authorization: `Bearer ${accessToken}` 
         },
@@ -206,7 +207,7 @@ export default function AdminDebug() {
     try {
       // First, show environment info
       setResult(prev => prev + "Step 0: Checking environment variables...\n");
-      const envResponse = await fetch(`${API_BASE}/debug/env-info`, {
+      const envResponse = await fetchWithRetry(`${API_BASE}/debug/env-info`, {
         headers: { 
           Authorization: `Bearer ${publicAnonKey}` 
         },
@@ -240,7 +241,7 @@ export default function AdminDebug() {
       
       // First, force init the admin in KV
       setResult(prev => prev + "Step 1: Force initializing admin in KV...\n");
-      const initResponse = await fetch(`${API_BASE}/debug/force-init-admin`, {
+      const initResponse = await fetchWithRetry(`${API_BASE}/debug/force-init-admin`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -264,7 +265,7 @@ export default function AdminDebug() {
       
       // Now try to login as admin
       setResult(prev => prev + "Step 2: Logging in as admin...\n");
-      const loginResponse = await fetch(`${API_BASE}/signin`, {
+      const loginResponse = await fetchWithRetry(`${API_BASE}/signin`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -293,7 +294,7 @@ export default function AdminDebug() {
       
       // First, validate the token to see what's wrong
       setResult(prev => prev + "Step 3: Validating the new token...\n");
-      const validateResponse = await fetch(`${API_BASE}/debug/test-custom-jwt`, {
+      const validateResponse = await fetchWithRetry(`${API_BASE}/debug/test-custom-jwt`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -332,7 +333,7 @@ export default function AdminDebug() {
       
       // Now test if the token works
       setResult(prev => prev + "Step 4: Testing new token on admin endpoint (with X-Custom-Auth header)...\n");
-      const testResponse = await fetch(`${API_BASE}/admin/users`, {
+      const testResponse = await fetchWithRetry(`${API_BASE}/admin/users`, {
         headers: { 
           "Authorization": `Bearer ${publicAnonKey}`,  // Platform validation
           "X-Custom-Auth": loginData.accessToken       // Our custom JWT
@@ -370,7 +371,7 @@ export default function AdminDebug() {
       
       // Test admin/users endpoint
       setResult(prev => prev + "📡 Calling /admin/users...\n");
-      const usersResponse = await fetch(`${API_BASE}/admin/users`, {
+      const usersResponse = await fetchWithRetry(`${API_BASE}/admin/users`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
 
@@ -384,7 +385,7 @@ export default function AdminDebug() {
 
       // Test admin/orders endpoint
       setResult(prev => prev + "📡 Calling /admin/orders...\n");
-      const ordersResponse = await fetch(`${API_BASE}/admin/orders`, {
+      const ordersResponse = await fetchWithRetry(`${API_BASE}/admin/orders`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
 
@@ -432,7 +433,7 @@ export default function AdminDebug() {
         return;
       }
 
-      const response = await fetch(`${API_BASE}/admin/fresh-start`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/fresh-start`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

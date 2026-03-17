@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "./fetchWithRetry";
 
 export type StaffRole = 'superuser' | 'manager' | 'cashier' | 'kitchen' | 'delivery';
 
@@ -105,7 +106,7 @@ export function StaffAuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = async (phone: string, pin: string) => {
     try {
-      const response = await fetch(`${API_BASE}/staff/signin`, {
+      const response = await fetchWithRetry(`${API_BASE}/staff/signin`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

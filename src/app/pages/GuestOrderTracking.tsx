@@ -26,6 +26,7 @@ import {
   Ticket,
 } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { getShortOrderId } from "../lib/orderUtils";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -220,7 +221,7 @@ export default function GuestOrderTracking() {
     try {
       if (showToast) setRefreshing(true);
       const url = `${API_BASE}/orders/${guestSession.orderId}?userId=guest`;
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
       if (!response.ok) {
@@ -417,7 +418,7 @@ export default function GuestOrderTracking() {
     if (accessToken && order?.id) {
       try {
         toast.loading("Linking your order to your account...", { id: "link-order" });
-        const response = await fetch(`${API_BASE}/link-guest-order`, {
+        const response = await fetchWithRetry(`${API_BASE}/link-guest-order`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -436,7 +437,7 @@ export default function GuestOrderTracking() {
           const newUserData = localStorage.getItem("user");
           const newUserId = newUserData ? JSON.parse(newUserData).id : null;
           if (newUserId) {
-            const orderResponse = await fetch(`${API_BASE}/orders/${order.id}?userId=${newUserId}`, {
+            const orderResponse = await fetchWithRetry(`${API_BASE}/orders/${order.id}?userId=${newUserId}`, {
               headers: { Authorization: `Bearer ${accessToken}` },
             });
             if (orderResponse.ok) {
@@ -768,20 +769,14 @@ export default function GuestOrderTracking() {
                   <span>{formatIDR(order.tax)}</span>
                 </div>
                 {isDelivery && (() => {
-                  const feeKnown = order.deliveryFee != null && order.deliveryFee >= 0 &&
-                    (order.deliveryFee > 0 || order.lastModifiedAt ||
-                     ['ready', 'out_for_delivery', 'delivered', 'closed'].includes(order.status));
+                  const deliveryFeeExplicitlySet = order.statusHistory?.some((h: any) => h.status === 'delivery_fee_set');
                   return (
                     <div className="flex justify-between text-xs">
                       <span className="text-muted-foreground">Delivery Fee</span>
                       <span className={
-                        feeKnown
-                          ? (order.deliveryFee === 0 ? "text-green-600 font-medium" : "")
-                          : "text-amber-600"
+                        order.deliveryFee === 0 ? "text-green-600 font-medium" : ""
                       }>
-                        {feeKnown
-                          ? (order.deliveryFee === 0 ? "Free" : `Rp ${order.deliveryFee.toLocaleString()}`)
-                          : "To be Calculated"}
+                        {(order.deliveryFee || 0) === 0 ? "Free" : `Rp ${order.deliveryFee.toLocaleString()}`}
                       </span>
                     </div>
                   );

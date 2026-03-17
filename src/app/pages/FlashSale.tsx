@@ -4,6 +4,7 @@ import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
 import { ArrowLeft, Plus, Minus, ShoppingCart, Award, ChevronLeft, ChevronRight, Share2, ChevronRight as ChevronRightIcon } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { FlashSaleTimer } from "../components/FlashSaleTimer";
 import Slider from "react-slick";
 import "slick-carousel/slick/slick.css";
@@ -79,7 +80,7 @@ export default function FlashSale() {
 
   const fetchItems = async () => {
     try {
-      const response = await fetch(`${API_BASE}/flash-sale`, {
+      const response = await fetchWithRetry(`${API_BASE}/flash-sale`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
       if (response.ok) {
@@ -117,7 +118,7 @@ export default function FlashSale() {
   const fetchUserPoints = async () => {
     if (!accessToken) return;
     try {
-      const response = await fetch(`${API_BASE}/points/summary`, {
+      const response = await fetchWithRetry(`${API_BASE}/points/summary`, {
         headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
       });
       if (response.ok) {

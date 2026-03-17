@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { APP_CONFIG } from "../lib/config";
 import { ICON_MAP, ICON_GROUPS, getIconComponent } from "../lib/iconMap";
 import { Button } from "./ui/button";
@@ -91,7 +92,7 @@ export function HomeLayoutAdmin({ customToken }: Props) {
   const fetchLayout = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/admin/home-layout`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/home-layout`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -123,7 +124,7 @@ export function HomeLayoutAdmin({ customToken }: Props) {
   const handleSave = async () => {
     try {
       setSaving(true);
-      const res = await fetch(`${API_BASE}/admin/home-layout`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/home-layout`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -152,7 +153,7 @@ export function HomeLayoutAdmin({ customToken }: Props) {
   const handleReset = async () => {
     try {
       setSaving(true);
-      const res = await fetch(`${API_BASE}/admin/home-layout/reset`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/home-layout/reset`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,

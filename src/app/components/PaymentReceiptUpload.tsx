@@ -2,6 +2,7 @@ import { useState, useRef } from "react";
 import { Camera, X, FileText, Upload, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -67,7 +68,7 @@ export function PaymentReceiptUpload({
       formData.append("image", file);
       formData.append("orderId", orderId);
 
-      const res = await fetch(`${API_BASE}/admin/upload-payment-receipt`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/upload-payment-receipt`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,

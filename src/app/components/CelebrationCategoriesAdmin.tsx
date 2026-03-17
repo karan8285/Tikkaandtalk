@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { APP_CONFIG } from "../lib/config";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -76,7 +77,7 @@ export function CelebrationCategoriesAdmin({ customToken }: Props) {
   const fetchCategories = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/admin/celebration-categories`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/celebration-categories`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -96,7 +97,7 @@ export function CelebrationCategoriesAdmin({ customToken }: Props) {
 
   const fetchHubSettings = async () => {
     try {
-      const res = await fetch(`${API_BASE}/celebrations-hub-settings`, {
+      const res = await fetchWithRetry(`${API_BASE}/celebrations-hub-settings`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
       if (res.ok) {
@@ -125,7 +126,7 @@ export function CelebrationCategoriesAdmin({ customToken }: Props) {
         : `${API_BASE}/admin/celebration-categories`;
       const method = editingId ? "PUT" : "POST";
 
-      const res = await fetch(url, {
+      const res = await fetchWithRetry(url, {
         method,
         headers: {
           "Content-Type": "application/json",
@@ -155,7 +156,7 @@ export function CelebrationCategoriesAdmin({ customToken }: Props) {
   const handleDelete = async (id: number) => {
     if (!confirm("Delete this celebration category?")) return;
     try {
-      const res = await fetch(`${API_BASE}/admin/celebration-categories/${id}`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/celebration-categories/${id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
@@ -189,7 +190,7 @@ export function CelebrationCategoriesAdmin({ customToken }: Props) {
   const handleSaveHubSettings = async () => {
     setSavingSettings(true);
     try {
-      const res = await fetch(`${API_BASE}/admin/celebrations-hub-settings`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/celebrations-hub-settings`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

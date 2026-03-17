@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useRef, useMemo } from "react";
 import { useAuth } from "./auth";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "./fetchWithRetry";
 import { APP_CONFIG } from "./config";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -93,7 +94,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     // Fetch actual menu categories and update cart items
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/regular-menu`, {
+        const res = await fetchWithRetry(`${API_BASE}/regular-menu`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         });
         if (!res.ok) return;
@@ -162,7 +163,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     while (attempt < maxRetries) {
       try {
         attempt++;
-        const response = await fetch(
+        const response = await fetchWithRetry(
           `${API_BASE}/cart?userId=${user.id}`,
           {
             method: "GET",
@@ -181,7 +182,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
           const localCart = cartItems;
           if (localCart.length > 0 && data.cart.length === 0) {
             try {
-              await fetch(`${API_BASE}/cart/sync`, {
+              await fetchWithRetry(`${API_BASE}/cart/sync`, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
@@ -225,7 +226,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
       
-      const response = await fetch(`${API_BASE}/cart/sync`, {
+      const response = await fetchWithRetry(`${API_BASE}/cart/sync`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -329,7 +330,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     
     if (user && accessToken && hasInitialFetch) {
       try {
-        const response = await fetch(`${API_BASE}/cart/clear`, {
+        const response = await fetchWithRetry(`${API_BASE}/cart/clear`, {
           method: "DELETE",
           headers: {
             "Content-Type": "application/json",

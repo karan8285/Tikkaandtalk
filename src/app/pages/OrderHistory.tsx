@@ -11,6 +11,7 @@ import { ShoppingBag, ChevronDown, ChevronUp, MapPin, Package, RotateCw, Ticket,
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
 import { PaymentReceiptBadge } from "../components/PaymentReceiptUpload";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -124,7 +125,7 @@ export default function OrderHistory() {
     if (!user?.id) return;
 
     try {
-      const response = await fetch(`${API_BASE}/orders?userId=${user.id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/orders?userId=${user.id}`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
         },
@@ -155,7 +156,7 @@ export default function OrderHistory() {
     setCancelling(orderId);
     
     try {
-      const response = await fetch(`${API_BASE}/orders/${orderId}/cancel`, {
+      const response = await fetchWithRetry(`${API_BASE}/orders/${orderId}/cancel`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -909,11 +910,8 @@ export default function OrderHistory() {
                                 </div>
                                 <div className="flex justify-between">
                                   <span className="text-muted-foreground">Delivery Fee:</span>
-                                  <span>
-                                    {order.deliveryFee != null && order.deliveryFee >= 0 && (order.deliveryFee > 0 || order.createdByAdmin)
-                                      ? (order.deliveryFee === 0 ? <span className="text-green-600 font-medium">Free</span> : `Rp ${order.deliveryFee.toLocaleString()}`)
-                                      : <span className="text-amber-600 italic text-xs">To be calculated</span>
-                                    }
+                                  <span className={order.deliveryFee === 0 ? "text-green-600 font-medium" : ""}>
+                                    {(order.deliveryFee || 0) === 0 ? "Free" : `Rp ${order.deliveryFee.toLocaleString()}`}
                                   </span>
                                 </div>
                                 <div className="flex justify-between pt-2 border-t font-semibold">

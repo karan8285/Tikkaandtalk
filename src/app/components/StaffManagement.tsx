@@ -10,6 +10,7 @@ import { CountryCodeSelect } from "./CountryCodeSelect";
 import { PinInput } from "./PinInput";
 import { ROLE_LABELS, ROLE_COLORS, type StaffRole } from "../lib/staff-auth";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { APP_CONFIG, BRAND_COLOR } from "../lib/config";
 import { UserPlus, Users, Shield, ShieldOff, Trash2, Phone, User, RefreshCw, ShieldCheck, ShieldAlert, Ban, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
@@ -58,7 +59,7 @@ export function StaffManagement({ accessToken }: StaffManagementProps) {
   const fetchStaff = async (showRefresh = false) => {
     try {
       if (showRefresh) setRefreshing(true);
-      const res = await fetch(`${API_BASE}/admin/staff`, { headers });
+      const res = await fetchWithRetry(`${API_BASE}/admin/staff`, { headers });
       if (res.ok) {
         const data = await res.json();
         setStaffList(data.staff || []);
@@ -87,7 +88,7 @@ export function StaffManagement({ accessToken }: StaffManagementProps) {
     try {
       setCreating(true);
       const fullPhone = `${newCountryCode}${newPhone.replace(/^0+/, '')}`;
-      const res = await fetch(`${API_BASE}/admin/staff`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/staff`, {
         method: "POST",
         headers,
         body: JSON.stringify({ phone: fullPhone, pin: newPin, name: newName.trim(), role: newRole }),
@@ -110,7 +111,7 @@ export function StaffManagement({ accessToken }: StaffManagementProps) {
   const handleToggleActive = async (staff: StaffMember) => {
     try {
       const action = staff.active ? 'deactivate' : 'activate';
-      const res = await fetch(`${API_BASE}/admin/staff/${staff.id}/${action}`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/staff/${staff.id}/${action}`, {
         method: "PUT",
         headers,
       });
@@ -131,7 +132,7 @@ export function StaffManagement({ accessToken }: StaffManagementProps) {
     if (!deleteTarget) return;
     try {
       setDeleting(true);
-      const res = await fetch(`${API_BASE}/admin/staff/${deleteTarget.id}`, {
+      const res = await fetchWithRetry(`${API_BASE}/admin/staff/${deleteTarget.id}`, {
         method: "DELETE",
         headers,
       });

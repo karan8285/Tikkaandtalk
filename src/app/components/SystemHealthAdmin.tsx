@@ -3,6 +3,7 @@ import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
 import { Activity, Database, ShoppingCart, Users, AlertCircle, CheckCircle } from "lucide-react";
 
@@ -38,7 +39,7 @@ export function SystemHealthAdmin({ customToken }: { customToken: string | null 
     
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/health`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/health`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,

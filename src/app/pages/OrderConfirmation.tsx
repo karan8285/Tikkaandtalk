@@ -1,4 +1,5 @@
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation } from "react-router";
 import { useAuth } from "../lib/auth";
@@ -249,7 +250,7 @@ export default function OrderConfirmation() {
       console.log("Cart items to validate:", JSON.stringify(itemsToValidate, null, 2));
       
       // Validate cart items (prices and availability)
-      const cartResponse = await fetch(`${API_BASE}/validate-cart`, {
+      const cartResponse = await fetchWithRetry(`${API_BASE}/validate-cart`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -361,7 +362,7 @@ export default function OrderConfirmation() {
     try {
       // ✅ CHECK RESTAURANT STATUS BEFORE PLACING ORDER
       console.log("🔍 Checking restaurant status...");
-      const statusResponse = await fetch(`${API_BASE}/restaurant-status`, {
+      const statusResponse = await fetchWithRetry(`${API_BASE}/restaurant-status`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -466,7 +467,7 @@ export default function OrderConfirmation() {
           
           // Get Snap token WITHOUT creating an order
           console.log("💳 [PAY-NOW] Creating payment intent (no order yet)...");
-          const intentResponse = await fetch(`${API_BASE}/create-payment-intent`, {
+          const intentResponse = await fetchWithRetry(`${API_BASE}/create-payment-intent`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -513,7 +514,7 @@ export default function OrderConfirmation() {
               midtransTransactionData: snapResult.result || {},
             };
             
-            const response = await fetch(`${API_BASE}/orders`, {
+            const response = await fetchWithRetry(`${API_BASE}/orders`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
@@ -538,7 +539,7 @@ export default function OrderConfirmation() {
             // If payment was success (not just pending), confirm it on server
             if (snapResult.status === "success") {
               try {
-                await fetch(`${API_BASE}/confirm-payment-frontend`, {
+                await fetchWithRetry(`${API_BASE}/confirm-payment-frontend`, {
                   method: "POST",
                   headers: {
                     "Content-Type": "application/json",
@@ -557,7 +558,7 @@ export default function OrderConfirmation() {
             // Mark promo voucher as used (pay-now flow)
             if (passedPromoApplied?.userVoucherId && accessToken) {
               try {
-                await fetch(`${API_BASE}/use-voucher`, {
+                await fetchWithRetry(`${API_BASE}/use-voucher`, {
                   method: "POST",
                   headers: {
                     "Content-Type": "application/json",
@@ -608,7 +609,7 @@ export default function OrderConfirmation() {
       }
 
       // ===== PAY LATER FLOW: Create order normally =====
-      const response = await fetch(`${API_BASE}/orders`, {
+      const response = await fetchWithRetry(`${API_BASE}/orders`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -707,7 +708,7 @@ export default function OrderConfirmation() {
       // ===== Mark promo voucher as used =====
       if (passedPromoApplied?.userVoucherId && accessToken) {
         try {
-          await fetch(`${API_BASE}/use-voucher`, {
+          await fetchWithRetry(`${API_BASE}/use-voucher`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -753,7 +754,7 @@ export default function OrderConfirmation() {
       await loadSnapJs();
       
       // Get a new Snap token (no order in KV)
-      const intentResponse = await fetch(`${API_BASE}/create-payment-intent`, {
+      const intentResponse = await fetchWithRetry(`${API_BASE}/create-payment-intent`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -795,7 +796,7 @@ export default function OrderConfirmation() {
           midtransTransactionData: snapResult.result || {},
         };
         
-        const response = await fetch(`${API_BASE}/orders`, {
+        const response = await fetchWithRetry(`${API_BASE}/orders`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -817,7 +818,7 @@ export default function OrderConfirmation() {
         // Confirm payment on server
         if (snapResult.status === "success") {
           try {
-            await fetch(`${API_BASE}/confirm-payment-frontend`, {
+            await fetchWithRetry(`${API_BASE}/confirm-payment-frontend`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
@@ -867,7 +868,7 @@ export default function OrderConfirmation() {
         paymentMethod: "cash",
       };
       
-      const response = await fetch(`${API_BASE}/orders`, {
+      const response = await fetchWithRetry(`${API_BASE}/orders`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

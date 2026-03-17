@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Award, Plus, Pencil, Trash2, Ticket, Car, UtensilsCrossed, Gift } from "lucide-react";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -71,7 +72,7 @@ export function TierBenefitsAdmin({ customToken }: TierBenefitsAdminProps) {
   const fetchBenefits = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE}/admin/tier-benefits`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/tier-benefits`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -137,7 +138,7 @@ export function TierBenefitsAdmin({ customToken }: TierBenefitsAdminProps) {
         ? `${API_BASE}/admin/tier-benefits/${currentBenefit.id}`
         : `${API_BASE}/admin/tier-benefits`;
 
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         method: currentBenefit ? "PUT" : "POST",
         headers: {
           "Content-Type": "application/json",
@@ -168,7 +169,7 @@ export function TierBenefitsAdmin({ customToken }: TierBenefitsAdminProps) {
 
     try {
       setDeleting(true);
-      const response = await fetch(`${API_BASE}/admin/tier-benefits/${currentBenefit.id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/tier-benefits/${currentBenefit.id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,

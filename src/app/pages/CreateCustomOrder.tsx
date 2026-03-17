@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { ArrowLeft, Search, Plus, Minus, ShoppingCart, Trash2, Package, Clock, AlertCircle, Users, CalendarClock } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
@@ -136,7 +137,7 @@ export default function CreateCustomOrder() {
       
       // Fetch users
       console.log("📥 Fetching users...");
-      const usersRes = await fetch(`${API_BASE}/admin/users`, {
+      const usersRes = await fetchWithRetry(`${API_BASE}/admin/users`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": effectiveToken || "",
@@ -402,7 +403,7 @@ export default function CreateCustomOrder() {
         scheduledAt: scheduledAt,
       };
       
-      const response = await fetch(`${API_BASE}/admin/create-custom-order`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/create-custom-order`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

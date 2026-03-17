@@ -4,9 +4,10 @@ import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
 import { Header } from "../components/Header";
 import { Button } from "../components/ui/button";
-import { ShoppingCart, Plus, Minus, Trash2 } from "lucide-react";
+import { ShoppingCart, Plus, Minus, Trash2, ChevronLeft } from "lucide-react";
 import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 export default function Cart() {
   const navigate = useNavigate();
@@ -40,7 +41,7 @@ export default function Cart() {
     const fetchTaxRate = async () => {
       try {
         const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
-        const res = await fetch(`${API_BASE}/restaurant-status`, {
+        const res = await fetchWithRetry(`${API_BASE}/restaurant-status`, {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         });
         const data = await res.json();
@@ -153,6 +154,15 @@ export default function Cart() {
               })}
             </div>
 
+            {/* Add More Items */}
+            <button
+              onClick={() => navigate("/")}
+              className="w-full mb-6 border-2 border-dashed border-primary/30 rounded-xl p-3 flex items-center justify-center gap-2 text-primary font-semibold hover:bg-primary/5 active:scale-[0.98] transition-all"
+            >
+              <Plus className="w-5 h-5" />
+              <span>Add More Items</span>
+            </button>
+
             {/* Order Summary */}
             <div className="bg-white rounded-xl shadow-md p-6 mb-6">
               <h3 className="font-semibold mb-4">Order Summary</h3>
@@ -189,12 +199,20 @@ export default function Cart() {
       {/* Bottom Checkout Bar */}
       {cartItems.length > 0 && (
         <div className="sticky bottom-0 left-0 right-0 bg-white border-t shadow-lg p-4 z-40">
-          <div className="max-w-md mx-auto">
+          <div className="max-w-md mx-auto flex gap-3">
+            <Button
+              variant="outline"
+              onClick={() => navigate("/")}
+              className="h-12 px-4 border-primary/30 text-primary hover:bg-primary/5 flex-shrink-0"
+            >
+              <Plus className="w-4 h-4 mr-1" />
+              Add More
+            </Button>
             <Button
               onClick={handleCheckout}
-              className="w-full bg-primary hover:bg-primary/90 h-12 text-base font-semibold"
+              className="flex-1 bg-primary hover:bg-primary/90 h-12 text-base font-semibold"
             >
-              Proceed to Checkout • {formatIDR(finalTotal)}
+              Checkout • {formatIDR(finalTotal)}
             </Button>
           </div>
         </div>

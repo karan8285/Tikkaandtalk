@@ -6,6 +6,7 @@ import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -60,7 +61,7 @@ export function AnalyticsAdmin({ customToken }: { customToken: string | null }) 
     
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/analytics`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/analytics`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,

@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { formatCurrency } from "../lib/currency";
 import { APP_CONFIG } from "../lib/config";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { format } from "date-fns";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
@@ -86,7 +87,7 @@ export function DailySummaryReport({ customToken }: Props) {
         ...(search && { search }), ...(dateFrom && { dateFrom }), ...(dateTo && { dateTo }),
         ...(isExport && { export: "true" }),
       });
-      const res = await fetch(`${API_BASE}/reports/daily-summary?${params}`, {
+      const res = await fetchWithRetry(`${API_BASE}/reports/daily-summary?${params}`, {
         headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": customToken },
       });
       if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || "Failed to fetch report"); }

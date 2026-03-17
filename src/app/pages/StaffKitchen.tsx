@@ -9,7 +9,8 @@ import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { ChefHat, Clock, Phone, MapPin, Package, Flame, CheckCircle2, LogOut, RefreshCw, Truck, UtensilsCrossed, Volume2, VolumeX, KeyRound } from "lucide-react";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
+import { ChefHat, Clock, Phone, MapPin, Package, Flame, CheckCircle2, LogOut, RefreshCw, Truck, UtensilsCrossed, Volume2, VolumeX, KeyRound, GlassWater } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
@@ -85,7 +86,7 @@ export default function StaffKitchen() {
   const fetchOrders = useCallback(async (signal?: AbortSignal) => {
     if (!accessTokenRef.current) return;
     try {
-      const response = await fetch(`${API_BASE}/admin/orders?page=1&limit=100&status=all&payment=all&delivery=all&date=all&tab=active`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders?page=1&limit=100&status=all&payment=all&delivery=all&date=all&tab=active`, {
         headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessTokenRef.current },
         signal,
       });
@@ -133,7 +134,7 @@ export default function StaffKitchen() {
 
     try {
       setUpdatingStatus(order.id);
-      const response = await fetch(`${API_BASE}/admin/orders/${order.id}/status`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/orders/${order.id}/status`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -274,17 +275,63 @@ export default function StaffKitchen() {
                           )}
 
                           {/* Items */}
-                          <div className="space-y-1 mb-2">
-                            {order.items && order.items.length > 0 ? (
-                              order.items.map((item, idx) => (
-                                <div key={idx} className="flex items-center justify-between text-sm">
-                                  <span className="text-gray-200">
-                                    <span className="font-bold text-white">{item.quantity}x</span>{' '}
-                                    {item.title || item.name}
-                                  </span>
-                                </div>
-                              ))
-                            ) : (
+                          <div className="mb-2">
+                            {order.items && order.items.length > 0 ? (() => {
+                              const foodItems = order.items!.filter(item => item.category !== 'Drinks');
+                              const drinkItems = order.items!.filter(item => item.category === 'Drinks');
+                              return (
+                                <>
+                                  {/* Food Section */}
+                                  <div className="mb-1">
+                                    <div className="flex items-center gap-1.5 mb-1">
+                                      <UtensilsCrossed className="w-3.5 h-3.5 text-orange-400" />
+                                      <span className="text-xs font-semibold text-orange-400 uppercase tracking-wide">Food</span>
+                                      <Badge className="bg-orange-900/50 text-orange-300 text-[10px] px-1.5 py-0 h-4 ml-auto">{foodItems.length}</Badge>
+                                    </div>
+                                    {foodItems.length > 0 ? (
+                                      <div className="space-y-1 pl-1">
+                                        {foodItems.map((item, idx) => (
+                                          <div key={`food-${idx}`} className="flex items-center justify-between text-sm">
+                                            <span className="text-gray-200">
+                                              <span className="font-bold text-white">{item.quantity}x</span>{' '}
+                                              {item.title || item.name}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="text-xs text-gray-500 italic pl-1">No food in this order</p>
+                                    )}
+                                  </div>
+
+                                  {/* Divider */}
+                                  <div className="border-t border-dashed border-gray-600 my-2" />
+
+                                  {/* Drinks Section */}
+                                  <div>
+                                    <div className="flex items-center gap-1.5 mb-1">
+                                      <GlassWater className="w-3.5 h-3.5 text-sky-400" />
+                                      <span className="text-xs font-semibold text-sky-400 uppercase tracking-wide">Drinks</span>
+                                      <Badge className="bg-sky-900/50 text-sky-300 text-[10px] px-1.5 py-0 h-4 ml-auto">{drinkItems.length}</Badge>
+                                    </div>
+                                    {drinkItems.length > 0 ? (
+                                      <div className="space-y-1 pl-1">
+                                        {drinkItems.map((item, idx) => (
+                                          <div key={`drink-${idx}`} className="flex items-center justify-between text-sm">
+                                            <span className="text-gray-200">
+                                              <span className="font-bold text-white">{item.quantity}x</span>{' '}
+                                              {item.title || item.name}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="text-xs text-gray-500 italic pl-1">No drinks in this order</p>
+                                    )}
+                                  </div>
+                                </>
+                              );
+                            })() : (
                               <p className="text-sm text-gray-300">{order.itemTitle}</p>
                             )}
                           </div>

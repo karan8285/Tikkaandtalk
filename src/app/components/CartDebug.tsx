@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -18,7 +19,7 @@ export function CartDebug() {
       console.log("Project ID:", projectId);
       
       // Check if backend is up
-      const healthResponse = await fetch(`${API_BASE}/health`, {
+      const healthResponse = await fetchWithRetry(`${API_BASE}/health`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
         },
@@ -32,7 +33,7 @@ export function CartDebug() {
       console.log("Health check:", healthData);
 
       // Check special offers in database
-      const debugResponse = await fetch(`${API_BASE}/debug/special-offers`, {
+      const debugResponse = await fetchWithRetry(`${API_BASE}/debug/special-offers`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
         },

@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Baby, Plus, Pencil, Trash2, ImageIcon } from "lucide-react";
 import { formatIDR } from "../lib/currency";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { APP_CONFIG } from "../lib/config";
 import { MenuImageUpload } from "./MenuImageUpload";
 import { Card } from "./ui/card";
@@ -61,7 +62,7 @@ export function KidsMenuAdmin({ customToken }: Props) {
   const fetchItems = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/admin/kids-menu`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/kids-menu`, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
           "X-Custom-Auth": customToken,
@@ -138,7 +139,7 @@ export function KidsMenuAdmin({ customToken }: Props) {
         ? `${API_BASE}/admin/kids-menu/${editingItem.id}`
         : `${API_BASE}/admin/kids-menu`;
 
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         method: editingItem ? "PUT" : "POST",
         headers: {
           "Content-Type": "application/json",
@@ -168,7 +169,7 @@ export function KidsMenuAdmin({ customToken }: Props) {
     if (!confirm("Are you sure you want to delete this item?")) return;
 
     try {
-      const response = await fetch(`${API_BASE}/admin/kids-menu/${id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/kids-menu/${id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
@@ -190,7 +191,7 @@ export function KidsMenuAdmin({ customToken }: Props) {
 
   const handleToggleEnabled = async (item: KidsMenuItem) => {
     try {
-      const response = await fetch(`${API_BASE}/admin/kids-menu/${item.id}`, {
+      const response = await fetchWithRetry(`${API_BASE}/admin/kids-menu/${item.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
