@@ -37,6 +37,19 @@
           "value": "application/json"
         }
       ]
+    },
+    {
+      "source": "/favicon.svg",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "image/svg+xml"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400"
+        }
+      ]
     }
   ],
   "rewrites": [
@@ -51,6 +64,14 @@
     {
       "source": "/icon-192.svg",
       "destination": "/icon-192.svg"
+    },
+    {
+      "source": "/favicon.svg",
+      "destination": "/favicon.svg"
+    },
+    {
+      "source": "/apple-touch-icon.svg",
+      "destination": "/apple-touch-icon.svg"
     },
     {
       "source": "/(.*)",

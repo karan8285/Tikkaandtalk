@@ -37,6 +37,8 @@ function publicFileServePlugin() {
     '/sw.js': 'application/javascript',
     '/manifest.json': 'application/json',
     '/icon-192.svg': 'image/svg+xml',
+    '/favicon.svg': 'image/svg+xml',
+    '/apple-touch-icon.svg': 'image/svg+xml',
   }
 
   return {
@@ -81,12 +83,49 @@ function ogMetaPlugin() {
       const tags = `
     <!-- PWA -->
     <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/png" href="${LOGO_URL}" />
-    <link rel="apple-touch-icon" href="${LOGO_URL}" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="${LOGO_URL}" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="${LOGO_URL}" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Tikka N Talk" />
     <meta name="theme-color" content="#D91A60" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- iOS Splash Screens (apple-touch-startup-image) -->
+    <!-- iPhone SE / 8 (750x1334) -->
+    <link rel="apple-touch-startup-image"
+      media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2)"
+      href="data:image/svg+xml,${encodeURIComponent('<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;750&quot; height=&quot;1334&quot;><defs><linearGradient id=&quot;g&quot; x1=&quot;0&quot; y1=&quot;0&quot; x2=&quot;1&quot; y2=&quot;1&quot;><stop offset=&quot;0%&quot; stop-color=&quot;#E91E63&quot;/><stop offset=&quot;100%&quot; stop-color=&quot;#C2185B&quot;/></linearGradient></defs><rect width=&quot;750&quot; height=&quot;1334&quot; fill=&quot;url(#g)&quot;/><text x=&quot;375&quot; y=&quot;620&quot; font-family=&quot;Arial&quot; font-size=&quot;72&quot; font-weight=&quot;bold&quot; fill=&quot;white&quot; text-anchor=&quot;middle&quot;>TIKKA</text><text x=&quot;375&quot; y=&quot;690&quot; font-family=&quot;Arial&quot; font-size=&quot;40&quot; font-weight=&quot;bold&quot; fill=&quot;rgba(255,255,255,0.9)&quot; text-anchor=&quot;middle&quot;>N TALK</text><text x=&quot;375&quot; y=&quot;760&quot; font-family=&quot;Arial&quot; font-size=&quot;20&quot; fill=&quot;rgba(255,255,255,0.7)&quot; text-anchor=&quot;middle&quot; letter-spacing=&quot;4&quot;>AN INDIAN KITCHEN</text></svg>')}" />
+    <!-- iPhone X / XS / 11 Pro / 12 mini / 13 mini (1125x2436) -->
+    <link rel="apple-touch-startup-image"
+      media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3)"
+      href="data:image/svg+xml,${encodeURIComponent('<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;1125&quot; height=&quot;2436&quot;><defs><linearGradient id=&quot;g&quot; x1=&quot;0&quot; y1=&quot;0&quot; x2=&quot;1&quot; y2=&quot;1&quot;><stop offset=&quot;0%&quot; stop-color=&quot;#E91E63&quot;/><stop offset=&quot;100%&quot; stop-color=&quot;#C2185B&quot;/></linearGradient></defs><rect width=&quot;1125&quot; height=&quot;2436&quot; fill=&quot;url(#g)&quot;/><text x=&quot;562&quot; y=&quot;1150&quot; font-family=&quot;Arial&quot; font-size=&quot;96&quot; font-weight=&quot;bold&quot; fill=&quot;white&quot; text-anchor=&quot;middle&quot;>TIKKA</text><text x=&quot;562&quot; y=&quot;1250&quot; font-family=&quot;Arial&quot; font-size=&quot;52&quot; font-weight=&quot;bold&quot; fill=&quot;rgba(255,255,255,0.9)&quot; text-anchor=&quot;middle&quot;>N TALK</text><text x=&quot;562&quot; y=&quot;1340&quot; font-family=&quot;Arial&quot; font-size=&quot;26&quot; fill=&quot;rgba(255,255,255,0.7)&quot; text-anchor=&quot;middle&quot; letter-spacing=&quot;5&quot;>AN INDIAN KITCHEN</text></svg>')}" />
+    <!-- iPhone XR / 11 (828x1792) -->
+    <link rel="apple-touch-startup-image"
+      media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2)"
+      href="data:image/svg+xml,${encodeURIComponent('<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;828&quot; height=&quot;1792&quot;><defs><linearGradient id=&quot;g&quot; x1=&quot;0&quot; y1=&quot;0&quot; x2=&quot;1&quot; y2=&quot;1&quot;><stop offset=&quot;0%&quot; stop-color=&quot;#E91E63&quot;/><stop offset=&quot;100%&quot; stop-color=&quot;#C2185B&quot;/></linearGradient></defs><rect width=&quot;828&quot; height=&quot;1792&quot; fill=&quot;url(#g)&quot;/><text x=&quot;414&quot; y=&quot;840&quot; font-family=&quot;Arial&quot; font-size=&quot;80&quot; font-weight=&quot;bold&quot; fill=&quot;white&quot; text-anchor=&quot;middle&quot;>TIKKA</text><text x=&quot;414&quot; y=&quot;930&quot; font-family=&quot;Arial&quot; font-size=&quot;44&quot; font-weight=&quot;bold&quot; fill=&quot;rgba(255,255,255,0.9)&quot; text-anchor=&quot;middle&quot;>N TALK</text><text x=&quot;414&quot; y=&quot;1010&quot; font-family=&quot;Arial&quot; font-size=&quot;22&quot; fill=&quot;rgba(255,255,255,0.7)&quot; text-anchor=&quot;middle&quot; letter-spacing=&quot;4&quot;>AN INDIAN KITCHEN</text></svg>')}" />
+    <!-- iPhone XS Max / 11 Pro Max (1242x2688) -->
+    <link rel="apple-touch-startup-image"
+      media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3)"
+      href="data:image/svg+xml,${encodeURIComponent('<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;1242&quot; height=&quot;2688&quot;><defs><linearGradient id=&quot;g&quot; x1=&quot;0&quot; y1=&quot;0&quot; x2=&quot;1&quot; y2=&quot;1&quot;><stop offset=&quot;0%&quot; stop-color=&quot;#E91E63&quot;/><stop offset=&quot;100%&quot; stop-color=&quot;#C2185B&quot;/></linearGradient></defs><rect width=&quot;1242&quot; height=&quot;2688&quot; fill=&quot;url(#g)&quot;/><text x=&quot;621&quot; y=&quot;1280&quot; font-family=&quot;Arial&quot; font-size=&quot;100&quot; font-weight=&quot;bold&quot; fill=&quot;white&quot; text-anchor=&quot;middle&quot;>TIKKA</text><text x=&quot;621&quot; y=&quot;1390&quot; font-family=&quot;Arial&quot; font-size=&quot;56&quot; font-weight=&quot;bold&quot; fill=&quot;rgba(255,255,255,0.9)&quot; text-anchor=&quot;middle&quot;>N TALK</text><text x=&quot;621&quot; y=&quot;1480&quot; font-family=&quot;Arial&quot; font-size=&quot;28&quot; fill=&quot;rgba(255,255,255,0.7)&quot; text-anchor=&quot;middle&quot; letter-spacing=&quot;5&quot;>AN INDIAN KITCHEN</text></svg>')}" />
+    <!-- iPhone 12 / 13 / 14 (1170x2532) -->
+    <link rel="apple-touch-startup-image"
+      media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)"
+      href="data:image/svg+xml,${encodeURIComponent('<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;1170&quot; height=&quot;2532&quot;><defs><linearGradient id=&quot;g&quot; x1=&quot;0&quot; y1=&quot;0&quot; x2=&quot;1&quot; y2=&quot;1&quot;><stop offset=&quot;0%&quot; stop-color=&quot;#E91E63&quot;/><stop offset=&quot;100%&quot; stop-color=&quot;#C2185B&quot;/></linearGradient></defs><rect width=&quot;1170&quot; height=&quot;2532&quot; fill=&quot;url(#g)&quot;/><text x=&quot;585&quot; y=&quot;1200&quot; font-family=&quot;Arial&quot; font-size=&quot;96&quot; font-weight=&quot;bold&quot; fill=&quot;white&quot; text-anchor=&quot;middle&quot;>TIKKA</text><text x=&quot;585&quot; y=&quot;1300&quot; font-family=&quot;Arial&quot; font-size=&quot;52&quot; font-weight=&quot;bold&quot; fill=&quot;rgba(255,255,255,0.9)&quot; text-anchor=&quot;middle&quot;>N TALK</text><text x=&quot;585&quot; y=&quot;1390&quot; font-family=&quot;Arial&quot; font-size=&quot;26&quot; fill=&quot;rgba(255,255,255,0.7)&quot; text-anchor=&quot;middle&quot; letter-spacing=&quot;5&quot;>AN INDIAN KITCHEN</text></svg>')}" />
+    <!-- iPhone 12 Pro Max / 13 Pro Max / 14 Plus (1284x2778) -->
+    <link rel="apple-touch-startup-image"
+      media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3)"
+      href="data:image/svg+xml,${encodeURIComponent('<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;1284&quot; height=&quot;2778&quot;><defs><linearGradient id=&quot;g&quot; x1=&quot;0&quot; y1=&quot;0&quot; x2=&quot;1&quot; y2=&quot;1&quot;><stop offset=&quot;0%&quot; stop-color=&quot;#E91E63&quot;/><stop offset=&quot;100%&quot; stop-color=&quot;#C2185B&quot;/></linearGradient></defs><rect width=&quot;1284&quot; height=&quot;2778&quot; fill=&quot;url(#g)&quot;/><text x=&quot;642&quot; y=&quot;1320&quot; font-family=&quot;Arial&quot; font-size=&quot;104&quot; font-weight=&quot;bold&quot; fill=&quot;white&quot; text-anchor=&quot;middle&quot;>TIKKA</text><text x=&quot;642&quot; y=&quot;1430&quot; font-family=&quot;Arial&quot; font-size=&quot;56&quot; font-weight=&quot;bold&quot; fill=&quot;rgba(255,255,255,0.9)&quot; text-anchor=&quot;middle&quot;>N TALK</text><text x=&quot;642&quot; y=&quot;1520&quot; font-family=&quot;Arial&quot; font-size=&quot;28&quot; fill=&quot;rgba(255,255,255,0.7)&quot; text-anchor=&quot;middle&quot; letter-spacing=&quot;5&quot;>AN INDIAN KITCHEN</text></svg>')}" />
+    <!-- iPhone 14 Pro (1179x2556) -->
+    <link rel="apple-touch-startup-image"
+      media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3)"
+      href="data:image/svg+xml,${encodeURIComponent('<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;1179&quot; height=&quot;2556&quot;><defs><linearGradient id=&quot;g&quot; x1=&quot;0&quot; y1=&quot;0&quot; x2=&quot;1&quot; y2=&quot;1&quot;><stop offset=&quot;0%&quot; stop-color=&quot;#E91E63&quot;/><stop offset=&quot;100%&quot; stop-color=&quot;#C2185B&quot;/></linearGradient></defs><rect width=&quot;1179&quot; height=&quot;2556&quot; fill=&quot;url(#g)&quot;/><text x=&quot;590&quot; y=&quot;1210&quot; font-family=&quot;Arial&quot; font-size=&quot;96&quot; font-weight=&quot;bold&quot; fill=&quot;white&quot; text-anchor=&quot;middle&quot;>TIKKA</text><text x=&quot;590&quot; y=&quot;1310&quot; font-family=&quot;Arial&quot; font-size=&quot;52&quot; font-weight=&quot;bold&quot; fill=&quot;rgba(255,255,255,0.9)&quot; text-anchor=&quot;middle&quot;>N TALK</text><text x=&quot;590&quot; y=&quot;1400&quot; font-family=&quot;Arial&quot; font-size=&quot;26&quot; fill=&quot;rgba(255,255,255,0.7)&quot; text-anchor=&quot;middle&quot; letter-spacing=&quot;5&quot;>AN INDIAN KITCHEN</text></svg>')}" />
+    <!-- iPhone 14 Pro Max / 15 Pro Max / 16 Pro Max (1290x2796) -->
+    <link rel="apple-touch-startup-image"
+      media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)"
+      href="data:image/svg+xml,${encodeURIComponent('<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;1290&quot; height=&quot;2796&quot;><defs><linearGradient id=&quot;g&quot; x1=&quot;0&quot; y1=&quot;0&quot; x2=&quot;1&quot; y2=&quot;1&quot;><stop offset=&quot;0%&quot; stop-color=&quot;#E91E63&quot;/><stop offset=&quot;100%&quot; stop-color=&quot;#C2185B&quot;/></linearGradient></defs><rect width=&quot;1290&quot; height=&quot;2796&quot; fill=&quot;url(#g)&quot;/><text x=&quot;645&quot; y=&quot;1330&quot; font-family=&quot;Arial&quot; font-size=&quot;104&quot; font-weight=&quot;bold&quot; fill=&quot;white&quot; text-anchor=&quot;middle&quot;>TIKKA</text><text x=&quot;645&quot; y=&quot;1440&quot; font-family=&quot;Arial&quot; font-size=&quot;56&quot; font-weight=&quot;bold&quot; fill=&quot;rgba(255,255,255,0.9)&quot; text-anchor=&quot;middle&quot;>N TALK</text><text x=&quot;645&quot; y=&quot;1530&quot; font-family=&quot;Arial&quot; font-size=&quot;28&quot; fill=&quot;rgba(255,255,255,0.7)&quot; text-anchor=&quot;middle&quot; letter-spacing=&quot;5&quot;>AN INDIAN KITCHEN</text></svg>')}" />
 
     <!-- Primary Meta -->
     <meta name="title" content="Tikka N Talk - AN INDIAN KITCHEN" />
