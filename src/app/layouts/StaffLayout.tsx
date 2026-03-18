@@ -1,6 +1,6 @@
 import { Outlet } from "react-router";
 import { StaffAuthProvider } from "../lib/staff-auth";
-import { useEffect } from "react";
+import { useEffect, Suspense } from "react";
 import { APP_CONFIG } from "../lib/config";
 import { cacheRestaurantLogo, notifyLogoUpdate, isBrandingFetched, notifyBrandingFetched } from "../lib/useRestaurantLogo";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
@@ -94,7 +94,13 @@ export default function StaffLayout() {
       <StaffBrandingPrefetch />
       <StaffManifest />
       <div className="min-h-screen bg-gray-50">
-        <Outlet />
+        <Suspense fallback={
+          <div className="min-h-[60vh] flex items-center justify-center">
+            <div className="w-8 h-8 border-3 border-t-transparent rounded-full animate-spin" style={{ borderColor: "#1e293b", borderTopColor: "transparent" }} />
+          </div>
+        }>
+          <Outlet />
+        </Suspense>
       </div>
     </StaffAuthProvider>
   );

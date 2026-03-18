@@ -42,7 +42,6 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<TodaysSpecialItem | null>(null);
   const [saving, setSaving] = useState(false);
-  const [seeding, setSeeding] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -224,37 +223,6 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
     }
   };
 
-  const handleSeedItems = async () => {
-    if (!confirm("This will add 3 default menu items (Chicken Tikka Masala, Butter Chicken, Samosa). Continue?")) {
-      return;
-    }
-
-    setSeeding(true);
-    try {
-      const response = await fetchWithRetry(`${API_BASE}/admin/todays-special/seed`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${publicAnonKey}`,
-          "X-Custom-Auth": customToken,
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        toast.success(data.message || "Items seeded successfully!");
-        fetchItems();
-      } else {
-        const error = await response.json();
-        toast.error(error.error || "Failed to seed items");
-      }
-    } catch (error) {
-      console.error("Error seeding items:", error);
-      toast.error("Failed to seed items");
-    } finally {
-      setSeeding(false);
-    }
-  };
-
   if (loading) {
     return <div className="text-center py-8">Loading...</div>;
   }
@@ -278,15 +246,10 @@ export function TodaysSpecialAdmin({ customToken }: Props) {
         <Card className="p-8 text-center">
           <ChefHat className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
           <p className="text-muted-foreground mb-4">No special items yet</p>
-          <div className="flex gap-2 justify-center">
-            <Button onClick={handleSeedItems} disabled={seeding} variant="outline">
-              {seeding ? "Seeding..." : "Seed with 3 Menu Items"}
-            </Button>
-            <Button onClick={openCreateDialog}>
-              <Plus className="w-4 h-4 mr-2" />
-              Create Manually
-            </Button>
-          </div>
+          <Button onClick={openCreateDialog}>
+            <Plus className="w-4 h-4 mr-2" />
+            Create Item
+          </Button>
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

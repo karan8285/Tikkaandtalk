@@ -39,6 +39,7 @@ import { CelebrationCategoriesAdmin } from "../components/CelebrationCategoriesA
 import { HomeLayoutAdmin } from "../components/HomeLayoutAdmin";
 import { CustomMenuAdmin } from "../components/CustomMenuAdmin";
 import { PointsExpiryAdmin } from "../components/PointsExpiryAdmin";
+import { DataResetAdmin } from "../components/DataResetAdmin";
 import { StaffManagement } from "../components/StaffManagement";
 import { StaffAddToHomeScreen, useShowStaffA2HSBanner } from "../components/StaffAddToHomeScreen";
 import { StaffPushToggle } from "../components/StaffPushToggle";
@@ -91,6 +92,7 @@ const TAB_DEFINITIONS: { value: string; label: string; permission: string }[] = 
   { value: "staff", label: "Staff", permission: "staff" },
   { value: "reports", label: "Reports", permission: "reports" },
   { value: "broadcast", label: "Broadcast", permission: "broadcast" },
+  { value: "data-reset", label: "Data Reset", permission: "data-reset" },
 ];
 
 export default function StaffAdmin() {
@@ -117,6 +119,7 @@ export default function StaffAdmin() {
     if (tab.permission === 'settings' && role !== 'superuser') return false;
     if (tab.permission === 'health' && role !== 'superuser') return false;
     if (tab.permission === 'staff' && role !== 'superuser') return false;
+    if (tab.permission === 'data-reset' && role !== 'superuser') return false;
     return hasPermission(role, tab.permission);
   });
 
@@ -285,6 +288,10 @@ export default function StaffAdmin() {
 
               <TabsContent value="reports">
                 <CustomReportsAdmin customToken={accessToken} />
+              </TabsContent>
+
+              <TabsContent value="data-reset">
+                <DataResetAdmin customToken={accessToken} />
               </TabsContent>
             </>
           )}

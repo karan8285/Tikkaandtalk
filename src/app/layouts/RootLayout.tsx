@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, Suspense } from "react";
 import { Outlet, useLocation } from "react-router";
 import { AuthProvider } from "../lib/auth";
 import { CartProvider } from "../lib/cart";
@@ -123,7 +123,13 @@ export default function RootLayout() {
             <PresenceTracker />
             <BrandingPrefetch />
             <AdaptiveShell>
-              <Outlet />
+              <Suspense fallback={
+                <div className="min-h-[60vh] flex items-center justify-center">
+                  <div className="w-8 h-8 border-3 border-t-transparent rounded-full animate-spin" style={{ borderColor: APP_CONFIG.brand.primaryColor, borderTopColor: "transparent" }} />
+                </div>
+              }>
+                <Outlet />
+              </Suspense>
               <GlobalMascot />
               <NotificationMascot />
             </AdaptiveShell>

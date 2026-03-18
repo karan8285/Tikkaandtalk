@@ -489,33 +489,7 @@ function normalizePhoneForStorage(phone: string): string {
   return `+62${digits}`;
 }
 
-// Default special offers (initialize if not exist) - IDR prices
-const DEFAULT_SPECIAL_OFFERS = [
-  {
-    id: 1,
-    title: "Chicken Tikka Masala",
-    description: "Tender chicken in creamy tomato-based sauce with aromatic spices",
-    originalPrice: 285000, // Rp 285.000
-    discountedPrice: 210000, // Rp 210.000
-    image: "https://images.unsplash.com/photo-1652545296821-09a023a9fd08?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0aWtrYSUyMG1hc2FsYSUyMGluZGlhbiUyMGZvb2R8ZW58MXx8fHwxNzcyMTA0ODgwfDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-  },
-  {
-    id: 2,
-    title: "Butter Chicken with Rice",
-    description: "Rich and creamy butter chicken served with fragrant basmati rice",
-    originalPrice: 255000, // Rp 255.000
-    discountedPrice: 180000, // Rp 180.000
-    image: "https://images.unsplash.com/photo-1707448829764-9474458021ed?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxidXR0ZXIlMjBjaGlja2VuJTIwY3VycnklMjByaWNlfGVufDF8fHx8MTc3MjEwNDg4MHww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-  },
-  {
-    id: 3,
-    title: "Samosa Platter",
-    description: "Crispy pastry filled with spiced potatoes and peas, served with chutneys",
-    originalPrice: 135000, // Rp 135.000
-    discountedPrice: 90000, // Rp 90.000
-    image: "https://images.unsplash.com/photo-1697155836252-d7f969108b5a?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxzYW1vc2ElMjBpbmRpYW4lMjBhcHBldGl6ZXJ8ZW58MXx8fHwxNzcyMDYxMTIyfDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-  },
-];
+// Default special offers removed - admin adds specials manually via the admin panel
 
 // Helper: Truncate error messages to avoid dumping huge HTML responses in logs
 function truncateError(err: any): string {
@@ -621,24 +595,6 @@ async function initializeDefaultData(attempt = 1) {
 
   try {
     console.log(`🚀 Starting default data initialization (attempt ${attempt}/${MAX_RETRIES})...`);
-    
-    // Check if special offers exist (uses retry wrapper for cold-start resilience)
-    const existingOffers = await kvGetByPrefixWithRetry("todays_special:");
-    
-    // If no offers exist, create the default ones
-    if (!existingOffers || existingOffers.length === 0) {
-      console.log("Initializing default today's special items...");
-      for (const offer of DEFAULT_SPECIAL_OFFERS) {
-        try {
-          await kvSetWithRetry(`todays_special:${offer.id}`, offer);
-        } catch (error) {
-          console.error(`⚠️ Failed to initialize offer ${offer.id}:`, truncateError(error));
-        }
-      }
-      console.log("Default today's special items initialization attempted");
-    } else {
-      console.log(`Found ${existingOffers.length} existing today's special items`);
-    }
     
     // Initialize admin user if it doesn't exist
     console.log("🔧 Checking for admin user...");
@@ -2960,85 +2916,7 @@ app.get("/make-server-e5e192fb/todays-special", async (c) => {
   }
 });
 
-// Admin: Seed Today's Special with Default Items (one-time initialization)
-app.post("/make-server-e5e192fb/admin/todays-special/seed", async (c) => {
-  try {
-    const token = getCustomToken(c);
-    if (!token) {
-      return c.json({ error: "Unauthorized - No token provided" }, 401);
-    }
-
-    const adminAuth = await verifyAdminAccess(token);
-    if (!adminAuth) {
-      return c.json({ error: "Admin access required" }, 403);
-    }
-
-    // Check if items already exist
-    const existingItems = await kv.getByPrefix("todays_special:");
-    if (existingItems.length > 0) {
-      return c.json({ error: "Items already seeded. Delete existing items first if you want to re-seed." }, 400);
-    }
-
-    // Default menu items to seed
-    const defaultItems = [
-      {
-        id: 1,
-        name: "Chicken Tikka Masala",
-        subtitle: "Tender chicken in creamy tomato sauce",
-        description: "Marinated chicken pieces cooked in a rich, creamy tomato-based curry sauce with aromatic spices. Served with fragrant basmati rice.",
-        image: "https://images.unsplash.com/photo-1652545296821-09a023a9fd08?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0aWtrYSUyMG1hc2FsYSUyMGluZGlhbiUyMGZvb2R8ZW58MXx8fHwxNzcyMTA0ODgwfDA&ixlib=rb-4.1.0&q=80&w=1080",
-        originalPrice: 285000,
-        discountPercentage: 26,
-        finalPrice: 210000,
-        badgeText: "SPECIAL 26% OFF",
-        enabled: true,
-        displayOrder: 1,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 2,
-        name: "Butter Chicken with Rice",
-        subtitle: "Classic creamy curry with basmati rice",
-        description: "Succulent chicken pieces simmered in a velvety butter and tomato gravy, perfectly spiced and served with steamed basmati rice.",
-        image: "https://images.unsplash.com/photo-1707448829764-9474458021ed?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxidXR0ZXIlMjBjaGlja2VuJTIwY3VycnklMjByaWNlfGVufDF8fHx8MTc3MjEwNDg4MHww&ixlib=rb-4.1.0&q=80&w=1080",
-        originalPrice: 255000,
-        discountPercentage: 29,
-        finalPrice: 180000,
-        badgeText: "SPECIAL 29% OFF",
-        enabled: true,
-        displayOrder: 2,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: 3,
-        name: "Samosa Platter",
-        subtitle: "Crispy vegetable samosas with chutneys",
-        description: "Golden fried pastry pockets filled with spiced potatoes and peas. Served with tangy tamarind and mint chutneys. Perfect as an appetizer!",
-        image: "https://images.unsplash.com/photo-1697155836252-d7f969108b5a?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxzYW1vc2ElMjBpbmRpYW4lMjBhcHBldGl6ZXJ8ZW58MXx8fHwxNzcyMDYxMTIyfDA&ixlib=rb-4.1.0&q=80&w=1080",
-        originalPrice: 135000,
-        discountPercentage: 33,
-        finalPrice: 90000,
-        badgeText: "SPECIAL 33% OFF",
-        enabled: true,
-        displayOrder: 3,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-
-    // Save all items
-    for (const item of defaultItems) {
-      await kv.set(`todays_special:${item.id}`, item);
-    }
-
-    return c.json({ success: true, message: "Seeded 3 menu items successfully", items: defaultItems });
-  } catch (error) {
-    console.log(`Seed today's special error: ${error}`);
-    return c.json({ error: "Failed to seed items" }, 500);
-  }
-});
+// (Seed endpoint removed — Today's Special is fully managed via admin CRUD)
 
 // Admin: Get All Today's Special Items (including disabled)
 app.get("/make-server-e5e192fb/admin/todays-special", async (c) => {
@@ -14307,6 +14185,257 @@ app.get("/make-server-e5e192fb/my-points-history", async (c) => {
   } catch (error: any) {
     console.log(`❌ Get points history error: ${error}`);
     return c.json({ error: `Failed to get points history: ${error?.message}` }, 500);
+  }
+});
+
+// ==================== DATA RESET (Production Prep) ====================
+
+app.post("/make-server-e5e192fb/admin/data-reset", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth) return c.json({ error: "Unauthorized" }, 403);
+
+    const payload = await verifyToken(token);
+    if (!payload?.staffRole) return c.json({ error: "Superuser access required" }, 403);
+    const staffData = await kv.get(`staff:${payload.userId}`);
+    if (!staffData || staffData.role !== 'superuser') return c.json({ error: "Superuser access required" }, 403);
+
+    const body = await c.req.json();
+    const { categories, confirmCode } = body;
+    if (confirmCode !== "DELETE-ALL-DATA") return c.json({ error: "Invalid confirmation code" }, 400);
+    if (!categories || !Array.isArray(categories) || categories.length === 0) return c.json({ error: "No categories selected" }, 400);
+
+    const results: Record<string, number> = {};
+    const errors: string[] = [];
+    const supabaseAdmin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+
+    async function deleteByPrefix(prefix: string, label: string) {
+      try {
+        console.log(`🗑️ [${label}] Querying keys with prefix "${prefix}"`);
+        const { data, error } = await supabaseAdmin.from("kv_store_e5e192fb").select("key").like("key", `${prefix}%`);
+        if (error) { console.log(`❌ [${label}] Query error: ${JSON.stringify(error)}`); throw error; }
+        console.log(`🗑️ [${label}] Found ${data?.length || 0} keys`);
+        if (data && data.length > 0) {
+          const keys = data.map((d: any) => d.key);
+          console.log(`🗑️ [${label}] Sample keys: ${keys.slice(0, 3).join(', ')}`);
+          for (let i = 0; i < keys.length; i += 100) {
+            const batch = keys.slice(i, i + 100);
+            const { error: delErr, count } = await supabaseAdmin.from("kv_store_e5e192fb").delete().in("key", batch);
+            console.log(`🗑️ [${label}] Deleted batch ${i/100 + 1}: ${batch.length} keys, count=${count}, error=${delErr ? JSON.stringify(delErr) : 'none'}`);
+            if (delErr) throw delErr;
+          }
+          results[label] = keys.length;
+        } else {
+          results[label] = 0;
+        }
+      } catch (e: any) {
+        console.log(`❌ [${label}] Exception: ${e?.message}`);
+        errors.push(`${label}: ${e?.message}`);
+      }
+    }
+
+    async function deleteSingleKey(key: string, label: string) {
+      try {
+        await kvRetry(() => kv.del(key));
+        results[label] = 1;
+      } catch (e: any) {
+        errors.push(`${label}: ${e?.message}`);
+      }
+    }
+
+    if (categories.includes("menu")) {
+      await deleteByPrefix("regular_menu:", "regular_menu");
+      await deleteByPrefix("todays_special:", "todays_special");
+      await deleteByPrefix("kids_menu:", "kids_menu");
+      await deleteByPrefix("flash_sale:", "flash_sale");
+      await deleteByPrefix("category:", "categories");
+      await deleteByPrefix("special_offer:", "special_offers");
+    }
+
+    if (categories.includes("custom_menus")) {
+      await deleteByPrefix("custom_menu_", "custom_menus");
+    }
+
+    if (categories.includes("vouchers")) {
+      await deleteByPrefix("voucher:", "voucher_templates");
+      await deleteByPrefix("user_voucher:", "user_voucher_assignments");
+      await deleteByPrefix("promo:", "promo_codes");
+    }
+
+    if (categories.includes("dinein_vouchers")) {
+      await deleteByPrefix("dinein_voucher:", "dinein_vouchers");
+      await deleteByPrefix("dinein_assignment:", "dinein_assignments");
+    }
+
+    if (categories.includes("orders")) {
+      await deleteByPrefix("order:", "orders");
+      await deleteByPrefix("user_orders:", "user_order_lists");
+      await deleteByPrefix("guest_orders:", "guest_order_lists");
+      await deleteByPrefix("guest_rate_limit:", "guest_rate_limits");
+      await deleteSingleKey("order_counter", "order_counter");
+    }
+
+    if (categories.includes("customers")) {
+      try {
+        const { data: userRows } = await supabaseAdmin.from("kv_store_e5e192fb").select("key, value").like("key", "user:%");
+        const { data: staffRows } = await supabaseAdmin.from("kv_store_e5e192fb").select("key, value").like("key", "staff:%");
+        const staffUserIds = new Set((staffRows || []).map((s: any) => s.value?.userId || s.value?.id));
+        const keysToDelete: string[] = [];
+        const authUserIdsToDelete: string[] = [];
+        for (const row of (userRows || [])) {
+          const userData = row.value;
+          const userId = userData?.id || row.key?.replace("user:", "");
+          if (userData?.isAdmin) continue;
+          if (staffUserIds.has(userId)) continue;
+          keysToDelete.push(row.key);
+          if (userId) authUserIdsToDelete.push(userId);
+        }
+        if (keysToDelete.length > 0) {
+          for (let i = 0; i < keysToDelete.length; i += 100) {
+            const batch = keysToDelete.slice(i, i + 100);
+            await supabaseAdmin.from("kv_store_e5e192fb").delete().in("key", batch);
+          }
+        }
+        // Also delete Supabase Auth accounts so customers can't log in anymore
+        let authDeleted = 0;
+        for (const authUserId of authUserIdsToDelete) {
+          try {
+            const { error: authDelErr } = await supabaseAdmin.auth.admin.deleteUser(authUserId);
+            if (authDelErr) {
+              console.log(`⚠️ Failed to delete auth user ${authUserId}: ${authDelErr.message}`);
+            } else {
+              authDeleted++;
+            }
+          } catch (authErr: any) {
+            console.log(`⚠️ Exception deleting auth user ${authUserId}: ${authErr?.message}`);
+          }
+        }
+        // Also scan all Supabase Auth users and delete orphaned customer accounts (no KV entry)
+        try {
+          const { data: { users: allAuthUsers } } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
+          if (allAuthUsers) {
+            for (const authUser of allAuthUsers) {
+              if (staffUserIds.has(authUser.id)) continue;
+              if (authUserIdsToDelete.includes(authUser.id)) continue; // already handled
+              // Check if this is an admin
+              const adminProfile = await kv.get(`user:${authUser.id}`);
+              if (adminProfile?.isAdmin) continue;
+              // This is an orphaned customer auth account - delete it
+              try {
+                const { error: orphanDelErr } = await supabaseAdmin.auth.admin.deleteUser(authUser.id);
+                if (!orphanDelErr) authDeleted++;
+              } catch (_) {}
+            }
+          }
+        } catch (orphanErr: any) {
+          console.log(`⚠️ Orphan auth cleanup error: ${orphanErr?.message}`);
+        }
+        console.log(`🗑️ Deleted ${authDeleted} total Supabase Auth customer accounts`);
+        results["customers"] = keysToDelete.length;
+        results["auth_accounts_deleted"] = authDeleted;
+      } catch (e: any) {
+        errors.push(`customers: ${e?.message}`);
+      }
+      await deleteByPrefix("cart:", "carts");
+      await deleteByPrefix("points_ledger:", "points_ledgers");
+      await deleteByPrefix("points_expiry_warn:", "points_expiry_warns");
+      await deleteByPrefix("notifications:", "notifications");
+      await deleteByPrefix("push_subs:", "push_subscriptions");
+      await deleteByPrefix("a2hs_install:", "a2hs_installs");
+      await deleteByPrefix("presence:", "presence_data");
+    }
+
+    if (categories.includes("parties")) {
+      await deleteSingleKey("party_packages", "party_packages");
+      await deleteSingleKey("party_packages_settings", "party_packages_settings");
+      await deleteSingleKey("celebration_categories", "celebration_categories");
+      await deleteSingleKey("celebrations_hub_settings", "celebrations_hub_settings");
+    }
+
+    if (categories.includes("home_layout")) {
+      await deleteSingleKey("home_layout_config", "home_layout_config");
+    }
+
+    if (categories.includes("broadcasts")) {
+      await deleteSingleKey("broadcasts", "broadcasts");
+      await deleteSingleKey("broadcast_settings", "broadcast_settings");
+    }
+
+    if (categories.includes("tiers")) {
+      await deleteByPrefix("tier_benefit:", "tier_benefits");
+    }
+
+    console.log(`🗑️ Data reset completed by superuser ${payload.userId}. Results: ${JSON.stringify(results)}`);
+    return c.json({ success: true, results, errors });
+  } catch (error: any) {
+    console.log(`❌ Data reset error: ${error}`);
+    return c.json({ error: `Data reset failed: ${error?.message}` }, 500);
+  }
+});
+
+app.get("/make-server-e5e192fb/admin/data-reset-preview", async (c) => {
+  try {
+    const token = getCustomToken(c);
+    if (!token) return c.json({ error: "Unauthorized" }, 401);
+    const auth = await verifyAdminAccess(token);
+    if (!auth) return c.json({ error: "Unauthorized" }, 403);
+
+    const payload = await verifyToken(token);
+    if (!payload?.staffRole) return c.json({ error: "Superuser access required" }, 403);
+    const staffData = await kv.get(`staff:${payload.userId}`);
+    if (!staffData || staffData.role !== 'superuser') return c.json({ error: "Superuser access required" }, 403);
+
+    const [
+      regularMenu, todaysSpecial, kidsMenu, flashSale, categories, specialOffers,
+      orders, vouchers, userVouchers,
+      dineinVouchers, dineinAssignments, tierBenefits
+    ] = await Promise.all([
+      kvRetry(() => kv.getByPrefix("regular_menu:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("todays_special:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("kids_menu:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("flash_sale:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("category:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("special_offer:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("order:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("voucher:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("user_voucher:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("dinein_voucher:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("dinein_assignment:")).catch(() => []),
+      kvRetry(() => kv.getByPrefix("tier_benefit:")).catch(() => []),
+    ]);
+
+    // For customer filtering, we need key+value, so query DB directly
+    const supabaseAdmin2 = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const { data: userRows } = await supabaseAdmin2.from("kv_store_e5e192fb").select("key, value").like("key", "user:%");
+    const { data: staffRows } = await supabaseAdmin2.from("kv_store_e5e192fb").select("key, value").like("key", "staff:%");
+    const staffUserIds = new Set((staffRows || []).map((s: any) => s.value?.userId || s.value?.id));
+    const customerCount = (userRows || []).filter((u: any) => {
+      const val = u.value;
+      if (val?.isAdmin) return false;
+      const uid = val?.id || u.key?.replace("user:", "");
+      if (staffUserIds.has(uid)) return false;
+      return true;
+    }).length;
+
+    return c.json({ counts: {
+      menu: (regularMenu?.length || 0) + (todaysSpecial?.length || 0) + (kidsMenu?.length || 0) + (flashSale?.length || 0),
+      categories: categories?.length || 0,
+      special_offers: specialOffers?.length || 0,
+      orders: orders?.length || 0,
+      customers: customerCount,
+      total_users: userRows?.length || 0,
+      staff: staffRows?.length || 0,
+      vouchers: vouchers?.length || 0,
+      user_vouchers: userVouchers?.length || 0,
+      dinein_vouchers: dineinVouchers?.length || 0,
+      dinein_assignments: dineinAssignments?.length || 0,
+      tier_benefits: tierBenefits?.length || 0,
+    }});
+  } catch (error: any) {
+    console.log(`❌ Data reset preview error: ${error}`);
+    return c.json({ error: `Preview failed: ${error?.message}` }, 500);
   }
 });
 

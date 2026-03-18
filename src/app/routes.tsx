@@ -6,40 +6,57 @@ import RootLayout from "./layouts/RootLayout";
 // Only eagerly load Home (first page users see)
 import Home from "./pages/Home";
 
+// Retry wrapper for dynamic imports - handles transient network failures
+function lazyRetry<T extends React.ComponentType<any>>(
+  factory: () => Promise<{ default: T }>,
+  retries = 3
+): React.LazyExoticComponent<T> {
+  return React.lazy(() => {
+    const attempt = (remaining: number): Promise<{ default: T }> =>
+      factory().catch((err) => {
+        if (remaining <= 1) throw err;
+        return new Promise<{ default: T }>((resolve) =>
+          setTimeout(() => resolve(attempt(remaining - 1)), 1500)
+        );
+      });
+    return attempt(retries);
+  });
+}
+
 // Lazy load everything else - splits the bundle so users only download what they visit
 // Each lazy() call creates a separate chunk that loads on-demand
-const RegularMenu = React.lazy(() => import("./pages/RegularMenu"));
-const TodaysSpecial = React.lazy(() => import("./pages/TodaysSpecial"));
-const KidsMenu = React.lazy(() => import("./pages/KidsMenu"));
-const FlashSale = React.lazy(() => import("./pages/FlashSale"));
-const Cart = React.lazy(() => import("./pages/Cart"));
-const Checkout = React.lazy(() => import("./pages/Checkout"));
-const Order = React.lazy(() => import("./pages/Order"));
-const OrderConfirmation = React.lazy(() => import("./pages/OrderConfirmation"));
-const OrderSuccess = React.lazy(() => import("./pages/OrderSuccess"));
-const Login = React.lazy(() => import("./pages/Login"));
-const Signup = React.lazy(() => import("./pages/Signup"));
-const Profile = React.lazy(() => import("./pages/Profile"));
-const OrderHistory = React.lazy(() => import("./pages/OrderHistory"));
-const OrderTracking = React.lazy(() => import("./pages/OrderTracking"));
-const Rewards = React.lazy(() => import("./pages/Rewards"));
-const ForgotPassword = React.lazy(() => import("./pages/ForgotPassword"));
-const TrackOrder = React.lazy(() => import("./pages/TrackOrder"));
-const GuestOrderTracking = React.lazy(() => import("./pages/GuestOrderTracking"));
-const CelebrationsHub = React.lazy(() => import("./pages/CelebrationsHub"));
-const PartyPackages = React.lazy(() => import("./pages/PartyPackages"));
-const CustomMenuPage = React.lazy(() => import("./pages/CustomMenuPage"));
-const Notifications = React.lazy(() => import("./pages/Notifications"));
-const MyVouchers = React.lazy(() => import("./pages/MyVouchers"));
+const RegularMenu = lazyRetry(() => import("./pages/RegularMenu"));
+const TodaysSpecial = lazyRetry(() => import("./pages/TodaysSpecial"));
+const KidsMenu = lazyRetry(() => import("./pages/KidsMenu"));
+const FlashSale = lazyRetry(() => import("./pages/FlashSale"));
+const Cart = lazyRetry(() => import("./pages/Cart"));
+const Checkout = lazyRetry(() => import("./pages/Checkout"));
+const Order = lazyRetry(() => import("./pages/Order"));
+const OrderConfirmation = lazyRetry(() => import("./pages/OrderConfirmation"));
+const OrderSuccess = lazyRetry(() => import("./pages/OrderSuccess"));
+const Login = lazyRetry(() => import("./pages/Login"));
+const Signup = lazyRetry(() => import("./pages/Signup"));
+const Profile = lazyRetry(() => import("./pages/Profile"));
+const OrderHistory = lazyRetry(() => import("./pages/OrderHistory"));
+const OrderTracking = lazyRetry(() => import("./pages/OrderTracking"));
+const Rewards = lazyRetry(() => import("./pages/Rewards"));
+const ForgotPassword = lazyRetry(() => import("./pages/ForgotPassword"));
+const TrackOrder = lazyRetry(() => import("./pages/TrackOrder"));
+const GuestOrderTracking = lazyRetry(() => import("./pages/GuestOrderTracking"));
+const CelebrationsHub = lazyRetry(() => import("./pages/CelebrationsHub"));
+const PartyPackages = lazyRetry(() => import("./pages/PartyPackages"));
+const CustomMenuPage = lazyRetry(() => import("./pages/CustomMenuPage"));
+const Notifications = lazyRetry(() => import("./pages/Notifications"));
+const MyVouchers = lazyRetry(() => import("./pages/MyVouchers"));
 
 // Staff pages (completely separate from customer app)
-const StaffLayout = React.lazy(() => import("./layouts/StaffLayout"));
-const StaffLogin = React.lazy(() => import("./pages/StaffLogin"));
-const StaffAdmin = React.lazy(() => import("./pages/StaffAdmin"));
-const StaffKitchen = React.lazy(() => import("./pages/StaffKitchen"));
-const StaffDelivery = React.lazy(() => import("./pages/StaffDelivery"));
-const StaffCashier = React.lazy(() => import("./pages/StaffCashier"));
-const CreateCustomOrder = React.lazy(() => import("./pages/CreateCustomOrder"));
+const StaffLayout = lazyRetry(() => import("./layouts/StaffLayout"));
+const StaffLogin = lazyRetry(() => import("./pages/StaffLogin"));
+const StaffAdmin = lazyRetry(() => import("./pages/StaffAdmin"));
+const StaffKitchen = lazyRetry(() => import("./pages/StaffKitchen"));
+const StaffDelivery = lazyRetry(() => import("./pages/StaffDelivery"));
+const StaffCashier = lazyRetry(() => import("./pages/StaffCashier"));
+const CreateCustomOrder = lazyRetry(() => import("./pages/CreateCustomOrder"));
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -206,7 +223,7 @@ export const router = createBrowserRouter(
         },
         {
           path: "celebrations/:categoryId",
-          element: <Lazy><CelebrationsHub /></Lazy>,
+          element: <Lazy><PartyPackages /></Lazy>,
         },
         {
           path: "notifications",
