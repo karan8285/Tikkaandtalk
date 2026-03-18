@@ -5602,6 +5602,29 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
       
       await kv.set(`order:${orderId}`, order);
       
+      // Send cancellation notification to customer (non-blocking)
+      try {
+        const shortId = order.orderNumber ? getShortOrderIdServer(order.orderNumber) : orderId.substring(0, 8);
+        const reasonText = cancellationReason ? ` Reason: ${cancellationReason}` : '';
+        await pushNotification(order.userId, {
+          type: 'order_cancelled',
+          title: `Order ${shortId} Cancelled`,
+          message: `Your order #${shortId} has been cancelled by the restaurant.${reasonText}`,
+          url: `/orders/${orderId}`,
+          orderId: orderId,
+          orderNumber: order.orderNumber || orderId,
+        });
+        await sendBrowserPush(order.userId, {
+          title: `Order ${shortId} Cancelled ❌`,
+          body: `Your order #${shortId} has been cancelled by the restaurant.${reasonText}`,
+          url: `/orders/${orderId}`,
+          tag: `order-cancelled-${orderId}`,
+        });
+        console.log(`📢 Cancellation notification sent to user ${order.userId} for order ${shortId}`);
+      } catch (notifErr: any) {
+        console.log(`⚠️ Non-critical: cancellation notification failed for order ${orderId}: ${notifErr?.message}`);
+      }
+
       return c.json({ 
         success: true, 
         order,
