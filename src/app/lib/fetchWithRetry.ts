@@ -34,6 +34,10 @@ export async function fetchWithRetry(
 
     try {
       const response = await fetch(input, init);
+      // Log recovery if a previous attempt failed
+      if (attempt > 1) {
+        console.info(`fetchWithRetry: recovered on attempt ${attempt}/${maxRetries}`);
+      }
       return response;
     } catch (error: any) {
       lastError = error;
@@ -46,13 +50,19 @@ export async function fetchWithRetry(
         error instanceof TypeError || error?.message?.includes("Failed to fetch");
 
       if (!isNetworkError || attempt >= maxRetries) {
+        console.error(
+          `fetchWithRetry: all ${maxRetries} attempts failed for ${typeof input === 'string' ? input.split('?')[0].split('/').pop() : 'request'} (${error?.message})`,
+        );
         throw error;
       }
 
       const delay = initialDelay * Math.pow(factor, attempt - 1);
-      console.warn(
-        `fetchWithRetry: attempt ${attempt}/${maxRetries} failed (${error?.message}). Retrying in ${Math.round(delay)}ms...`,
-      );
+      // Only warn on attempt 2+ to reduce cold-start noise
+      if (attempt >= 2) {
+        console.warn(
+          `fetchWithRetry: attempt ${attempt}/${maxRetries} failed (${error?.message}). Retrying in ${Math.round(delay)}ms...`,
+        );
+      }
       await new Promise((r) => setTimeout(r, delay));
     }
   }

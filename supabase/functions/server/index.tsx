@@ -686,7 +686,8 @@ const MASCOT_FILE_PATH = "mascot-image";
 const FAVICON_FILE_PATH = "favicon-image";
 let logoBucketReady = false;
 
-async function ensureLogoBucket(maxRetries = 3) {
+async function ensureLogoBucket(maxRetries = 5) {
+  if (logoBucketReady) return; // already done
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const supabase = createClient(
@@ -711,12 +712,13 @@ async function ensureLogoBucket(maxRetries = 3) {
         console.log(`✅ Logo storage bucket already exists: ${LOGO_BUCKET}`);
       }
       logoBucketReady = true;
-      return; // success — exit retry loop
+      return;
     } catch (error: any) {
-      console.error(`⚠️ ensureLogoBucket attempt ${attempt}/${maxRetries} failed:`, error?.message || error);
+      if (attempt >= 2) {
+        console.warn(`⚠️ ensureLogoBucket attempt ${attempt}/${maxRetries} failed: ${error?.message || error}`);
+      }
       if (attempt < maxRetries) {
-        const backoff = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
-        console.log(`⏳ Retrying ensureLogoBucket in ${backoff}ms...`);
+        const backoff = 2000 * Math.pow(2, attempt - 1);
         await new Promise(r => setTimeout(r, backoff));
       } else {
         console.error(`❌ ensureLogoBucket failed after ${maxRetries} attempts. Will retry on first upload request.`);
@@ -724,8 +726,8 @@ async function ensureLogoBucket(maxRetries = 3) {
     }
   }
 }
-// Initialize bucket in background
-ensureLogoBucket();
+// Initialize bucket in background (delayed to let Supabase services warm up)
+setTimeout(() => ensureLogoBucket(), 1500);
 
 // Business configuration
 const RESTAURANT_LOCATION = {
@@ -4220,6 +4222,21 @@ async function autoAssignVouchersToUser(userId: string, userTier: string, userPh
           used: false,
         });
         assignedCount++;
+
+        // Send push notification for new voucher (non-blocking)
+        try {
+          const discountText = voucher.discountType === 'percentage'
+            ? `${voucher.discountValue}% OFF`
+            : `Rp ${Number(voucher.discountValue).toLocaleString('id-ID')} OFF`;
+          await pushNotification(userId, {
+            type: 'new_voucher',
+            title: '🎟️ New Voucher Received!',
+            message: `You got a new voucher: "${voucher.title}" — ${discountText}. Check My Vouchers to use it!`,
+            url: '/my-vouchers',
+          });
+        } catch (notifErr) {
+          console.log(`⚠️ Non-critical: voucher notification failed for ${userId}: ${notifErr}`);
+        }
       }
     }
 
@@ -4318,6 +4335,16 @@ app.post("/make-server-e5e192fb/admin/vouchers", async (c) => {
           voucher, assignedAt: new Date().toISOString(), claimed: false, used: false,
         });
         assignedCount++;
+        // Push notification (non-blocking)
+        try {
+          const dt = voucher.discountType === 'percentage'
+            ? `${voucher.discountValue}% OFF` : `Rp ${Number(voucher.discountValue).toLocaleString('id-ID')} OFF`;
+          pushNotification(user.id, {
+            type: 'new_voucher', title: '🎟️ New Voucher Received!',
+            message: `You got a new voucher: "${voucher.title}" — ${dt}. Check My Vouchers to use it!`,
+            url: '/my-vouchers',
+          }).catch(() => {});
+        } catch {}
       }
     } else if (voucher.targetType === "specific" && voucher.targetPhones?.length > 0) {
       const allUsers = await kvGetByPrefixWithRetry("user:");
@@ -4330,6 +4357,16 @@ app.post("/make-server-e5e192fb/admin/vouchers", async (c) => {
             voucher, assignedAt: new Date().toISOString(), claimed: false, used: false,
           });
           assignedCount++;
+          // Push notification (non-blocking)
+          try {
+            const dt = voucher.discountType === 'percentage'
+              ? `${voucher.discountValue}% OFF` : `Rp ${Number(voucher.discountValue).toLocaleString('id-ID')} OFF`;
+            pushNotification(user.id, {
+              type: 'new_voucher', title: '🎟️ New Voucher Received!',
+              message: `You got a new voucher: "${voucher.title}" — ${dt}. Check My Vouchers to use it!`,
+              url: '/my-vouchers',
+            }).catch(() => {});
+          } catch {}
         }
       }
     }
@@ -13340,8 +13377,8 @@ app.get("/make-server-e5e192fb/reports/a2hs", async (c) => {
 
     for (const record of allRecords) {
       try {
-        const val = typeof record.value === "string" ? JSON.parse(record.value) : record.value;
-        installs.push(val);
+        const val = typeof record === "string" ? JSON.parse(record) : record;
+        if (val && val.userId) installs.push(val);
       } catch {}
     }
 
@@ -13635,6 +13672,9 @@ app.post("/make-server-e5e192fb/admin/dinein-vouchers", async (c) => {
     voucherList.push(voucherId);
     await kvRetry(() => kv.set("dinein_voucher_list", voucherList));
 
+    const dineinDiscountText = discountType === 'percentage'
+      ? `${discountValue}% OFF` : `Rp ${Number(discountValue).toLocaleString('id-ID')} OFF`;
+
     if (assignmentType === "all") {
       const allUserKeys = await kvRetry(() => kv.getByPrefix("user:"));
       for (const userData of allUserKeys) {
@@ -13645,6 +13685,13 @@ app.post("/make-server-e5e192fb/admin/dinein-vouchers", async (c) => {
           const userDineinList = await kvRetry(() => kv.get(`user_dinein_vouchers:${userData.id}`)) || [];
           userDineinList.push(assignmentId);
           await kvRetry(() => kv.set(`user_dinein_vouchers:${userData.id}`, userDineinList));
+          // Push notification (non-blocking)
+          pushNotification(userData.id, {
+            type: 'new_voucher',
+            title: '🎫 New Dine-In Voucher!',
+            message: `You received a dine-in voucher: "${title}" — ${dineinDiscountText}. Show it at the restaurant to redeem!`,
+            url: '/my-vouchers',
+          }).catch(() => {});
         }
       }
     } else if (assignmentType === "specific" && targetPhones && Array.isArray(targetPhones)) {
@@ -13657,6 +13704,13 @@ app.post("/make-server-e5e192fb/admin/dinein-vouchers", async (c) => {
           const userDineinList = await kvRetry(() => kv.get(`user_dinein_vouchers:${userData.id}`)) || [];
           userDineinList.push(assignmentId);
           await kvRetry(() => kv.set(`user_dinein_vouchers:${userData.id}`, userDineinList));
+          // Push notification (non-blocking)
+          pushNotification(userData.id, {
+            type: 'new_voucher',
+            title: '🎫 New Dine-In Voucher!',
+            message: `You received a dine-in voucher: "${title}" — ${dineinDiscountText}. Show it at the restaurant to redeem!`,
+            url: '/my-vouchers',
+          }).catch(() => {});
         }
       }
     }

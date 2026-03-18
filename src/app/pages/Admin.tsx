@@ -13,7 +13,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, Camera, MessageSquare, Save, Star, Printer } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, TrendingDown, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, Camera, MessageSquare, Save, Star, Printer, History, ShoppingBag } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -206,7 +206,36 @@ export default function Admin() {
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [resettingPin, setResettingPin] = useState(false);
-  
+
+  // Points history dialog
+  const [historyDialog, setHistoryDialog] = useState(false);
+  const [historyCustomer, setHistoryCustomer] = useState<User | null>(null);
+  const [historyEntries, setHistoryEntries] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const fetchPointsHistory = async (customer: User) => {
+    setHistoryCustomer(customer);
+    setHistoryDialog(true);
+    setHistoryLoading(true);
+    setHistoryEntries([]);
+    try {
+      const res = await fetchWithRetry(`${API_BASE}/my-points-history?userId=${customer.id}`, {
+        headers: { Authorization: `Bearer ${publicAnonKey}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setHistoryEntries(data.history || []);
+      } else {
+        toast.error("Failed to load points history");
+      }
+    } catch (err: any) {
+      console.error("Points history error:", err);
+      toast.error("Failed to load points history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   // Debounce search
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery), 400);
@@ -2383,6 +2412,16 @@ export default function Admin() {
                           <Button
                             variant="outline"
                             size="sm"
+                            onClick={() => fetchPointsHistory(customer)}
+                            className="w-full md:w-auto"
+                          >
+                            <History className="w-4 h-4 mr-2" />
+                            Points History
+                          </Button>
+
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => openResetPinDialog(customer)}
                             className="w-full md:w-auto"
                           >
@@ -2908,6 +2947,124 @@ export default function Admin() {
             >
               {deletingUser ? "Deleting..." : "Delete Permanently"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Points History Dialog */}
+      <Dialog open={historyDialog} onOpenChange={(open) => { if (!open) { setHistoryDialog(false); setHistoryCustomer(null); } }}>
+        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="w-5 h-5" style={{ color: APP_CONFIG.brand.primaryColor }} />
+              Points History
+            </DialogTitle>
+            <DialogDescription>
+              {historyCustomer?.name} ({historyCustomer?.phone}) — Current: {historyCustomer?.points} pts
+            </DialogDescription>
+          </DialogHeader>
+
+          {historyLoading ? (
+            <div className="flex justify-center py-8">
+              <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: APP_CONFIG.brand.primaryColor, borderTopColor: 'transparent' }} />
+            </div>
+          ) : historyEntries.length === 0 ? (
+            <div className="text-center py-8">
+              <History className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-500">No points history yet</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
+              {/* Summary */}
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <div className="bg-green-50 rounded-lg p-2 text-center">
+                  <p className="text-[10px] text-green-600 font-semibold">Earned</p>
+                  <p className="text-sm font-bold text-green-700">
+                    {historyEntries.filter(e => e.type === 'earned').reduce((s: number, e: any) => s + e.amount, 0)}
+                  </p>
+                </div>
+                <div className="bg-red-50 rounded-lg p-2 text-center">
+                  <p className="text-[10px] text-red-600 font-semibold">Deducted</p>
+                  <p className="text-sm font-bold text-red-700">
+                    {historyEntries.filter(e => e.type === 'deduction').reduce((s: number, e: any) => s + e.amount, 0)}
+                  </p>
+                </div>
+                <div className="bg-orange-50 rounded-lg p-2 text-center">
+                  <p className="text-[10px] text-orange-600 font-semibold">Expired</p>
+                  <p className="text-sm font-bold text-orange-700">
+                    {historyEntries.filter(e => e.type === 'expired').reduce((s: number, e: any) => s + (e.expiredAmount || e.amount), 0)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Timeline */}
+              {historyEntries.map((entry: any, idx: number) => {
+                const isEarned = entry.type === 'earned';
+                const isDeduction = entry.type === 'deduction';
+                const isExpired = entry.type === 'expired';
+
+                const sourceLabels: Record<string, string> = {
+                  order: 'Order Points',
+                  admin_adjust: 'Admin Adjustment',
+                  signup_bonus: 'Signup Bonus',
+                  deduction: 'Points Used',
+                  voucher_redeem: 'Voucher Redeemed',
+                  cancellation_refund: 'Cancellation Refund',
+                  tier_promotion: 'Tier Promotion Bonus',
+                };
+
+                return (
+                  <div key={entry.id || idx} className={`flex gap-3 p-2.5 rounded-lg border ${isExpired ? 'bg-orange-50/50 border-orange-200' : isDeduction ? 'bg-red-50/50 border-red-200' : 'bg-green-50/50 border-green-200'}`}>
+                    <div className="flex-shrink-0 mt-0.5">
+                      {isEarned ? (
+                        <div className="w-7 h-7 rounded-full bg-green-100 flex items-center justify-center">
+                          <TrendingUp className="w-3.5 h-3.5 text-green-600" />
+                        </div>
+                      ) : isDeduction ? (
+                        <div className="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center">
+                          <TrendingDown className="w-3.5 h-3.5 text-red-600" />
+                        </div>
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-orange-100 flex items-center justify-center">
+                          <AlertTriangle className="w-3.5 h-3.5 text-orange-600" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-gray-800">
+                          {sourceLabels[entry.source] || entry.source || 'Points'}
+                        </p>
+                        <span className={`text-xs font-bold ${isEarned ? 'text-green-600' : isDeduction ? 'text-red-600' : 'text-orange-600'}`}>
+                          {isEarned ? '+' : '-'}{isExpired ? (entry.expiredAmount || entry.amount) : entry.amount}
+                        </span>
+                      </div>
+                      {entry.orderId && (
+                        <p className="text-[10px] text-gray-500 flex items-center gap-1 mt-0.5">
+                          <ShoppingBag className="w-2.5 h-2.5" /> Order #{entry.orderId}
+                        </p>
+                      )}
+                      {entry.note && (
+                        <p className="text-[10px] text-gray-500 mt-0.5">{entry.note}</p>
+                      )}
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        {new Date(entry.date).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                      {entry.expiresAt && !entry.expired && isEarned && (
+                        <p className="text-[9px] text-orange-500 mt-0.5">
+                          Expires: {new Date(entry.expiresAt).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })}
+                          {entry.remaining !== undefined && ` (${entry.remaining} remaining)`}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHistoryDialog(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

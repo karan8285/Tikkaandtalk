@@ -18,7 +18,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save, Ban, Star, Edit3, Volume2, VolumeX, Printer } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, TrendingDown, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save, Ban, Star, Edit3, Volume2, VolumeX, Printer, History, ShoppingBag } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -1497,6 +1497,7 @@ interface CustomerUser {
   createdAt: string;
   isAdmin?: boolean;
   blocked?: boolean;
+  blockedReason?: string;
 }
 
 function StaffCustomersTab({ accessToken }: { accessToken: string }) {
@@ -1504,12 +1505,68 @@ function StaffCustomersTab({ accessToken }: { accessToken: string }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
+  // Points dialog
+  const [pointsDialog, setPointsDialog] = useState(false);
+  const [pointsCustomer, setPointsCustomer] = useState<CustomerUser | null>(null);
+  const [pointsAmount, setPointsAmount] = useState("");
+  const [pointsAction, setPointsAction] = useState<"add" | "deduct">("add");
+  const [adjustingPoints, setAdjustingPoints] = useState(false);
+
+  // Reset PIN dialog
+  const [resetPinDialog, setResetPinDialog] = useState(false);
+  const [resetPinCustomer, setResetPinCustomer] = useState<CustomerUser | null>(null);
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [resettingPin, setResettingPin] = useState(false);
+
+  // Block dialog
+  const [blockDialog, setBlockDialog] = useState(false);
+  const [blockCustomer, setBlockCustomer] = useState<CustomerUser | null>(null);
+  const [blockReason, setBlockReason] = useState("");
+  const [blockingUser, setBlockingUser] = useState(false);
+
+  // Delete dialog
+  const [deleteDialog, setDeleteDialog] = useState(false);
+  const [deleteCustomer, setDeleteCustomer] = useState<CustomerUser | null>(null);
+  const [deleteConfirmName, setDeleteConfirmName] = useState("");
+  const [deletingUser, setDeletingUser] = useState(false);
+
+  // Points history dialog
+  const [historyDialog, setHistoryDialog] = useState(false);
+  const [historyCustomer, setHistoryCustomer] = useState<CustomerUser | null>(null);
+  const [historyEntries, setHistoryEntries] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const fetchPointsHistory = async (customer: CustomerUser) => {
+    setHistoryCustomer(customer);
+    setHistoryDialog(true);
+    setHistoryLoading(true);
+    setHistoryEntries([]);
+    try {
+      const res = await fetchWithRetry(`${API_BASE}/my-points-history?userId=${customer.id}`, {
+        headers: { Authorization: `Bearer ${publicAnonKey}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setHistoryEntries(data.history || []);
+      } else {
+        toast.error("Failed to load points history");
+      }
+    } catch (err: any) {
+      console.error("Points history error:", err);
+      toast.error("Failed to load points history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchUsers();
   }, []);
 
   const fetchUsers = async () => {
     try {
+      setLoading(true);
       const res = await fetchWithRetry(`${API_BASE}/admin/users`, {
         headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessToken },
       });
@@ -1522,6 +1579,140 @@ function StaffCustomersTab({ accessToken }: { accessToken: string }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleAdjustPoints = async () => {
+    if (!pointsCustomer || !pointsAmount) return;
+    setAdjustingPoints(true);
+    try {
+      const res = await fetchWithRetry(`${API_BASE}/admin/users/${pointsCustomer.id}/points`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": accessToken,
+        },
+        body: JSON.stringify({ action: pointsAction, amount: parseInt(pointsAmount) }),
+      });
+      if (res.ok) {
+        toast.success(`Points ${pointsAction === "add" ? "added" : "deducted"} successfully`);
+        setPointsDialog(false);
+        fetchUsers();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to adjust points");
+      }
+    } catch (error: any) {
+      toast.error("Failed to adjust points: " + error.message);
+    } finally {
+      setAdjustingPoints(false);
+    }
+  };
+
+  const handleResetPin = async () => {
+    if (!resetPinCustomer) return;
+    if (newPin.length !== 6 || !/^\d{6}$/.test(newPin)) {
+      toast.error("PIN must be exactly 6 digits");
+      return;
+    }
+    if (newPin !== confirmPin) {
+      toast.error("PINs do not match");
+      return;
+    }
+    setResettingPin(true);
+    try {
+      const res = await fetchWithRetry(`${API_BASE}/admin/users/${resetPinCustomer.id}/reset-pin`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": accessToken,
+        },
+        body: JSON.stringify({ newPin }),
+      });
+      if (res.ok) {
+        toast.success(`PIN reset successfully for ${resetPinCustomer.name}`);
+        setResetPinDialog(false);
+        setResetPinCustomer(null);
+        setNewPin("");
+        setConfirmPin("");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to reset PIN");
+      }
+    } catch (error: any) {
+      toast.error("Failed to reset PIN: " + error.message);
+    } finally {
+      setResettingPin(false);
+    }
+  };
+
+  const handleBlockUser = async () => {
+    if (!blockCustomer) return;
+    setBlockingUser(true);
+    const willBlock = !blockCustomer.blocked;
+    try {
+      const res = await fetchWithRetry(`${API_BASE}/admin/users/${blockCustomer.id}/block`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": accessToken,
+        },
+        body: JSON.stringify({ blocked: willBlock, reason: blockReason }),
+      });
+      if (res.ok) {
+        toast.success(`${blockCustomer.name} has been ${willBlock ? "blocked" : "unblocked"}`);
+        setBlockDialog(false);
+        setBlockCustomer(null);
+        fetchUsers();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to update block status");
+      }
+    } catch (error: any) {
+      toast.error("Failed to update block status: " + error.message);
+    } finally {
+      setBlockingUser(false);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!deleteCustomer) return;
+    if (deleteConfirmName !== deleteCustomer.name) {
+      toast.error("Name doesn't match. Please type the exact customer name.");
+      return;
+    }
+    setDeletingUser(true);
+    try {
+      const res = await fetchWithRetry(`${API_BASE}/admin/users/${deleteCustomer.id}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          "X-Custom-Auth": accessToken,
+        },
+      });
+      if (res.ok) {
+        toast.success(`${deleteCustomer.name} has been permanently deleted`);
+        setDeleteDialog(false);
+        setDeleteCustomer(null);
+        fetchUsers();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to delete user");
+      }
+    } catch (error: any) {
+      toast.error("Failed to delete user: " + error.message);
+    } finally {
+      setDeletingUser(false);
+    }
+  };
+
+  const getTierInfo = (points: number) => {
+    if (points >= 20000) return { name: "Platinum", bg: "bg-purple-100", color: "text-purple-700" };
+    if (points >= 10000) return { name: "Diamond", bg: "bg-cyan-100", color: "text-cyan-700" };
+    if (points >= 5000) return { name: "Gold", bg: "bg-yellow-100", color: "text-yellow-700" };
+    return { name: "Silver", bg: "bg-gray-100", color: "text-gray-700" };
   };
 
   const filtered = users.filter(u =>
@@ -1542,24 +1733,397 @@ function StaffCustomersTab({ accessToken }: { accessToken: string }) {
           <Users className="w-5 h-5" style={{ color: BRAND }} />
           Customers ({filtered.length})
         </h3>
+        <Button variant="outline" size="sm" onClick={fetchUsers} className="gap-1">
+          <RefreshCw className="w-3.5 h-3.5" /> Refresh
+        </Button>
       </div>
       <Input placeholder="Search by name or phone..." value={search} onChange={(e) => setSearch(e.target.value)} />
-      <div className="space-y-2">
-        {filtered.map(user => (
-          <Card key={user.id} className={`p-3 ${user.blocked ? 'opacity-50 bg-red-50' : ''}`}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-sm">{user.name}</p>
-                <p className="text-xs text-gray-500">{user.phone}</p>
-              </div>
-              <div className="text-right">
-                <Badge variant="secondary">{user.points} pts</Badge>
-                {user.blocked && <Badge variant="destructive" className="ml-1 text-[10px]">Blocked</Badge>}
-              </div>
+      
+      {filtered.length === 0 ? (
+        <Card className="p-8 text-center">
+          <Users className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
+          <p className="text-muted-foreground">No customers found</p>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(customer => {
+            const tier = getTierInfo(customer.points);
+            return (
+              <Card key={customer.id} className={`p-4 ${customer.blocked ? 'border-red-300 bg-red-50/50' : ''}`}>
+                <div className="flex flex-col gap-3">
+                  {/* Customer Info */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-semibold text-sm">{customer.name}</p>
+                      <Badge className={`${tier.bg} ${tier.color} border-0 text-[10px]`}>{tier.name}</Badge>
+                      {customer.blocked && (
+                        <Badge className="bg-red-500 text-white border-0 text-[10px]">
+                          <ShieldBan className="w-3 h-3 mr-0.5" /> Blocked
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-gray-500">
+                      <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{customer.phone}</span>
+                      <span className="flex items-center gap-1"><Award className="w-3 h-3" />{customer.points} pts</span>
+                    </div>
+                    {customer.createdAt && (
+                      <p className="text-[10px] text-gray-400">
+                        Joined: {new Date(customer.createdAt).toLocaleDateString("en-US")}
+                      </p>
+                    )}
+                    {customer.blocked && customer.blockedReason && (
+                      <p className="text-[10px] text-red-600">Reason: {customer.blockedReason}</p>
+                    )}
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex flex-wrap gap-2 pt-1 border-t border-gray-100">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1"
+                      onClick={() => {
+                        setPointsCustomer(customer);
+                        setPointsAmount("");
+                        setPointsAction("add");
+                        setPointsDialog(true);
+                      }}
+                    >
+                      <Award className="w-3 h-3" /> Points
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1"
+                      onClick={() => fetchPointsHistory(customer)}
+                    >
+                      <History className="w-3 h-3" /> History
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1"
+                      onClick={() => {
+                        setResetPinCustomer(customer);
+                        setNewPin("");
+                        setConfirmPin("");
+                        setResetPinDialog(true);
+                      }}
+                    >
+                      <Key className="w-3 h-3" /> Reset PIN
+                    </Button>
+                    <Button
+                      variant={customer.blocked ? "outline" : "destructive"}
+                      size="sm"
+                      className="h-7 text-xs gap-1"
+                      onClick={() => {
+                        setBlockCustomer(customer);
+                        setBlockReason("");
+                        setBlockDialog(true);
+                      }}
+                    >
+                      {customer.blocked ? (
+                        <><ShieldCheck className="w-3 h-3" /> Unblock</>
+                      ) : (
+                        <><ShieldBan className="w-3 h-3" /> Block</>
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
+                      onClick={() => {
+                        setDeleteCustomer(customer);
+                        setDeleteConfirmName("");
+                        setDeleteDialog(true);
+                      }}
+                    >
+                      <Trash2 className="w-3 h-3" /> Delete
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Adjust Points Dialog */}
+      <Dialog open={pointsDialog} onOpenChange={(open) => { if (!open) setPointsDialog(false); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Adjust Points</DialogTitle>
+            <DialogDescription>
+              {pointsAction === "add" ? "Add" : "Deduct"} points for {pointsCustomer?.name} (Current: {pointsCustomer?.points})
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex gap-2">
+              <Button
+                variant={pointsAction === "add" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setPointsAction("add")}
+                className="flex-1"
+              >
+                <Plus className="w-4 h-4 mr-1" /> Add
+              </Button>
+              <Button
+                variant={pointsAction === "deduct" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setPointsAction("deduct")}
+                className="flex-1"
+              >
+                <Minus className="w-4 h-4 mr-1" /> Deduct
+              </Button>
             </div>
-          </Card>
-        ))}
-      </div>
+            <div>
+              <Label>Amount</Label>
+              <Input
+                type="number"
+                min="1"
+                value={pointsAmount}
+                onChange={(e) => setPointsAmount(e.target.value)}
+                placeholder="Enter points amount"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPointsDialog(false)} disabled={adjustingPoints}>Cancel</Button>
+            <Button onClick={handleAdjustPoints} disabled={adjustingPoints || !pointsAmount}>
+              {adjustingPoints ? "Saving..." : "Confirm"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset PIN Dialog */}
+      <Dialog open={resetPinDialog} onOpenChange={(open) => {
+        if (!open) { setResetPinDialog(false); setResetPinCustomer(null); setNewPin(""); setConfirmPin(""); }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reset Customer PIN</DialogTitle>
+            <DialogDescription>
+              Set a new 6-digit PIN for {resetPinCustomer?.name} ({resetPinCustomer?.phone})
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>New PIN (6 digits)</Label>
+              <Input
+                type="password"
+                maxLength={6}
+                value={newPin}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
+                placeholder="Enter 6-digit PIN"
+              />
+            </div>
+            <div>
+              <Label>Confirm PIN</Label>
+              <Input
+                type="password"
+                maxLength={6}
+                value={confirmPin}
+                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ""))}
+                placeholder="Re-enter PIN"
+              />
+            </div>
+            {newPin && confirmPin && newPin !== confirmPin && (
+              <p className="text-xs text-red-500">PINs do not match</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResetPinDialog(false)} disabled={resettingPin}>Cancel</Button>
+            <Button onClick={handleResetPin} disabled={resettingPin || newPin.length !== 6 || newPin !== confirmPin}>
+              {resettingPin ? "Resetting..." : "Reset PIN"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Block/Unblock Dialog */}
+      <Dialog open={blockDialog} onOpenChange={(open) => { if (!open) { setBlockDialog(false); setBlockCustomer(null); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{blockCustomer?.blocked ? "Unblock" : "Block"} Customer</DialogTitle>
+            <DialogDescription>
+              {blockCustomer?.blocked
+                ? `Are you sure you want to unblock ${blockCustomer?.name}?`
+                : `Block ${blockCustomer?.name} from placing orders?`}
+            </DialogDescription>
+          </DialogHeader>
+          {!blockCustomer?.blocked && (
+            <div>
+              <Label>Reason (optional)</Label>
+              <Input
+                value={blockReason}
+                onChange={(e) => setBlockReason(e.target.value)}
+                placeholder="e.g. Repeated no-shows"
+              />
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBlockDialog(false)} disabled={blockingUser}>Cancel</Button>
+            <Button
+              variant={blockCustomer?.blocked ? "default" : "destructive"}
+              onClick={handleBlockUser}
+              disabled={blockingUser}
+            >
+              {blockingUser ? "Processing..." : blockCustomer?.blocked ? "Unblock" : "Block User"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete User Dialog */}
+      <Dialog open={deleteDialog} onOpenChange={(open) => { if (!open) { setDeleteDialog(false); setDeleteCustomer(null); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-red-600 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" /> Permanently Delete Customer
+            </DialogTitle>
+            <DialogDescription>
+              This will permanently delete <strong>{deleteCustomer?.name}</strong> and all their data (orders, vouchers, points). This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <Label>Type the customer name to confirm:</Label>
+            <Input
+              value={deleteConfirmName}
+              onChange={(e) => setDeleteConfirmName(e.target.value)}
+              placeholder={deleteCustomer?.name}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialog(false)} disabled={deletingUser}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteUser}
+              disabled={deletingUser || deleteConfirmName !== deleteCustomer?.name}
+            >
+              {deletingUser ? "Deleting..." : "Delete Permanently"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Points History Dialog */}
+      <Dialog open={historyDialog} onOpenChange={(open) => { if (!open) { setHistoryDialog(false); setHistoryCustomer(null); } }}>
+        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="w-5 h-5" style={{ color: BRAND }} />
+              Points History
+            </DialogTitle>
+            <DialogDescription>
+              {historyCustomer?.name} ({historyCustomer?.phone}) — Current: {historyCustomer?.points} pts
+            </DialogDescription>
+          </DialogHeader>
+
+          {historyLoading ? (
+            <div className="flex justify-center py-8">
+              <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: BRAND, borderTopColor: 'transparent' }} />
+            </div>
+          ) : historyEntries.length === 0 ? (
+            <div className="text-center py-8">
+              <History className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-500">No points history yet</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
+              {/* Summary */}
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <div className="bg-green-50 rounded-lg p-2 text-center">
+                  <p className="text-[10px] text-green-600 font-semibold">Earned</p>
+                  <p className="text-sm font-bold text-green-700">
+                    {historyEntries.filter(e => e.type === 'earned').reduce((s: number, e: any) => s + e.amount, 0)}
+                  </p>
+                </div>
+                <div className="bg-red-50 rounded-lg p-2 text-center">
+                  <p className="text-[10px] text-red-600 font-semibold">Deducted</p>
+                  <p className="text-sm font-bold text-red-700">
+                    {historyEntries.filter(e => e.type === 'deduction').reduce((s: number, e: any) => s + e.amount, 0)}
+                  </p>
+                </div>
+                <div className="bg-orange-50 rounded-lg p-2 text-center">
+                  <p className="text-[10px] text-orange-600 font-semibold">Expired</p>
+                  <p className="text-sm font-bold text-orange-700">
+                    {historyEntries.filter(e => e.type === 'expired').reduce((s: number, e: any) => s + (e.expiredAmount || e.amount), 0)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Timeline */}
+              {historyEntries.map((entry: any, idx: number) => {
+                const isEarned = entry.type === 'earned';
+                const isDeduction = entry.type === 'deduction';
+                const isExpired = entry.type === 'expired';
+
+                const sourceLabels: Record<string, string> = {
+                  order: 'Order Points',
+                  admin_adjust: 'Admin Adjustment',
+                  signup_bonus: 'Signup Bonus',
+                  deduction: 'Points Used',
+                  voucher_redeem: 'Voucher Redeemed',
+                  cancellation_refund: 'Cancellation Refund',
+                  tier_promotion: 'Tier Promotion Bonus',
+                };
+
+                return (
+                  <div key={entry.id || idx} className={`flex gap-3 p-2.5 rounded-lg border ${isExpired ? 'bg-orange-50/50 border-orange-200' : isDeduction ? 'bg-red-50/50 border-red-200' : 'bg-green-50/50 border-green-200'}`}>
+                    <div className="flex-shrink-0 mt-0.5">
+                      {isEarned ? (
+                        <div className="w-7 h-7 rounded-full bg-green-100 flex items-center justify-center">
+                          <TrendingUp className="w-3.5 h-3.5 text-green-600" />
+                        </div>
+                      ) : isDeduction ? (
+                        <div className="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center">
+                          <TrendingDown className="w-3.5 h-3.5 text-red-600" />
+                        </div>
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-orange-100 flex items-center justify-center">
+                          <AlertTriangle className="w-3.5 h-3.5 text-orange-600" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-gray-800">
+                          {sourceLabels[entry.source] || entry.source || 'Points'}
+                        </p>
+                        <span className={`text-xs font-bold ${isEarned ? 'text-green-600' : isDeduction ? 'text-red-600' : 'text-orange-600'}`}>
+                          {isEarned ? '+' : '-'}{isExpired ? (entry.expiredAmount || entry.amount) : entry.amount}
+                        </span>
+                      </div>
+                      {entry.orderId && (
+                        <p className="text-[10px] text-gray-500 flex items-center gap-1 mt-0.5">
+                          <ShoppingBag className="w-2.5 h-2.5" /> Order #{entry.orderId}
+                        </p>
+                      )}
+                      {entry.note && (
+                        <p className="text-[10px] text-gray-500 mt-0.5">{entry.note}</p>
+                      )}
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        {new Date(entry.date).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                      {entry.expiresAt && !entry.expired && isEarned && (
+                        <p className="text-[9px] text-orange-500 mt-0.5">
+                          Expires: {new Date(entry.expiresAt).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })}
+                          {entry.remaining !== undefined && ` (${entry.remaining} remaining)`}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHistoryDialog(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

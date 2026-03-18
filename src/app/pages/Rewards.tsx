@@ -694,17 +694,7 @@ export default function Rewards() {
                       </div>
                     ))
                   ) : (
-                    <>
-                      <div className="flex items-start gap-2">
-                        <div className="w-1 h-1 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: getTierColor("Gold") }} />
-                        <p style={{ color: "#333333" }}><span className="font-semibold">12% Discount</span> <span className="text-gray-500">x5</span></p>
-                      </div>
-                      <p className="text-gray-500 text-xs ml-3">Expires by end of March</p>
-                      <div className="flex items-start gap-2">
-                        <div className="w-1 h-1 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: getTierColor("Gold") }} />
-                        <p style={{ color: "#333333" }}><span className="font-semibold">Free Delivery</span> <span className="text-gray-500">(Dine in visit - No conditions)</span></p>
-                      </div>
-                    </>
+                    <p className="text-gray-400 text-xs italic">Benefits coming soon</p>
                   )}
                 </div>
               </div>
@@ -740,17 +730,7 @@ export default function Rewards() {
                       </div>
                     ))
                   ) : (
-                    <>
-                      <div className="flex items-start gap-2">
-                        <div className="w-1 h-1 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: getTierColor("Diamond") }} />
-                        <p style={{ color: "#333333" }}><span className="font-semibold">13% Discount</span> <span className="text-gray-500">x10</span></p>
-                      </div>
-                      <p className="text-gray-500 text-xs ml-3">Expires by end of March</p>
-                      <div className="flex items-start gap-2">
-                        <div className="w-1 h-1 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: getTierColor("Diamond") }} />
-                        <p style={{ color: "#333333" }}><span className="font-semibold">Free Delivery</span> <span className="text-gray-500">(Dine in visit - No conditions)</span></p>
-                      </div>
-                    </>
+                    <p className="text-gray-400 text-xs italic">Benefits coming soon</p>
                   )}
                 </div>
               </div>
@@ -786,17 +766,7 @@ export default function Rewards() {
                       </div>
                     ))
                   ) : (
-                    <>
-                      <div className="flex items-start gap-2">
-                        <div className="w-1 h-1 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: getTierColor("Platinum") }} />
-                        <p style={{ color: "#333333" }}><span className="font-semibold">15% Discount</span> <span className="text-gray-500">x10</span></p>
-                      </div>
-                      <p className="text-gray-500 text-xs ml-3">Expires by end of March</p>
-                      <div className="flex items-start gap-2">
-                        <div className="w-1 h-1 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: getTierColor("Platinum") }} />
-                        <p style={{ color: "#333333" }}><span className="font-semibold">Free Delivery</span> <span className="text-gray-500">(Dine in visit - No conditions)</span></p>
-                      </div>
-                    </>
+                    <p className="text-gray-400 text-xs italic">Benefits coming soon</p>
                   )}
                 </div>
               </div>
