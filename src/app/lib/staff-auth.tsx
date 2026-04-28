@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { fetchWithRetry } from "./fetchWithRetry";
+import { getItem, setItem, removeItem } from "./storage";
 
 export type StaffRole = 'superuser' | 'manager' | 'cashier' | 'kitchen' | 'delivery';
 
@@ -80,67 +81,66 @@ export function StaffAuthProvider({ children }: { children: ReactNode }) {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Load persisted session on mount
   useEffect(() => {
-    const savedToken = localStorage.getItem("staffAccessToken");
-    const savedStaff = localStorage.getItem("staffUser");
-    const savedExpiry = localStorage.getItem("staffTokenExpiry");
+    (async () => {
+      const savedToken = await getItem("staffAccessToken");
+      const savedStaff = await getItem("staffUser");
+      const savedExpiry = await getItem("staffTokenExpiry");
 
-    if (savedToken && savedStaff && savedExpiry) {
-      // Check 24h expiry
-      const expiryTime = parseInt(savedExpiry, 10);
-      if (Date.now() < expiryTime) {
-        const tokenParts = savedToken.split('.');
-        if (tokenParts.length === 3) {
-          setAccessToken(savedToken);
-          setStaff(JSON.parse(savedStaff));
+      if (savedToken && savedStaff && savedExpiry) {
+        const expiryTime = parseInt(savedExpiry, 10);
+        if (Date.now() < expiryTime) {
+          const tokenParts = savedToken.split('.');
+          if (tokenParts.length === 3) {
+            setAccessToken(savedToken);
+            setStaff(JSON.parse(savedStaff));
+          }
+        } else {
+          // Session expired — clean up
+          await removeItem("staffAccessToken");
+          await removeItem("staffUser");
+          await removeItem("staffTokenExpiry");
         }
-      } else {
-        // Session expired
-        localStorage.removeItem("staffAccessToken");
-        localStorage.removeItem("staffUser");
-        localStorage.removeItem("staffTokenExpiry");
       }
-    }
-    setLoading(false);
+      setLoading(false);
+    })();
   }, []);
 
   const signIn = async (phone: string, pin: string) => {
-    try {
-      const response = await fetchWithRetry(`${API_BASE}/staff/signin`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${publicAnonKey}`,
-        },
-        body: JSON.stringify({ phone, pin }),
-      });
+    const response = await fetchWithRetry(`${API_BASE}/staff/signin`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${publicAnonKey}`,
+      },
+      body: JSON.stringify({ phone, pin }),
+    });
 
-      const data = await response.json();
+    const data = await response.json();
 
-      if (!response.ok) {
-        throw new Error(data.error || "Staff sign-in failed");
-      }
-
-      const expiry = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
-
-      localStorage.setItem("staffAccessToken", data.accessToken);
-      localStorage.setItem("staffUser", JSON.stringify(data.staff));
-      localStorage.setItem("staffTokenExpiry", expiry.toString());
-
-      setAccessToken(data.accessToken);
-      setStaff(data.staff);
-    } catch (error) {
-      console.error("Staff signin error:", error);
-      throw error;
+    if (!response.ok) {
+      throw new Error(data.error || "Staff sign-in failed");
     }
+
+    const expiry = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+
+    // Persist before state update (same as before)
+    await setItem("staffAccessToken", data.accessToken);
+    await setItem("staffUser", JSON.stringify(data.staff));
+    await setItem("staffTokenExpiry", expiry.toString());
+
+    setAccessToken(data.accessToken);
+    setStaff(data.staff);
   };
 
   const signOut = () => {
     setAccessToken(null);
     setStaff(null);
-    localStorage.removeItem("staffAccessToken");
-    localStorage.removeItem("staffUser");
-    localStorage.removeItem("staffTokenExpiry");
+    // Fire-and-forget cleanup
+    removeItem("staffAccessToken");
+    removeItem("staffUser");
+    removeItem("staffTokenExpiry");
   };
 
   return (

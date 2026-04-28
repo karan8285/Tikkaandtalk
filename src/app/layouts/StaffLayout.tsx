@@ -5,6 +5,7 @@ import { APP_CONFIG } from "../lib/config";
 import { cacheRestaurantLogo, notifyLogoUpdate, isBrandingFetched, notifyBrandingFetched } from "../lib/useRestaurantLogo";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { fetchWithRetry } from "../lib/fetchWithRetry";
+import { useFCMNotifications } from "../lib/useFCMNotifications";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const LOGO_URL = `${API_BASE}/public/logo`;
@@ -88,6 +89,9 @@ function StaffBrandingPrefetch() {
 }
 
 export default function StaffLayout() {
+  // Register for FCM push notifications — works in foreground AND background
+  useFCMNotifications();
+
   return (
     <StaffAuthProvider>
       <StaffDocumentTitle />

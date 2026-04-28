@@ -84,8 +84,8 @@ function ErrorFallback() {
       <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full text-center">
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Oops!</h1>
         <p className="text-gray-600 mb-4">Something went wrong. Please try again.</p>
-        <a 
-          href="/" 
+        <a
+          href="/"
           className="inline-block bg-primary text-white px-6 py-2 rounded-lg hover:bg-primary/90 transition-colors"
         >
           Go Home
@@ -94,6 +94,18 @@ function ErrorFallback() {
     </div>
   );
 }
+
+// Staff APK redirect: detect Capacitor native platform at module load time
+// Falls back to normal home for web PWA
+const isStaffApk = (() => {
+  try {
+    // @ts-ignore — Capacitor not always available in web TS context
+    const Cap = (window as any).Capacitor;
+    return Cap?.isNativePlatform?.() === true;
+  } catch {
+    return false;
+  }
+})();
 
 export const router = createBrowserRouter(
   [
@@ -105,7 +117,7 @@ export const router = createBrowserRouter(
       children: [
         {
           index: true,
-          element: <Home />,
+          element: isStaffApk ? <Navigate to="/staff" replace /> : <Home />,
         },
         {
           path: "menu/:slug",
