@@ -91,18 +91,17 @@ export default function StaffLayout() {
   // Register for FCM push notifications — works in foreground AND background
   // Only runs on native Capacitor (not in web build)
   useEffect(() => {
-    let cancelled = false;
     const setup = async () => {
-      // Check if running on native Capacitor
       const isNative = !!(window as any).Capacitor?.isNativePlatform?.();
-      if (!isNative || cancelled) return;
+      if (!isNative) return;
       try {
         const mod = await import("../lib/useFCMNotifications.android");
-        if (!cancelled) mod.useFCMNotifications();
-      } catch {}
+        mod.useFCMNotifications();
+      } catch (e) {
+        console.log('[fcm] setup error:', e?.message || e);
+      }
     };
     setup();
-    return () => { cancelled = true; };
   }, []);
 
   return (

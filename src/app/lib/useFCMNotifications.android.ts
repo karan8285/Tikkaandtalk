@@ -20,114 +20,124 @@ async function playAlertSound() {
   } catch {}
 }
 
-export function useFCMNotifications() {
-  useEffect(() => {
-    let removed = false;
+async function setupFCM() {
+  try {
+    console.log('[fcm] setting up...');
+    const { FirebaseMessaging } = await import('@capacitor-firebase/messaging');
+    console.log('[fcm] plugin loaded');
 
-    const setup = async () => {
-      try {
-        console.log('[fcm] setting up...');
-        const { FirebaseMessaging } = await import('@capacitor-firebase/messaging');
-        console.log('[fcm] plugin loaded');
+    // Create notification channel first (Android 8+ requires this to show notifications)
+    // Must happen before any notifications arrive
+    await FirebaseMessaging.createChannel({
+      id: 'default',
+      name: 'Order Notifications',
+      description: 'New order and delivery notifications',
+      importance: 4, // High — shows on lock screen, makes sound, etc.
+      sound: 'alert',
+      vibration: true,
+      lights: true,
+      lightColor: '#D91A60',
+    });
+    console.log('[fcm] notification channel created');
 
-        // Check permission — Android 13+ needs POST_NOTIFICATIONS, older needs notifications/receive
-        let permResult = await FirebaseMessaging.checkPermissions();
-        console.log('[fcm] permission check:', JSON.stringify(permResult));
+    // Check + request permission
+    let permResult = await FirebaseMessaging.checkPermissions();
+    console.log('[fcm] permission check:', JSON.stringify(permResult));
 
-        const hasNotificationPerm =
-          permResult.notifications === 'granted' ||
-          (permResult as any).receive === 'granted' ||
-          (permResult as any).postNotifications === 'granted';
+    const hasPerm =
+      permResult.receive === 'granted' ||
+      (permResult as any).postNotifications === 'granted' ||
+      (permResult as any).notifications === 'granted';
 
-        if (!hasNotificationPerm) {
-          console.log('[fcm] no notification permission, requesting...');
-          const reqResult = await FirebaseMessaging.requestPermissions();
-          console.log('[fcm] permission result:', JSON.stringify(reqResult));
-          const granted =
-            reqResult.notifications === 'granted' ||
-            (reqResult as any).receive === 'granted' ||
-            (reqResult as any).postNotifications === 'granted';
-          if (!granted) {
-            console.log('[fcm] permission denied after request');
-            return;
-          }
-        }
+    if (!hasPerm) {
+      console.log('[fcm] requesting notification permission...');
+      const reqResult = await FirebaseMessaging.requestPermissions();
+      console.log('[fcm] permission result:', JSON.stringify(reqResult));
+      const granted =
+        reqResult.receive === 'granted' ||
+        (reqResult as any).postNotifications === 'granted' ||
+        (reqResult as any).notifications === 'granted';
+      if (!granted) {
+        console.log('[fcm] permission denied — notifications will not show');
+      } else {
+        console.log('[fcm] permission granted');
+      }
+    } else {
+      console.log('[fcm] permission already granted');
+    }
 
-        console.log('[fcm] permission granted, getting token...');
+    // Get FCM token
+    const tokenResult = await FirebaseMessaging.getToken();
+    console.log('[fcm] TOKEN:', tokenResult.token.substring(0, 30) + '...');
 
-        // Get FCM token
-        const tokenResult = await FirebaseMessaging.getToken();
-        console.log('[fcm] TOKEN:', tokenResult.token.substring(0, 30) + '...');
+    // Register token with server
+    const regResult = await fetch(`${API_BASE}/fcm/register`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${publicAnonKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ token: tokenResult.token, platform: 'android' }),
+    });
+    console.log('[fcm] register response:', regResult.status);
+    const regData = await regResult.json().catch(() => ({}));
+    console.log('[fcm] register data:', JSON.stringify(regData));
 
-        // Register token with server
-        const regResult = await fetch(`${API_BASE}/fcm/register`, {
+    // Listen for foreground push notifications
+    const notifHandle = await FirebaseMessaging.addListener(
+      'notificationReceived',
+      (event) => {
+        console.log('[fcm] notification received:', JSON.stringify(event.notification));
+        const data = event.notification.data || {};
+        const title = data.title || event.notification.title || '📋 New Order!';
+        const body = data.message || event.notification.body || 'New order received';
+        toast.success(`${title}\n${body}`, { icon: '🔔', duration: 8000 });
+        playAlertSound();
+      }
+    );
+
+    // Listen for notification tap (works when app is in foreground AND background)
+    const actionHandle = await FirebaseMessaging.addListener(
+      'notificationActionPerformed',
+      (event) => {
+        console.log('[fcm] notification tapped:', JSON.stringify(event));
+        window.location.href = '/staff';
+      }
+    );
+
+    // Token refresh listener
+    const tokenHandle = await FirebaseMessaging.addListener(
+      'tokenReceived',
+      async (event) => {
+        console.log('[fcm] token refreshed:', event.token.substring(0, 20) + '...');
+        await fetch(`${API_BASE}/fcm/register`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${publicAnonKey}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ token: tokenResult.token, platform: 'android' }),
-        });
-        console.log('[fcm] register response:', regResult.status);
-        const regData = await regResult.json().catch(() => ({}));
-        console.log('[fcm] register data:', JSON.stringify(regData));
-
-        // Listen for foreground notifications
-        const notifHandle = await FirebaseMessaging.addListener(
-          'notificationReceived',
-          (event) => {
-            if (removed) return;
-            console.log('[fcm] notification received:', JSON.stringify(event.notification));
-            const data = event.notification.data || {};
-            const title = data.title || event.notification.title || '📋 New Order!';
-            const body = data.message || event.notification.body || 'New order received';
-            toast.success(`${title}\n${body}`, { icon: '🔔', duration: 6000 });
-            playAlertSound();
-          }
-        );
-
-        // Listen for notification tap (background + foreground)
-        const actionHandle = await FirebaseMessaging.addListener(
-          'notificationActionPerformed',
-          (event) => {
-            if (removed) return;
-            console.log('[fcm] notification tapped:', JSON.stringify(event));
-            window.location.href = '/staff';
-          }
-        );
-
-        // Token refresh
-        const tokenHandle = await FirebaseMessaging.addListener(
-          'tokenReceived',
-          async (event) => {
-            console.log('[fcm] token refreshed:', event.token.substring(0, 20) + '...');
-            await fetch(`${API_BASE}/fcm/register`, {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${publicAnonKey}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ token: event.token, platform: 'android' }),
-            }).catch(() => {});
-          }
-        );
-
-        console.log('[fcm] setup complete — listening for notifications');
-        return () => {
-          removed = true;
-          notifHandle.remove();
-          actionHandle.remove();
-          tokenHandle.remove();
-        };
-      } catch (err) {
-        console.log('[fcm] SETUP ERROR:', err?.message || err);
+          body: JSON.stringify({ token: event.token, platform: 'android' }),
+        }).catch(() => {});
       }
-    };
+    );
 
-    const cleanupFn = setup();
+    console.log('[fcm] setup complete — listening for notifications');
+
     return () => {
-      removed = true;
-      cleanupFn.then(fn => fn?.());
+      notifHandle.remove();
+      actionHandle.remove();
+      tokenHandle.remove();
+    };
+  } catch (err) {
+    console.log('[fcm] SETUP ERROR:', err?.message || err);
+  }
+}
+
+export function useFCMNotifications() {
+  useEffect(() => {
+    const cleanupPromise = setupFCM();
+    return () => {
+      cleanupPromise.then(fn => fn?.());
     };
   }, []);
 }
