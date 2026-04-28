@@ -8,15 +8,6 @@
     "dev": "vite"
   },
   "dependencies": {
-    "@capacitor-firebase/app": "^8.2.0",
-    "@capacitor-firebase/messaging": "^8.2.0",
-    "@capacitor/android": "^8.3.1",
-    "@capacitor/app": "^8.1.0",
-    "@capacitor/background-runner": "^3.0.0",
-    "@capacitor/cli": "^8.3.1",
-    "@capacitor/core": "^8.3.1",
-    "@capacitor/preferences": "^8.0.1",
-    "@capacitor/push-notifications": "^8.0.3",
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
     "@mui/icons-material": "7.3.5",
