@@ -175,4 +175,17 @@ export default defineConfig({
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
+
+  // Capacitor packages are native-only — skip resolution during web builds.
+  // The dynamic imports in storage.ts and FCM code guard at runtime.
+  build: {
+    rollupOptions: {
+      external: [
+        '@capacitor/preferences',
+        '@capacitor-firebase/messaging',
+        '@capacitor/core',
+        '@capacitor/android',
+      ],
+    },
+  },
 })
