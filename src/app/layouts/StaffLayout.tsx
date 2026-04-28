@@ -97,7 +97,7 @@ export default function StaffLayout() {
       const isNative = !!(window as any).Capacitor?.isNativePlatform?.();
       if (!isNative || cancelled) return;
       try {
-        const mod = await import("../lib/useFCMNotifications");
+        const mod = await import("../lib/useFCMNotifications.android");
         if (!cancelled) mod.useFCMNotifications();
       } catch {}
     };
