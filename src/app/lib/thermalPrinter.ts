@@ -746,6 +746,7 @@ export async function printInvoice(order: {
       } else {
         itemParts.push(threeColumns(qty, name, price));
       }
+      itemParts.push(line("     @ Rp " + fmtCurrency(item.price) + "/unit"));
 
       if (item.addons && item.addons.length > 0) {
         for (const addon of item.addons) {
