@@ -317,7 +317,7 @@ export default function StaffAdmin() {
           userId={staff.id}
         />
       )}
-    </div>
+    </>
   );
 }
 
@@ -793,6 +793,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   }
 
   return (
+    <>
       {!soundEnabled && (
         <button
           onClick={enableSound}
