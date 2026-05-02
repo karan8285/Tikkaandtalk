@@ -1518,7 +1518,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
           onModified={() => { setModifyOrderTarget(null); fetchOrders(); }}
         />
       )}
-    </div>
+    </>
   );
 }
 
