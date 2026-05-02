@@ -167,16 +167,9 @@ public class FCMPlugin extends Plugin {
 
         Map<String, String> data = remoteMessage.getData();
         String orderId = data.get("orderId");
-        String notifType = data.get("type");
         int notifId = (orderId != null
             ? orderId.hashCode()
             : (int)(System.currentTimeMillis() % Integer.MAX_VALUE));
-
-        // Choose sound based on notification type from data payload
-        String soundFile = "tnt_alert";
-        if ("new_order".equals(notifType)) {
-            soundFile = "new_order";
-        }
 
         // Tap intent
         Intent intent = ctx.getPackageManager()
@@ -198,7 +191,7 @@ public class FCMPlugin extends Plugin {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setContentIntent(pendingIntent)
-            .setSound(Uri.parse("android.resource://" + getContext().getPackageName() + "/raw/" + soundFile));
+            .setSound(Uri.parse("android.resource://" + getContext().getPackageName() + "/raw/tnt_alert"));
 
         NotificationManager notificationManager =
             (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
