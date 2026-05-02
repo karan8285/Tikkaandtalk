@@ -39,6 +39,7 @@ function publicFileServePlugin() {
     '/icon-192.svg': 'image/svg+xml',
     '/favicon.svg': 'image/svg+xml',
     '/apple-touch-icon.svg': 'image/svg+xml',
+    '/tnt-staff-debug.apk': 'application/vnd.android.package-archive',
   }
 
   return {
@@ -183,7 +184,6 @@ export default defineConfig({
       external: [
         '@capacitor/preferences',
         '@capacitor-firebase/messaging',
-        '@capacitor/core',
         '@capacitor/android',
       ],
     },

@@ -6,6 +6,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router";
 import { useStaffAuth, hasPermission, ROLE_LABELS, ROLE_COLORS, type StaffRole } from "../lib/staff-auth";
+import { useFCMNotifications, useFCMNotificationListener } from "../lib/useFCMNotifications.android";
 import { Header } from "../components/Header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Button } from "../components/ui/button";
@@ -100,6 +101,14 @@ export default function StaffAdmin() {
   const { staff, accessToken, loading: authLoading, signOut } = useStaffAuth();
   const role = staff?.role;
   const [changePinOpen, setChangePinOpen] = useState(false);
+
+  // FCM push notifications — register device token with server
+  useFCMNotifications();
+
+  // FCM foreground notification listener — toast inside React event system
+  useFCMNotificationListener((title, body) => {
+    toast.success(`${title}\n${body}`, { icon: '🔔', duration: 8000 });
+  });
 
   // Redirect if not authenticated or not authorized
   useEffect(() => {
@@ -509,6 +518,27 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
         setPendingStatuses(prev => { const n = { ...prev }; delete n[order.id]; return n; });
         setAdminMessages(prev => { const n = { ...prev }; delete n[order.id]; return n; });
         setDeliveryNotes(prev => { const n = { ...prev }; delete n[order.id]; return n; });
+
+        // Auto-print receipt when status transitions to confirmed
+        if (payload.status === "confirmed") {
+          const restaurantName = (() => { try { return localStorage.getItem("tikka_restaurant_name") || APP_CONFIG.restaurant.name; } catch { return APP_CONFIG.restaurant.name; } })();
+          const restaurantTagline = (() => { try { return localStorage.getItem("tikka_restaurant_tagline") || APP_CONFIG.restaurant.tagline; } catch { return APP_CONFIG.restaurant.tagline; } })();
+          const restaurantAddress = (() => { try { return localStorage.getItem("tikka_restaurant_address") || APP_CONFIG.restaurant.defaultAddress; } catch { return APP_CONFIG.restaurant.defaultAddress; } })();
+          const restaurantPhone = (() => { try { return localStorage.getItem("tikka_whatsapp_display") || APP_CONFIG.whatsapp.defaultDisplay; } catch { return APP_CONFIG.whatsapp.defaultDisplay; } })();
+          const stored = (() => { try { return JSON.parse(localStorage.getItem("tikka_staff_name") || "{}"); } catch { return {}; } })();
+          const staffName = stored?.role === "superuser" ? "Admin" : (stored?.name || "Staff");
+
+          const ready = await ensureConnected();
+          if (ready) {
+            try {
+              await printInvoice(order, { name: restaurantName, tagline: restaurantTagline, address: restaurantAddress, phone: restaurantPhone }, staffName);
+              toast.success("Receipt auto-printed!");
+            } catch (printErr: any) {
+              toast.error(`Order saved but auto-print failed: ${printErr.message}`);
+            }
+          }
+        }
+
         fetchOrders();
       } else {
         const err = await response.json().catch(() => ({}));
@@ -549,7 +579,13 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
         phone: restaurantPhone,
       };
 
-      const staffName = staff?.role === 'superuser' ? 'Admin' : (staff?.name || "Staff");
+      // Resolve staff name — use localStorage as fallback
+      let staffName = "Staff";
+      try {
+        const stored = localStorage.getItem("tikka_staff_name");
+        const currentStaff = staff || JSON.parse(stored || "{}");
+        staffName = currentStaff?.role === 'superuser' ? 'Admin' : (currentStaff?.name || "Staff");
+      } catch {}
 
       try {
         await printInvoice(order, invoiceData, staffName);
@@ -757,8 +793,6 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
   }
 
   return (
-    <div className="space-y-4">
-      {/* Sound alert prompt */}
       {!soundEnabled && (
         <button
           onClick={enableSound}

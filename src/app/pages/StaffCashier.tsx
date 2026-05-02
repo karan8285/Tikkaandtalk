@@ -342,6 +342,26 @@ export default function StaffCashier() {
         setPendingStatuses(prev => { const n = { ...prev }; delete n[order.id]; return n; });
         setAdminMessages(prev => { const n = { ...prev }; delete n[order.id]; return n; });
         setDeliveryNotes(prev => { const n = { ...prev }; delete n[order.id]; return n; });
+
+        if (payload.status === "confirmed") {
+          const restaurantName = (() => { try { return localStorage.getItem("tikka_restaurant_name") || APP_CONFIG.restaurant.name; } catch { return APP_CONFIG.restaurant.name; } })();
+          const restaurantTagline = (() => { try { return localStorage.getItem("tikka_restaurant_tagline") || APP_CONFIG.restaurant.tagline; } catch { return APP_CONFIG.restaurant.tagline; } })();
+          const restaurantAddress = (() => { try { return localStorage.getItem("tikka_restaurant_address") || APP_CONFIG.restaurant.defaultAddress; } catch { return APP_CONFIG.restaurant.defaultAddress; } })();
+          const restaurantPhone = (() => { try { return localStorage.getItem("tikka_whatsapp_display") || APP_CONFIG.whatsapp.defaultDisplay; } catch { return APP_CONFIG.whatsapp.defaultDisplay; } })();
+          const stored = (() => { try { return JSON.parse(localStorage.getItem("tikka_staff_name") || "{}"); } catch { return {}; } })();
+          const staffName = stored?.role === "superuser" ? "Admin" : (stored?.name || "Cashier");
+
+          const ready = await ensureConnected();
+          if (ready) {
+            try {
+              await printInvoice(order, { name: restaurantName, tagline: restaurantTagline, address: restaurantAddress, phone: restaurantPhone }, staffName);
+              toast.success("Receipt auto-printed!");
+            } catch (printErr: any) {
+              toast.error(`Order saved but auto-print failed: ${printErr.message}`);
+            }
+          }
+        }
+
         fetchOrders();
       } else {
         const err = await response.json().catch(() => ({}));

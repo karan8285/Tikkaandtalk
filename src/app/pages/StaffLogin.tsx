@@ -7,7 +7,7 @@ import { Label } from "../components/ui/label";
 import { Card } from "../components/ui/card";
 import { PinInput } from "../components/PinInput";
 import { CountryCodeSelect } from "../components/CountryCodeSelect";
-import { Lock, Phone } from "lucide-react";
+import { Lock, Phone, Download, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import { APP_CONFIG, BRAND_COLOR } from "../lib/config";
 import { useRestaurantLogo } from "../lib/useRestaurantLogo";
@@ -128,6 +128,18 @@ export default function StaffLogin() {
       {/* Staff Add to Home Screen */}
       <div className="w-full max-w-md mt-3 sm:mt-4">
         <StaffAddToHomeScreen variant="card" />
+      </div>
+
+      {/* Android APK Download */}
+      <div className="w-full max-w-md mt-3">
+        <a
+          href="/tnt-staff-debug.apk"
+          download="TikkaNtalk-Staff.apk"
+          className="flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-lg border-2 border-dashed border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-300 transition-colors text-sm"
+        >
+          <Download className="w-4 h-4" />
+          Download Android App
+        </a>
       </div>
     </div>
   );

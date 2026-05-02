@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { BRAND_COLOR } from "../lib/config";
 import {
   isBluetoothAvailable,
+  requestBluetoothPermission,
   getSavedPrinter,
   clearSavedPrinter,
   isPrinterConnected,
@@ -23,22 +24,56 @@ import {
   forgetPrinter,
   testPrint,
   ensureConnected,
+  reconnectPrinter,
 } from "../lib/thermalPrinter";
 
 export function PrinterSettings() {
   const [btAvailable] = useState(isBluetoothAvailable());
-  const [connected, setConnected] = useState(isPrinterConnected());
+  const [permissionGranted, setPermissionGranted] = useState(false);
+  const [checkingPermission, setCheckingPermission] = useState(true);
+  const [connected, setConnected] = useState(false);
   const [savedPrinter, setSavedPrinter] = useState(getSavedPrinter());
   const [connecting, setConnecting] = useState(false);
   const [testing, setTesting] = useState(false);
 
-  // Poll connection status
+  // Poll connection status — reconnect silently if dropped
   useEffect(() => {
-    const interval = setInterval(() => {
-      const isConn = isPrinterConnected();
-      setConnected(isConn);
-    }, 2000);
+    let reconnecting = false;
+    const interval = setInterval(async () => {
+      const wasConnected = connected;
+      const isConn = await isPrinterConnected();
+      if (wasConnected && !isConn && !reconnecting) {
+        reconnecting = true;
+        const revived = await ensureConnected();
+        setConnected(revived);
+        reconnecting = false;
+      } else {
+        setConnected(isConn);
+      }
+    }, 1000);
     return () => clearInterval(interval);
+  }, [connected]);
+
+  // Check Bluetooth permission + connection status on mount
+  useEffect(() => {
+    isPrinterConnected().then(setConnected);
+    setCheckingPermission(true);
+    requestBluetoothPermission()
+      .then((result) => {
+        setPermissionGranted(result.granted);
+        setCheckingPermission(false);
+      })
+      .catch(() => {
+        setCheckingPermission(false);
+      });
+  }, []);
+
+  const handleGrantPermission = useCallback(async () => {
+    const result = await requestBluetoothPermission();
+    setPermissionGranted(result.granted);
+    if (!result.granted) {
+      toast.error("Permission denied. Bluetooth requires location permission on Android.");
+    }
   }, []);
 
   const handleConnect = useCallback(async () => {
@@ -100,20 +135,68 @@ export function PrinterSettings() {
         <Badge variant="outline" className="text-xs">58mm</Badge>
       </div>
 
-      {/* Bluetooth Availability Check */}
-      {!btAvailable && (
-        <Card className="p-4 bg-red-50 border-red-200">
+      {/* Bluetooth Availability / Permission Check */}
+      {checkingPermission && (
+        <Card className="p-4 bg-blue-50 border-blue-200">
+          <div className="flex items-center gap-3">
+            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+            <p className="text-sm text-blue-700">Checking Bluetooth permissions...</p>
+          </div>
+        </Card>
+      )}
+      {!checkingPermission && !btAvailable && !permissionGranted && (
+        <Card className="p-4 bg-amber-50 border-amber-200">
           <div className="flex items-start gap-3">
-            <BluetoothOff className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+            <BluetoothOff className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm font-semibold text-red-800">Web Bluetooth Not Available</p>
-              <p className="text-xs text-red-600 mt-1">
-                Your browser does not support Web Bluetooth. Please use <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong> on Android to connect to your Bluetooth thermal printer.
-              </p>
-              <p className="text-xs text-red-600 mt-1">
-                Note: iOS Safari does not support Web Bluetooth. Use an Android device or desktop Chrome.
-              </p>
+              <p className="text-sm font-semibold text-amber-800">Bluetooth Permission Required</p>
+              {permissionGranted ? (
+                <>
+                  <p className="text-xs text-green-600 mt-1 font-medium">
+                    Permission granted — tap below to scan for printers.
+                  </p>
+                  <Button
+                    onClick={handleConnect}
+                    disabled={connecting}
+                    size="sm"
+                    className="mt-2"
+                    style={{ backgroundColor: BRAND_COLOR }}
+                  >
+                    {connecting ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Scanning...</>
+                    ) : (
+                      <><Bluetooth className="w-4 h-4 mr-2" /> Scan & Connect Printer</>
+                    )}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-amber-600 mt-1">
+                    Web Bluetooth needs permission to find your thermal printer.
+                  </p>
+                  <Button
+                    onClick={handleGrantPermission}
+                    size="sm"
+                    className="mt-2"
+                    style={{ backgroundColor: BRAND_COLOR }}
+                  >
+                    Grant Bluetooth Permission
+                  </Button>
+                </>
+              )}
             </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Permission granted but navigator.bluetooth still null */}
+      {!checkingPermission && !btAvailable && permissionGranted && (
+        <Card className="p-4 bg-green-50 border-green-200">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
+            <p className="text-sm font-semibold text-green-800">
+              Permission granted — tap "Scan & Connect Printer" below.
+            </p>
           </div>
         </Card>
       )}
@@ -179,7 +262,7 @@ export function PrinterSettings() {
         {!connected ? (
           <Button
             onClick={handleConnect}
-            disabled={!btAvailable || connecting}
+            disabled={connecting}
             className="w-full h-11 text-sm font-semibold text-white"
             style={{ backgroundColor: BRAND_COLOR }}
           >

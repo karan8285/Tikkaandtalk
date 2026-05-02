@@ -88,9 +88,43 @@ let lastServiceUuid: string | null = null;
 /** Cached characteristic UUID that worked last time */
 let lastCharUuid: string | null = null;
 
-/** Check if Web Bluetooth is available */
+/** Check if Web Bluetooth or native Bluetooth is available */
 export function isBluetoothAvailable(): boolean {
-  return !!(navigator as any).bluetooth;
+  // navigator.bluetooth: available in Chrome/Edge desktop, Chrome Android (with HTTPS)
+  if ((navigator as any).bluetooth) return true;
+  // On Android WebView, navigator.bluetooth may not exist even with permissions.
+  // If the native BluetoothPermissions plugin exists, we can use getPairedDevices
+  // via BluetoothPrinterPlugin instead, so consider it available.
+  try {
+    const plugin = (window as any).Capacitor?.Plugins?.BluetoothPermissions;
+    if (plugin) return true;
+  } catch {}
+  return false;
+}
+
+/**
+ * Request Android Bluetooth runtime permissions via the native plugin.
+ * On Android 12+ (API 31+), Web Bluetooth requires BLUETOOTH_SCAN and
+ * BLUETOOTH_CONNECT permissions to be granted before navigator.bluetooth
+ * becomes available.
+ */
+export async function requestBluetoothPermission(): Promise<{ granted: boolean }> {
+  try {
+    const plugin = (window as any).Capacitor?.Plugins?.BluetoothPermissions;
+    if (!plugin) return { granted: false };
+
+    // Check current permission state first
+    const hasResult = await plugin.hasPermission();
+    if (hasResult?.granted) {
+      return { granted: true };
+    }
+
+    // Request permission
+    const result = await plugin.requestPermission();
+    return { granted: result?.granted ?? false };
+  } catch {
+    return { granted: false };
+  }
 }
 
 /** Get saved printer info */
@@ -118,7 +152,14 @@ export function clearSavedPrinter(): void {
 }
 
 /** Check if printer is connected */
-export function isPrinterConnected(): boolean {
+export async function isPrinterConnected(): Promise<boolean> {
+  const native = getNativePlugin();
+  if (native) {
+    try {
+      const status = await native.getStatus();
+      return !!status.connected;
+    } catch { return false; }
+  }
   return !!(device && server?.connected && writeCharacteristic);
 }
 
@@ -128,9 +169,9 @@ export function hasDeviceReference(): boolean {
 }
 
 /** Get current connection status */
-export function getPrinterStatus(): { connected: boolean; name: string | null } {
+export async function getPrinterStatus(): Promise<{ connected: boolean; name: string | null }> {
   return {
-    connected: isPrinterConnected(),
+    connected: await isPrinterConnected(),
     name: device?.name || getSavedPrinter()?.name || null,
   };
 }
@@ -142,9 +183,7 @@ export function getPrinterStatus(): { connected: boolean; name: string | null } 
  */
 function setCharacteristic(char: BluetoothRemoteGATTCharacteristic): void {
   writeCharacteristic = char;
-  // Prefer write-with-response if available (better flow control for large prints)
   canWriteWithResponse = !!char.properties.write;
-  console.log(`[Printer] Characteristic set: write=${char.properties.write}, writeWithoutResponse=${char.properties.writeWithoutResponse}, using=${canWriteWithResponse ? "writeValue" : "writeValueWithoutResponse"}`);
 }
 
 /**
@@ -155,28 +194,20 @@ async function reconnectToDevice(): Promise<boolean> {
   if (!device || !device.gatt) return false;
 
   try {
-    console.log("[Printer] Attempting silent reconnect to", device.name);
     server = await device.gatt.connect();
-
-    // Re-discover the writable characteristic
     writeCharacteristic = null;
 
-    // Try cached UUIDs first (fastest path)
     if (lastServiceUuid && lastCharUuid) {
       try {
         const svc = await server.getPrimaryService(lastServiceUuid);
         const char = await svc.getCharacteristic(lastCharUuid);
         if (char.properties.write || char.properties.writeWithoutResponse) {
           setCharacteristic(char);
-          console.log("[Printer] Reconnected using cached UUIDs");
           return true;
         }
-      } catch {
-        console.log("[Printer] Cached UUIDs failed, scanning all services");
-      }
+      } catch {}
     }
 
-    // Full scan fallback
     const services = await server.getPrimaryServices();
     for (const service of services) {
       try {
@@ -186,17 +217,13 @@ async function reconnectToDevice(): Promise<boolean> {
             setCharacteristic(char);
             lastServiceUuid = service.uuid;
             lastCharUuid = char.uuid;
-            console.log("[Printer] Reconnected via full scan");
             return true;
           }
         }
       } catch { continue; }
     }
-
-    console.warn("[Printer] Reconnected GATT but no writable characteristic found");
     return false;
-  } catch (err) {
-    console.warn("[Printer] Silent reconnect failed:", err);
+  } catch {
     return false;
   }
 }
@@ -205,42 +232,118 @@ async function reconnectToDevice(): Promise<boolean> {
  * Ensure the printer is connected and ready to receive data.
  * Attempts silent reconnection if the device was previously paired.
  * Returns true if the printer is ready.
- *
- * NOTE: We do NOT send a test write here — that was causing "GATT error unknown"
- * because the rapid CMD.INIT + printInvoice CMD.INIT double-write overwhelmed
- * the printer's tiny BLE buffer. Instead we trust server.connected.
  */
 export async function ensureConnected(): Promise<boolean> {
-  // Already connected and ready — trust the GATT server's connected flag
-  if (isPrinterConnected()) {
-    console.log("[Printer] Connection looks alive (server.connected=true)");
+  const native = getNativePlugin();
+
+  if (native) {
+    // ── Native path: check status, reconnect if needed ──
+    try {
+      const status = await native.getStatus();
+      if (status.connected) return true;
+    } catch {}
+
+    const saved = getSavedPrinter();
+    if (saved?.address) {
+      try {
+        const result = await native.connectDevice({ address: saved.address });
+        if (result.connected) return true;
+      } catch {}
+    }
+    return false;
+  }
+
+  // ── Web Bluetooth path ──
+  if (await isPrinterConnected()) {
     return true;
   }
 
-  console.log("[Printer] Not connected. device exists:", !!device, "server.connected:", server?.connected);
-
-  // Device ref still exists — try silent reconnect (no user gesture needed)
   if (device) {
     const ok = await reconnectToDevice();
     if (ok) {
-      // Give the BLE link a moment to stabilize after reconnect
       await delay(300);
       return true;
     }
   }
 
-  // No device or reconnect failed — caller must trigger connectPrinter()
   return false;
+}
+
+/** Reconnect to previously paired printer (native) */
+export async function reconnectPrinter(): Promise<boolean> {
+  const native = getNativePlugin();
+  if (native) {
+    try {
+      const status = await native.getStatus();
+      if (status.connected) return true;
+      const saved = getSavedPrinter();
+      if (saved?.address) {
+        const result = await native.connectDevice({ address: saved.address });
+        return !!result.connected;
+      }
+    } catch {}
+    return false;
+  }
+  if (await isPrinterConnected()) return true;
+  if (device) return reconnectToDevice();
+  return false;
+}
+
+/** Get native BluetoothPrinter plugin if available */
+function getNativePlugin() {
+  try {
+    return (window as any).Capacitor?.Plugins?.BluetoothPrinter || null;
+  } catch { return null; }
 }
 
 /** Scan and connect to a Bluetooth thermal printer */
 export async function connectPrinter(): Promise<{ success: boolean; name: string; error?: string }> {
-  if (!isBluetoothAvailable()) {
-    return { success: false, name: "", error: "Web Bluetooth is not supported in this browser. Use Chrome or Edge on Android." };
+  const native = getNativePlugin();
+
+  if (native) {
+    // ── Android native path (RFCOMM/Bluetooth Classic) ──
+    try {
+      const status = await native.getStatus();
+      if (status.connected) {
+        return { success: true, name: status.deviceName || "Thermal Printer" };
+      }
+    } catch {}
+
+    const result = await native.getPairedDevices();
+
+    // Native plugin may double-encode: result.devices is a stringified JSON string
+    let devices: any[] = [];
+    const raw = result.devices;
+    if (Array.isArray(raw)) {
+      devices = raw;
+    } else if (typeof raw === "string") {
+      try { devices = JSON.parse(raw); } catch { devices = []; }
+    }
+    if (!devices || devices.length === 0) {
+      return { success: false, name: "", error: "No paired Bluetooth devices found. Please pair your printer in Android Settings first." };
+    }
+
+    // Auto-connect to first paired device
+    const printer = devices[0];
+    try {
+      const status = await native.connectDevice({ address: printer.address });
+      if (status.connected) {
+        savePrinterInfo({ name: printer.name, id: printer.address, connectedAt: new Date().toISOString() });
+        return { success: true, name: printer.name };
+      } else {
+        return { success: false, name: printer.name, error: "Connection failed — make sure the printer is turned on." };
+      }
+    } catch (err: any) {
+      return { success: false, name: printer.name, error: err.message || "Failed to connect" };
+    }
+  }
+
+  // ── Web Bluetooth path (Chrome/Edge desktop) ──
+  if (!(navigator as any).bluetooth) {
+    return { success: false, name: "", error: "Bluetooth not available on this browser." };
   }
 
   try {
-    // Request device — accept all devices since printer service UUIDs vary
     device = await (navigator as any).bluetooth.requestDevice({
       acceptAllDevices: true,
       optionalServices: PRINTER_SERVICE_UUIDS,
@@ -250,11 +353,9 @@ export async function connectPrinter(): Promise<{ success: boolean; name: string
       return { success: false, name: "", error: "No device selected" };
     }
 
-    // Listen for disconnection — only clear server/char, keep device for reconnect
     device.addEventListener("gattserverdisconnected", () => {
       server = null;
       writeCharacteristic = null;
-      console.log("[Printer] BLE disconnected event fired");
     });
 
     // Connect to GATT server
@@ -319,15 +420,13 @@ export async function connectPrinter(): Promise<{ success: boolean; name: string
   }
 }
 
-/** Reconnect to previously paired printer */
-export async function reconnectPrinter(): Promise<boolean> {
-  if (isPrinterConnected()) return true;
-  if (device) return reconnectToDevice();
-  return false;
-}
-
-/** Disconnect printer (keeps device ref for reconnect) */
+/** Disconnect printer */
 export function disconnectPrinter(): void {
+  const native = getNativePlugin();
+  if (native) {
+    try { native.disconnectDevice(); } catch {}
+    return;
+  }
   if (server?.connected) {
     server.disconnect();
   }
@@ -373,27 +472,19 @@ async function writeChunk(chunk: Uint8Array): Promise<void> {
         await writeCharacteristic.writeValueWithoutResponse(chunk);
       }
       return; // success
-    } catch (err: any) {
-      const errMsg = err?.message || String(err);
-      console.warn(`[Printer] Chunk write failed (attempt ${attempt}/${BLE_CHUNK_MAX_RETRIES}): ${errMsg}`);
-
+    } catch {
       if (attempt < BLE_CHUNK_MAX_RETRIES) {
-        // Exponential backoff: 200ms, 400ms
         const backoff = BLE_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
-        console.log(`[Printer] Retrying in ${backoff}ms...`);
         await delay(backoff);
-
-        // If the connection dropped during the write, try to reconnect
         if (!server?.connected && device) {
-          console.log("[Printer] Connection lost during write, attempting reconnect...");
           const reconnected = await reconnectToDevice();
           if (!reconnected) {
             throw new Error("Printer disconnected during print and reconnect failed");
           }
-          await delay(300); // stabilize after reconnect
+          await delay(300);
         }
       } else {
-        throw new Error(`BLE write failed after ${BLE_CHUNK_MAX_RETRIES} retries: ${errMsg}`);
+        throw new Error(`BLE write failed after ${BLE_CHUNK_MAX_RETRIES} retries`);
       }
     }
   }
@@ -404,21 +495,27 @@ async function writeChunk(chunk: Uint8Array): Promise<void> {
  * Uses 20-byte chunks (safe for all BLE devices) with 50ms inter-chunk delay.
  */
 async function writeData(data: Uint8Array): Promise<void> {
+  const native = getNativePlugin();
+
+  if (native) {
+    // ── Android native path: encode to base64 and use BluetoothPrinterPlugin.writeBytes ──
+    const base64 = btoa(String.fromCharCode(...data));
+    const result = await native.writeBytes({ data: base64 });
+    if (!result.ok) throw new Error("Native write failed");
+    return;
+  }
+
   if (!writeCharacteristic) throw new Error("Printer not connected");
 
   const totalChunks = Math.ceil(data.length / BLE_CHUNK_SIZE);
-  console.log(`[Printer] Sending ${data.length} bytes in ${totalChunks} chunks (${BLE_CHUNK_SIZE}B each, ${BLE_CHUNK_DELAY_MS}ms delay)`);
 
   for (let i = 0; i < data.length; i += BLE_CHUNK_SIZE) {
     const chunk = data.slice(i, i + BLE_CHUNK_SIZE);
     await writeChunk(chunk);
-    // Delay between chunks — gives printer time to process
     if (i + BLE_CHUNK_SIZE < data.length) {
       await delay(BLE_CHUNK_DELAY_MS);
     }
   }
-
-  console.log("[Printer] All data sent successfully");
 }
 
 /**
@@ -762,6 +859,5 @@ export async function printInvoice(order: {
     concatBytes(...footerParts),
   ];
 
-  console.log(`[Printer] Invoice data: ${segments.reduce((s, seg) => s + seg.length, 0)} bytes in ${segments.length} segments`);
   await writeSegments(segments);
 }
