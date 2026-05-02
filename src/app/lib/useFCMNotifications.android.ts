@@ -1,31 +1,46 @@
 /**
  * useFCMNotifications — Android FCM token + foreground listener.
+ * Registers with staff role so push can be targeted by role.
  */
 import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { getItem } from './storage';
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
+
+async function getStaffRole(): Promise<string | null> {
+  try {
+    const raw = await getItem('__tnt_staff');
+    if (!raw) return null;
+    const ctx = JSON.parse(raw);
+    return ctx?.staff?.role || null;
+  } catch {
+    return null;
+  }
+}
 
 export function useFCMNotifications() {
   useEffect(() => {
     const plugin = (window as any).Capacitor?.Plugins?.FCMPlugin;
     if (!plugin) return;
 
-    // Register token
-    plugin.getToken?.().then((result: any) => {
+    const register = async () => {
+      const result = await plugin.getToken?.();
       const token = result?.token;
-      if (token) {
-        fetch(`${API_BASE}/fcm/register`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${publicAnonKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ token, platform: 'android' }),
-        }).catch(() => {});
-      }
-    });
+      if (!token) return;
+      const role = await getStaffRole();
+      fetch(`${API_BASE}/fcm/register`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ token, platform: 'android', role }),
+      }).catch(() => {});
+    };
+
+    register();
 
     // Foreground notification — dispatch custom event instead of toast directly
     plugin.addListener?.('notificationReceived', (event: any) => {
@@ -33,7 +48,6 @@ export function useFCMNotifications() {
       const data = notif.data || {};
       const title = data.title || notif.title || '📋 New Order!';
       const body = data.message || notif.body || 'New order received';
-      // Dispatch event that React can catch inside its event system
       document.dispatchEvent(new CustomEvent('fcm:notification', {
         detail: { title, body },
         bubbles: true,
