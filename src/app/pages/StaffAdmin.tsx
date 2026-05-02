@@ -317,7 +317,7 @@ export default function StaffAdmin() {
           userId={staff.id}
         />
       )}
-    </>
+    </div>
   );
 }
 
