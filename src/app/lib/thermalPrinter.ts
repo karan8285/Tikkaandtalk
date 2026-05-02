@@ -850,6 +850,48 @@ export async function printInvoice(order: {
   footerParts.push(line(new Date().toLocaleString()));
   footerParts.push(CMD.FEED_5);
 
+  // ── Segment 6: Kitchen Copy ──
+  const kitchenParts: Uint8Array[] = [];
+  kitchenParts.push(new Uint8Array([LF, LF, LF]));
+  kitchenParts.push(doubleSeparator());
+  kitchenParts.push(CMD.BOLD_ON, CMD.ALIGN_CENTER);
+  kitchenParts.push(line("KITCHEN COPY"));
+  kitchenParts.push(CMD.ALIGN_LEFT, CMD.BOLD_OFF);
+  kitchenParts.push(separator());
+  const shortId = order.orderNumber || order.id.substring(0, 8).toUpperCase();
+  kitchenParts.push(twoColumns("Order #:", shortId));
+  kitchenParts.push(twoColumns("Date:", formatDate(order.createdAt)));
+  kitchenParts.push(twoColumns("Time:", formatTime(order.createdAt)));
+  const deliveryType = order.deliveryMethod === "delivery" ? "DELIVERY" : order.deliveryMethod === "dine_in" ? "DINE IN" : "PICKUP";
+  kitchenParts.push(twoColumns("Type:", deliveryType));
+  kitchenParts.push(separator());
+
+  if (order.items && order.items.length > 0) {
+    kitchenParts.push(CMD.BOLD_ON);
+    for (const item of order.items) {
+      const name = item.name || item.title || "Item";
+      kitchenParts.push(line(`${item.quantity}x  ${name}`));
+    }
+    kitchenParts.push(CMD.BOLD_OFF);
+  } else if (order.itemTitle) {
+    kitchenParts.push(CMD.BOLD_ON);
+    kitchenParts.push(line(order.itemTitle));
+    kitchenParts.push(CMD.BOLD_OFF);
+  }
+
+  if (order.specialInstructions) {
+    kitchenParts.push(separator());
+    kitchenParts.push(CMD.BOLD_ON);
+    kitchenParts.push(line("NOTES:"));
+    kitchenParts.push(CMD.BOLD_OFF);
+    const instrLines = wrapText(order.specialInstructions, CHARS_PER_LINE);
+    instrLines.forEach(l => kitchenParts.push(line(l)));
+  }
+
+  kitchenParts.push(CMD.ALIGN_CENTER);
+  kitchenParts.push(doubleSeparator());
+  kitchenParts.push(CMD.FEED_5);
+
   // ── Send all segments with pauses between them ──
   const segments = [
     concatBytes(...headerParts),
@@ -857,6 +899,7 @@ export async function printInvoice(order: {
     concatBytes(...itemParts),
     concatBytes(...totalParts),
     concatBytes(...footerParts),
+    concatBytes(...kitchenParts),
   ];
 
   await writeSegments(segments);
