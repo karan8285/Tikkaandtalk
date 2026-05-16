@@ -70,12 +70,21 @@ export default function CreateCustomOrder() {
   const [users, setUsers] = useState<User[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState<User | null>(null);
+
+  // Guest/Walk-in mode
+  const [isGuestMode, setIsGuestMode] = useState(false);
+  const [guestName, setGuestName] = useState("");
+  const [guestPhone, setGuestPhone] = useState("");
   
   // Menu Items
   const [regularMenuItems, setRegularMenuItems] = useState<MenuItem[]>([]);
   const [todaysSpecialItems, setTodaysSpecialItems] = useState<MenuItem[]>([]);
   const [kidsMenuItems, setKidsMenuItems] = useState<MenuItem[]>([]);
   const [flashSaleItems, setFlashSaleItems] = useState<MenuItem[]>([]);
+  const [menuSearchQuery, setMenuSearchQuery] = useState("");
+
+  // Tax percentage (editable)
+  const [taxPercent, setTaxPercent] = useState(10);
   
   // Cart
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -220,6 +229,16 @@ export default function CreateCustomOrder() {
     );
   });
 
+  // Filter menu items based on search query (across all categories)
+  const allMenuItems = [...regularMenuItems, ...todaysSpecialItems, ...kidsMenuItems, ...flashSaleItems];
+  const filteredMenuItems = menuSearchQuery.trim()
+    ? allMenuItems.filter(item => {
+        const q = menuSearchQuery.toLowerCase();
+        return (item.name || item.title || "").toLowerCase().includes(q) ||
+               (item.description || "").toLowerCase().includes(q);
+      })
+    : [];
+
   // Add item to cart
   const addToCart = (item: MenuItem) => {
     const itemPrice = item.finalPrice || item.discountedPrice || item.price;
@@ -334,7 +353,7 @@ export default function CreateCustomOrder() {
 
   // Calculate totals
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const tax = subtotal * 0.1; // 10% PPN
+  const tax = subtotal * (taxPercent / 100);
   const total = subtotal + tax + Number(deliveryFee);
   
   // Calculate points
@@ -344,9 +363,20 @@ export default function CreateCustomOrder() {
   const handleCreateOrder = async () => {
     try {
       // Validation
-      if (!selectedCustomer) {
+      if (!isGuestMode && !selectedCustomer) {
         toast.error("Please select a customer");
         return;
+      }
+
+      if (isGuestMode) {
+        if (!guestName.trim()) {
+          toast.error("Please enter guest name");
+          return;
+        }
+        if (!guestPhone.trim()) {
+          toast.error("Please enter guest phone");
+          return;
+        }
       }
       
       if (cart.length === 0) {
@@ -380,9 +410,10 @@ export default function CreateCustomOrder() {
         : undefined;
       
       const orderData = {
-        userId: selectedCustomer.id,
-        customerPhone: selectedCustomer.phone,
-        customerName: selectedCustomer.name,
+        userId: isGuestMode ? "guest" : selectedCustomer.id,
+        customerPhone: isGuestMode ? guestPhone.trim() : selectedCustomer.phone,
+        customerName: isGuestMode ? guestName.trim() : selectedCustomer.name,
+        isGuestOrder: isGuestMode,
         items: cart.map((item) => ({
           id: item.id,
           name: item.name,
@@ -423,6 +454,9 @@ export default function CreateCustomOrder() {
       
       // Reset form
       setSelectedCustomer(null);
+      setIsGuestMode(false);
+      setGuestName("");
+      setGuestPhone("");
       setCart([]);
       setOrderType("pickup");
       setDeliveryAddress("");
@@ -434,6 +468,8 @@ export default function CreateCustomOrder() {
       setScheduledDate("");
       setScheduledTime("");
       setSearchQuery("");
+      setMenuSearchQuery("");
+      setTaxPercent(10);
       setConfirmDialog(false);
       
       // Navigate to admin page
@@ -529,78 +565,143 @@ export default function CreateCustomOrder() {
             {/* Customer Selection */}
             <Card className="p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Select Customer</h2>
-              
-              <div className="relative mb-4">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input
-                  placeholder="Search by name or phone..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9"
-                />
+
+              {/* Guest Toggle */}
+              <div className="flex items-center justify-between p-3 bg-purple-50 rounded-lg mb-4">
+                <div>
+                  <Label className="font-medium flex items-center gap-1.5">
+                    <Users className="h-4 w-4 text-purple-600" />
+                    Guest / Walk-in
+                  </Label>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Create order without registered customer
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setIsGuestMode(!isGuestMode);
+                    if (!isGuestMode) {
+                      setSelectedCustomer(null);
+                      setGuestName("");
+                      setGuestPhone("");
+                    }
+                  }}
+                  className={`relative w-12 h-6 rounded-full transition-colors ${
+                    isGuestMode ? "bg-purple-500" : "bg-gray-300"
+                  }`}
+                >
+                  <div
+                    className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${
+                      isGuestMode ? "translate-x-6" : ""
+                    }`}
+                  />
+                </button>
               </div>
 
-              {selectedCustomer ? (
-                <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <p className="font-semibold text-gray-900">{selectedCustomer.name}</p>
-                      <p className="text-sm text-gray-600">{selectedCustomer.phone}</p>
-                      <p className="text-xs text-teal-600 mt-1">
-                        {selectedCustomer.points} points
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setSelectedCustomer(null)}
-                    >
-                      Change
-                    </Button>
+              {isGuestMode ? (
+                /* Guest Form */
+                <div className="space-y-4">
+                  <div>
+                    <Label className="mb-1.5 block text-sm font-medium">Guest Name *</Label>
+                    <Input
+                      placeholder="Enter guest name..."
+                      value={guestName}
+                      onChange={(e) => setGuestName(e.target.value)}
+                    />
                   </div>
-                </div>
-              ) : (
-                <div className="max-h-64 overflow-y-auto space-y-2">
-                  {filteredCustomers.length === 0 ? (
-                    <div className="text-center py-8 px-4">
-                      <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
-                        <Users className="h-6 w-6 text-gray-400" />
+                  <div>
+                    <Label className="mb-1.5 block text-sm font-medium">Phone Number *</Label>
+                    <Input
+                      placeholder="Enter phone number..."
+                      value={guestPhone}
+                      onChange={(e) => setGuestPhone(e.target.value)}
+                    />
+                  </div>
+                  {(guestName || guestPhone) && (
+                    <div className="flex items-start gap-2 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                      <Users className="h-4 w-4 text-purple-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-medium text-purple-800">{guestName || "Guest"}</p>
+                        <p className="text-xs text-purple-600">{guestPhone || "No phone"}</p>
                       </div>
-                      {searchQuery ? (
-                        <>
-                          <p className="text-sm font-medium text-gray-900 mb-1">No customers found</p>
-                          <p className="text-xs text-gray-500">Try a different search term</p>
-                        </>
-                      ) : (
-                        <>
-                          <p className="text-sm font-medium text-gray-900 mb-1">No customers yet</p>
-                          <p className="text-xs text-gray-500 mb-3">
-                            Customers need to register first before you can create orders for them
-                          </p>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => window.open('/signup', '_blank')}
-                            className="text-xs"
-                          >
-                            Open Registration Page
-                          </Button>
-                        </>
-                      )}
                     </div>
-                  ) : (
-                    filteredCustomers.map((customer) => (
-                      <button
-                        key={customer.id}
-                        onClick={() => setSelectedCustomer(customer)}
-                        className="w-full text-left p-3 rounded-lg border border-gray-200 hover:border-primary hover:bg-primary/5 transition-colors"
-                      >
-                        <p className="font-medium text-gray-900">{customer.name}</p>
-                        <p className="text-sm text-gray-600">{customer.phone}</p>
-                      </button>
-                    ))
                   )}
                 </div>
+              ) : (
+                <>
+                  <div className="relative mb-4">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Input
+                      placeholder="Search by name or phone..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-9"
+                    />
+                  </div>
+
+                  {selectedCustomer ? (
+                    <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <p className="font-semibold text-gray-900">{selectedCustomer.name}</p>
+                          <p className="text-sm text-gray-600">{selectedCustomer.phone}</p>
+                          <p className="text-xs text-teal-600 mt-1">
+                            {selectedCustomer.points} points
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setSelectedCustomer(null)}
+                        >
+                          Change
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="max-h-64 overflow-y-auto space-y-2">
+                      {filteredCustomers.length === 0 ? (
+                        <div className="text-center py-8 px-4">
+                          <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
+                            <Users className="h-6 w-6 text-gray-400" />
+                          </div>
+                          {searchQuery ? (
+                            <>
+                              <p className="text-sm font-medium text-gray-900 mb-1">No customers found</p>
+                              <p className="text-xs text-gray-500">Try a different search term</p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-sm font-medium text-gray-900 mb-1">No customers yet</p>
+                              <p className="text-xs text-gray-500 mb-3">
+                                Customers need to register first before you can create orders for them
+                              </p>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => window.open('/signup', '_blank')}
+                                className="text-xs"
+                              >
+                                Open Registration Page
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        filteredCustomers.map((customer) => (
+                          <button
+                            key={customer.id}
+                            onClick={() => setSelectedCustomer(customer)}
+                            className="w-full text-left p-3 rounded-lg border border-gray-200 hover:border-primary hover:bg-primary/5 transition-colors"
+                          >
+                            <p className="font-medium text-gray-900">{customer.name}</p>
+                            <p className="text-sm text-gray-600">{customer.phone}</p>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </Card>
 
@@ -673,6 +774,27 @@ export default function CreateCustomOrder() {
                     placeholder="Internal notes (not visible to customer)..."
                     rows={2}
                   />
+                </div>
+
+                {/* Tax Percentage Toggle */}
+                <div className="flex items-center justify-between p-3 bg-orange-50 rounded-lg">
+                  <div className="flex-1">
+                    <Label className="font-medium flex items-center gap-1.5">
+                      Tax
+                    </Label>
+                    <p className="text-xs text-gray-600 mt-1">
+                      {formatIDR(tax)} ({taxPercent}%)
+                    </p>
+                  </div>
+                  <Input
+                    type="number"
+                    value={taxPercent}
+                    onChange={(e) => setTaxPercent(Number(e.target.value) || 0)}
+                    className="w-20 h-8 text-center text-sm"
+                    min="0"
+                    max="100"
+                  />
+                  <span className="text-xs text-gray-500 ml-1">%</span>
                 </div>
 
                 {/* Payment Status */}
@@ -829,7 +951,7 @@ export default function CreateCustomOrder() {
                     <span className="font-medium">{formatIDR(subtotal)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Tax (10%)</span>
+                    <span className="text-gray-600">Tax ({taxPercent}%)</span>
                     <span className="font-medium">{formatIDR(tax)}</span>
                   </div>
                   {orderType === "delivery" && (
@@ -855,7 +977,7 @@ export default function CreateCustomOrder() {
                 <Button
                   className="w-full mt-4"
                   onClick={() => setConfirmDialog(true)}
-                  disabled={!selectedCustomer || cart.length === 0 || creating || (isScheduled && (!scheduledDate || !scheduledTime))}
+                  disabled={(!selectedCustomer && !isGuestMode) || cart.length === 0 || creating || (isScheduled && (!scheduledDate || !scheduledTime))}
                 >
                   {creating ? "Creating..." : isScheduled ? "Schedule Order" : "Create Order"}
                 </Button>
@@ -867,8 +989,45 @@ export default function CreateCustomOrder() {
           <div className="lg:col-span-1">
             <Card className="p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Menu Items</h2>
-              
-              <Tabs defaultValue="regular" className="w-full">
+
+              {/* Menu Search */}
+              <div className="relative mb-4">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Input
+                  placeholder="Search menu items..."
+                  value={menuSearchQuery}
+                  onChange={(e) => setMenuSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+
+              {menuSearchQuery.trim() ? (
+                /* Search Results Mode */
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-medium text-gray-700">
+                      {filteredMenuItems.length} result{filteredMenuItems.length !== 1 ? "s" : ""} for "{menuSearchQuery}"
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setMenuSearchQuery("")}
+                      className="text-xs"
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                  <div className="max-h-[500px] overflow-y-auto space-y-3">
+                    {filteredMenuItems.length === 0 ? (
+                      <p className="text-sm text-gray-500 text-center py-8">No items found</p>
+                    ) : (
+                      filteredMenuItems.map(renderMenuItem)
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* Tabbed Mode */
+                <Tabs defaultValue="regular" className="w-full">
                 <TabsList className="w-full grid grid-cols-5 mb-4">
                   <TabsTrigger value="regular" className="text-xs">Regular</TabsTrigger>
                   <TabsTrigger value="special" className="text-xs">Special</TabsTrigger>
@@ -987,6 +1146,7 @@ export default function CreateCustomOrder() {
                   </TabsContent>
                 </div>
               </Tabs>
+              )}
             </Card>
           </div>
 
@@ -1060,7 +1220,7 @@ export default function CreateCustomOrder() {
                       <span className="font-medium">{formatIDR(subtotal)}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">Tax (10%)</span>
+                      <span className="text-gray-600">Tax ({taxPercent}%)</span>
                       <span className="font-medium">{formatIDR(tax)}</span>
                     </div>
                     {orderType === "delivery" && (
@@ -1086,7 +1246,7 @@ export default function CreateCustomOrder() {
                   <Button
                     className="w-full mt-6"
                     onClick={() => setConfirmDialog(true)}
-                    disabled={!selectedCustomer || cart.length === 0 || creating || (isScheduled && (!scheduledDate || !scheduledTime))}
+                    disabled={(!selectedCustomer && !isGuestMode) || cart.length === 0 || creating || (isScheduled && (!scheduledDate || !scheduledTime))}
                   >
                     {creating ? "Creating..." : isScheduled ? "Schedule Order" : "Create Order"}
                   </Button>
