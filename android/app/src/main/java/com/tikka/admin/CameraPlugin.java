@@ -5,9 +5,11 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
-import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Log;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.util.Base64;
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -20,6 +22,7 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
@@ -27,13 +30,7 @@ import java.util.Date;
 
 /**
  * CameraPlugin — launches native camera via ACTION_IMAGE_CAPTURE intent.
- *
- * Why not use <input capture="environment"> via BridgeWebChromeClient?
- * Because on Android 14+ (API 34+), ACTION_IMAGE_CAPTURE may not resolve
- * on all devices, causing silent fallback to file picker.
- *
- * This plugin directly launches the camera and returns the captured photo URI
- * to JS via a callback pattern.
+ * Returns image as base64 so WebView can access it without file:// restrictions.
  */
 @CapacitorPlugin(name = "Camera")
 public class CameraPlugin extends Plugin {
@@ -44,6 +41,7 @@ public class CameraPlugin extends Plugin {
     private ActivityResultLauncher<Intent> cameraLauncher;
     private PluginCall pendingCall;
     private Uri capturedImageUri;
+    private File lastCapturedFile;
 
     @Override
     public void load() {
@@ -53,7 +51,6 @@ public class CameraPlugin extends Plugin {
         AppCompatActivity activity = getActivity();
         if (activity == null) return;
 
-        // Register for camera permission result
         permissionLauncher = bridge.registerForActivityResult(
             new ActivityResultContracts.RequestMultiplePermissions(),
             (java.util.Map<String, Boolean> result) -> {
@@ -72,23 +69,40 @@ public class CameraPlugin extends Plugin {
             }
         );
 
-        // Register for camera intent result
         cameraLauncher = bridge.registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
             (ActivityResult result) -> {
                 if (pendingCall == null) return;
 
-                if (result.getResultCode() == Activity.RESULT_OK && capturedImageUri != null) {
-                    JSObject ret = new JSObject();
-                    ret.put("uri", capturedImageUri.toString());
-                    pendingCall.resolve(ret);
-                    Log.d(TAG, "Camera captured: " + capturedImageUri);
+                if (result.getResultCode() == Activity.RESULT_OK && lastCapturedFile != null && lastCapturedFile.exists()) {
+                    try {
+                        Bitmap bitmap = BitmapFactory.decodeFile(lastCapturedFile.getAbsolutePath());
+                        if (bitmap == null) {
+                            pendingCall.reject("FILE_ERROR", "Could not decode captured image");
+                            pendingCall = null;
+                            return;
+                        }
+
+                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, baos);
+                        byte[] imageBytes = baos.toByteArray();
+                        String base64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP);
+
+                        JSObject ret = new JSObject();
+                        ret.put("base64", "data:image/jpeg;base64," + base64);
+                        ret.put("path", lastCapturedFile.getAbsolutePath());
+                        pendingCall.resolve(ret);
+                        Log.d(TAG, "Camera captured, returning base64 (" + imageBytes.length + " bytes)");
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error encoding image: " + e.getMessage());
+                        pendingCall.reject("FILE_ERROR", "Could not encode captured image: " + e.getMessage());
+                    }
                 } else {
                     pendingCall.reject("CAPTURE_CANCELLED", "User cancelled or camera failed");
                     Log.d(TAG, "Camera cancelled or failed");
                 }
                 pendingCall = null;
-                capturedImageUri = null;
+                lastCapturedFile = null;
             }
         );
     }
@@ -133,14 +147,12 @@ public class CameraPlugin extends Plugin {
             return;
         }
 
-        // Create temp file for camera output
-        File imageFile;
         try {
-            imageFile = createImageFile();
+            lastCapturedFile = createImageFile();
             capturedImageUri = FileProvider.getUriForFile(
                 activity,
                 activity.getPackageName() + ".fileprovider",
-                imageFile
+                lastCapturedFile
             );
         } catch (IOException e) {
             Log.e(TAG, "Failed to create image file: " + e.getMessage());
@@ -163,7 +175,6 @@ public class CameraPlugin extends Plugin {
             return;
         }
 
-        lastCapturedFilePath = imageFile.getAbsolutePath();
         cameraLauncher.launch(takePictureIntent);
     }
 
@@ -173,10 +184,8 @@ public class CameraPlugin extends Plugin {
 
         String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(new Date());
         String imageFileName = "CAMERA_" + timeStamp + ".jpg";
-        File storageDir = activity.getExternalFilesDir(Environment.DIRECTORY_PICTURES);
-        if (storageDir == null) throw new IOException("Cannot access pictures directory");
-        return File.createTempFile(imageFileName, ".jpg", storageDir);
+        File cacheDir = activity.getCacheDir();
+        if (cacheDir == null) throw new IOException("Cannot access cache directory");
+        return File.createTempFile(imageFileName, ".jpg", cacheDir);
     }
-
-    private String lastCapturedFilePath;
 }

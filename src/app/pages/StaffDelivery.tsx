@@ -494,31 +494,19 @@ export default function StaffDelivery() {
                             }
                           }
                           const result = await openNativeCamera();
-                          if (result?.uri) {
-                            // Handle both file path (from native plugin) and content:// URIs
-                            const uri = result.uri.startsWith('file://') ? result.uri : `file://${result.uri}`;
-                            // For content:// URIs from Android, we need to use the direct path
-                            // Try to fetch the file
-                            let file: File;
-                            try {
-                              const response = await fetch(result.uri);
-                              const blob = await response.blob();
-                              const fileName = result.uri.split("/").pop() || "photo.jpg";
-                              file = new File([blob], fileName, { type: "image/jpeg" });
-                            } catch {
-                              // Fallback: try direct file path
-                              const response = await fetch(uri);
-                              const blob = await response.blob();
-                              const fileName = result.uri.split("/").pop() || "photo.jpg";
-                              file = new File([blob], fileName, { type: "image/jpeg" });
-                            }
+                          if (result?.base64) {
+                            // base64 is already a data URL - use directly
+                            setPodPreview(result.base64);
+                            // Convert base64 to File for upload
+                            const response = await fetch(result.base64);
+                            const blob = await response.blob();
+                            const fileName = result.path.split("/").pop() || `photo_${Date.now()}.jpg`;
+                            const file = new File([blob], fileName, { type: "image/jpeg" });
                             setPodImage(file);
-                            const reader = new FileReader();
-                            reader.onloadend = () => setPodPreview(reader.result as string);
-                            reader.readAsDataURL(file);
                           }
                         } catch (err: any) {
-                          console.error("Camera error:", err);
+                          console.error("Camera error:", err?.message || err);
+                          toast.error("Failed to capture photo: " + (err?.message || "Unknown error"));
                           // Fallback to file input
                           fileInputRef.current?.click();
                         }
@@ -566,7 +554,7 @@ export default function StaffDelivery() {
                     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-3 py-2">
                       <p className="text-xs text-white font-medium flex items-center gap-1">
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        Photo ready &middot; {(podImage!.size / 1024).toFixed(0)} KB
+                        Photo ready &middot; {podImage ? (podImage.size / 1024).toFixed(0) : 0} KB
                       </p>
                     </div>
                     {/* Retake button */}
