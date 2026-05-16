@@ -495,11 +495,23 @@ export default function StaffDelivery() {
                           }
                           const result = await openNativeCamera();
                           if (result?.uri) {
-                            // Convert file:// URI to file object for upload
-                            const response = await fetch(result.uri);
-                            const blob = await response.blob();
-                            const fileName = result.uri.split("/").pop() || "photo.jpg";
-                            const file = new File([blob], fileName, { type: "image/jpeg" });
+                            // Handle both file path (from native plugin) and content:// URIs
+                            const uri = result.uri.startsWith('file://') ? result.uri : `file://${result.uri}`;
+                            // For content:// URIs from Android, we need to use the direct path
+                            // Try to fetch the file
+                            let file: File;
+                            try {
+                              const response = await fetch(result.uri);
+                              const blob = await response.blob();
+                              const fileName = result.uri.split("/").pop() || "photo.jpg";
+                              file = new File([blob], fileName, { type: "image/jpeg" });
+                            } catch {
+                              // Fallback: try direct file path
+                              const response = await fetch(uri);
+                              const blob = await response.blob();
+                              const fileName = result.uri.split("/").pop() || "photo.jpg";
+                              file = new File([blob], fileName, { type: "image/jpeg" });
+                            }
                             setPodImage(file);
                             const reader = new FileReader();
                             reader.onloadend = () => setPodPreview(reader.result as string);
