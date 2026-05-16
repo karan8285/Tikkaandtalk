@@ -20,6 +20,7 @@ import { useNewOrderAlert } from "../lib/useNewOrderAlert";
 import { StaffAddToHomeScreen } from "../components/StaffAddToHomeScreen";
 import { StaffPushToggle } from "../components/StaffPushToggle";
 import { ChangePinDialog } from "../components/ChangePinDialog";
+import { openNativeCamera, hasCameraPermission, requestCameraPermission } from "../lib/camera";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -65,22 +66,33 @@ export default function StaffDelivery() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchOrders = useCallback(async (signal?: AbortSignal) => {
-    if (!accessTokenRef.current) return;
+    const token = accessTokenRef.current;
+    console.log("fetchOrders called, token exists:", !!token);
+    if (!token) return;
     try {
+      console.log("Fetching from:", `${API_BASE}/admin/orders?page=1&limit=100&status=all&payment=all&delivery=delivery&date=all&tab=active`);
       const response = await fetchWithRetry(`${API_BASE}/admin/orders?page=1&limit=100&status=all&payment=all&delivery=delivery&date=all&tab=active`, {
-        headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": accessTokenRef.current },
+        headers: { Authorization: `Bearer ${publicAnonKey}`, "X-Custom-Auth": token },
         signal,
       });
+      console.log("Response status:", response.status);
       if (response.ok) {
         const data = await response.json();
-        const deliveryOrders = (data.orders || []).filter((o: Order) =>
-          o.deliveryMethod === 'delivery' && ['ready', 'out_for_delivery'].includes(o.status)
-        );
-        
+        console.log("API response orders count:", (data.orders || []).length);
+        const deliveryOrders = (data.orders || []).filter((o: Order) => {
+          const match = o.deliveryMethod === 'delivery' && ['ready', 'out_for_delivery'].includes(o.status);
+          console.log(`Order ${o.id}: deliveryMethod=${o.deliveryMethod}, status=${o.status}, matches=${match}`);
+          return match;
+        });
+        console.log("Filtered delivery orders:", deliveryOrders.length);
+
         // Check for new delivery orders and play sound alert
         checkForNewOrders(deliveryOrders.map((o: Order) => o.id));
-        
+
         setOrders(deliveryOrders);
+      } else {
+        const errText = await response.text();
+        console.error("API error:", response.status, errText);
       }
     } catch (error: any) {
       if (error?.name === 'AbortError') return;
@@ -468,18 +480,58 @@ export default function StaffDelivery() {
               {/* Image Upload Area */}
               <div>
                 {!podPreview ? (
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-full border-2 border-dashed border-gray-300 rounded-xl p-8 flex flex-col items-center gap-3 hover:border-green-400 hover:bg-green-50/50 transition-all active:scale-[0.98]"
-                  >
-                    <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">
-                      <Camera className="w-8 h-8 text-green-600" />
-                    </div>
-                    <div className="text-center">
-                      <p className="text-sm font-semibold text-gray-700">Tap to take photo or select</p>
-                      <p className="text-xs text-gray-400 mt-1">JPG, PNG, WebP &middot; Max 10MB</p>
-                    </div>
-                  </button>
+                  <div className="flex gap-2">
+                    {/* Native Camera Button */}
+                    <button
+                      onClick={async () => {
+                        try {
+                          const perm = await hasCameraPermission();
+                          if (!perm) {
+                            const granted = await requestCameraPermission();
+                            if (!granted) {
+                              toast.error("Camera permission required");
+                              return;
+                            }
+                          }
+                          const result = await openNativeCamera();
+                          if (result?.uri) {
+                            // Convert file:// URI to file object for upload
+                            const response = await fetch(result.uri);
+                            const blob = await response.blob();
+                            const fileName = result.uri.split("/").pop() || "photo.jpg";
+                            const file = new File([blob], fileName, { type: "image/jpeg" });
+                            setPodImage(file);
+                            const reader = new FileReader();
+                            reader.onloadend = () => setPodPreview(reader.result as string);
+                            reader.readAsDataURL(file);
+                          }
+                        } catch (err: any) {
+                          console.error("Camera error:", err);
+                          // Fallback to file input
+                          fileInputRef.current?.click();
+                        }
+                      }}
+                      className="flex-1 border-2 border-dashed border-green-300 rounded-xl p-6 flex flex-col items-center gap-2 hover:border-green-500 hover:bg-green-50/50 transition-all active:scale-[0.98]"
+                    >
+                      <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center">
+                        <Camera className="w-7 h-7 text-green-600" />
+                      </div>
+                      <p className="text-sm font-semibold text-gray-700">Open Camera</p>
+                      <p className="text-xs text-gray-400">Take live photo</p>
+                    </button>
+
+                    {/* File Picker Button */}
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex-1 border-2 border-dashed border-gray-300 rounded-xl p-6 flex flex-col items-center gap-2 hover:border-gray-400 hover:bg-gray-50/50 transition-all active:scale-[0.98]"
+                    >
+                      <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center">
+                        <ImageIcon className="w-7 h-7 text-gray-500" />
+                      </div>
+                      <p className="text-sm font-semibold text-gray-700">Choose File</p>
+                      <p className="text-xs text-gray-400">From gallery</p>
+                    </button>
+                  </div>
                 ) : (
                   <div className="relative rounded-xl overflow-hidden border-2 border-green-300">
                     <img

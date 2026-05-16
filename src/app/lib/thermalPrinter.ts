@@ -746,7 +746,7 @@ export async function printInvoice(order: {
       } else {
         itemParts.push(threeColumns(qty, name, price));
       }
-      itemParts.push(line("     @ Rp " + fmtCurrency(item.price) + "/unit"));
+      itemParts.push(line("     @ Rp " + fmtCurrency(item.price) + "/unit x " + item.quantity));
 
       if (item.addons && item.addons.length > 0) {
         for (const addon of item.addons) {
@@ -865,6 +865,9 @@ export async function printInvoice(order: {
   kitchenParts.push(twoColumns("Time:", formatTime(order.createdAt)));
   const deliveryType = order.deliveryMethod === "delivery" ? "DELIVERY" : order.deliveryMethod === "dine_in" ? "DINE IN" : "PICKUP";
   kitchenParts.push(twoColumns("Type:", deliveryType));
+  if (order.customerName) {
+    kitchenParts.push(twoColumns("Customer:", order.customerName));
+  }
   kitchenParts.push(separator());
 
   if (order.items && order.items.length > 0) {
