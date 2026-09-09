@@ -4,6 +4,34 @@ import fs from 'fs'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
+// Plugin to stub Capacitor's native-only packages during web dev/serve.
+// These are dynamically imported behind runtime `isNativePlatform()` guards, so the web
+// build never executes them — but Vite's import analysis still needs to resolve the ids.
+// `build.rollupOptions.external` covers the production build; this covers `vite dev`.
+// The stub exports nothing, so the guards fall through to their web/localStorage paths.
+function capacitorNativeStubPlugin() {
+  const NATIVE_ONLY = [
+    '@capacitor/preferences',
+    '@capacitor-firebase/messaging',
+    '@capacitor/android',
+  ]
+
+  return {
+    name: 'capacitor-native-stub',
+    enforce: 'pre' as const,
+    resolveId(source: string) {
+      if (NATIVE_ONLY.includes(source)) {
+        return `\0capacitor-stub:${source}`
+      }
+    },
+    load(id: string) {
+      if (id.startsWith('\0capacitor-stub:')) {
+        return 'export default {}'
+      }
+    },
+  }
+}
+
 // Plugin to handle Figma Make's virtual `figma:asset/...` imports during production builds.
 // In the Figma Make dev server these resolve automatically; on Vercel they would fail.
 // We resolve them to a tiny transparent 1×1 PNG data-URL so the build succeeds and the
@@ -156,6 +184,7 @@ function ogMetaPlugin() {
 
 export default defineConfig({
   plugins: [
+    capacitorNativeStubPlugin(),
     publicFileServePlugin(),
     figmaAssetPlugin(),
     ogMetaPlugin(),
