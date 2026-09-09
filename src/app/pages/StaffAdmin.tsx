@@ -579,12 +579,13 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
         phone: restaurantPhone,
       };
 
-      // Resolve staff name — use localStorage as fallback
+      // Resolve staff name — `staff` is not in scope in this component (it belongs to
+      // StaffAdmin, not StaffOrdersTab), so read the cached staff record like the
+      // auto-print path above does. `role` is already a prop here.
       let staffName = "Staff";
       try {
-        const stored = localStorage.getItem("tikka_staff_name");
-        const currentStaff = staff || JSON.parse(stored || "{}");
-        staffName = currentStaff?.role === 'superuser' ? 'Admin' : (currentStaff?.name || "Staff");
+        const currentStaff = JSON.parse(localStorage.getItem("tikka_staff_name") || "{}");
+        staffName = (role ?? currentStaff?.role) === 'superuser' ? 'Admin' : (currentStaff?.name || "Staff");
       } catch {}
 
       try {
