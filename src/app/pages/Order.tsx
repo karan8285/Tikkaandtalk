@@ -58,7 +58,7 @@ const LABEL_OPTIONS = [
 export default function Order() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, accessToken, loading: authLoading } = useAuth();
+  const { user, accessToken, loading: authLoading, handleAuthResponse } = useAuth();
   const { cartItems, totalPrice } = useCart();
 
   // CRITICAL: Save location.state to a ref on mount to prevent losing it during re-renders
@@ -276,7 +276,7 @@ export default function Order() {
         );
         // Refresh promos list so newly claimed voucher appears
         await fetchAvailablePromos();
-      } else {
+      } else if (!handleAuthResponse(res)) {
         toast.error(data.error || "Failed to claim voucher");
       }
     } catch (error) {
@@ -857,6 +857,12 @@ export default function Order() {
         });
         setPromoError("");
         toast.success(`Promo "${data.voucherTitle}" applied!`);
+      } else if (handleAuthResponse(response)) {
+        // Session died. handleAuthResponse has cleared it and told the customer; don't
+        // also print the server's raw "Invalid token" under the promo field.
+        setPromoError("");
+        setPromoApplied(null);
+        setPromoCode("");
       } else {
         setPromoError(data.error || "Invalid promo code");
         setPromoApplied(null);

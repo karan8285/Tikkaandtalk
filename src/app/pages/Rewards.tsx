@@ -56,7 +56,7 @@ interface UserVoucher {
 export default function Rewards() {
   const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
   const navigate = useNavigate();
-  const { user, loading, accessToken, refreshProfile } = useAuth();
+  const { user, loading, accessToken, refreshProfile, handleAuthResponse } = useAuth();
   const { tiers } = useTiers();
   const [loadingData, setLoadingData] = useState(true);
   const [claiming, setClaiming] = useState<string | null>(null);
@@ -182,7 +182,7 @@ export default function Rewards() {
             : "Voucher claimed successfully!"
         );
         fetchData(); // Refresh data
-      } else {
+      } else if (!handleAuthResponse(response)) {
         toast.error(data.error || "Failed to claim voucher");
       }
     } catch (error) {

@@ -83,7 +83,7 @@ const statusConfig: Record<string, { color: string; bgColor: string; label: stri
 export default function OrderHistory() {
   const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
   const navigate = useNavigate();
-  const { user, accessToken, refreshProfile, loading: authLoading } = useAuth();
+  const { user, accessToken, refreshProfile, loading: authLoading, handleAuthResponse } = useAuth();
   const { clearCart, setItemQuantity, cartItems } = useCart();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -165,7 +165,9 @@ export default function OrderHistory() {
         },
       });
       
-      if (response.ok) {
+      if (handleAuthResponse(response)) {
+        return;
+      } else if (response.ok) {
         toast.success("Order cancelled successfully");
         await fetchOrders();
         if (accessToken) {

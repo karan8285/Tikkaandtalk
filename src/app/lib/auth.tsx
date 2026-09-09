@@ -3,6 +3,7 @@ import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { APP_CONFIG } from "./config";
 import { fetchWithRetry } from "./fetchWithRetry";
 import { getItem, setItem, removeItem } from "./storage";
+import { toast } from "sonner";
 
 interface User {
   id: string;
@@ -26,6 +27,48 @@ interface AuthContextType {
   signIn: (phone: string, pin: string) => Promise<void>;
   signOut: () => void;
   refreshProfile: () => Promise<void>;
+  /**
+   * Call with any Response from a token-authenticated request. If it is a 401, the stored
+   * session is cleared and the customer is told to sign in again; returns true so the caller
+   * can skip its own error handling.
+   *
+   * This exists because the server only verifies the token on SOME endpoints. Browsing
+   * vouchers (GET /user-vouchers) needs no token at all, but redeeming one
+   * (POST /claim-voucher) does — so a customer with a dead token saw a full, working app
+   * and then a raw "Invalid token" toast the moment they tried to redeem, with no way out.
+   */
+  handleAuthResponse: (response: { status: number }) => boolean;
+}
+
+/**
+ * Read `exp` out of a JWT without verifying it. Signature verification is the server's job;
+ * this is only so the client can avoid presenting a token it already knows is dead.
+ */
+function getTokenExpiry(token: string): number | null {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return null;
+    // base64url -> base64, then pad
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const claims = JSON.parse(atob(padded));
+    return typeof claims?.exp === "number" ? claims.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True if the token is structurally invalid or its `exp` has passed.
+ * A token with no `exp` claim is treated as valid — the server is still the authority.
+ */
+export function isTokenExpired(token: string | null | undefined): boolean {
+  if (!token) return true;
+  if (token.split(".").length !== 3) return true;
+  const exp = getTokenExpiry(token);
+  if (exp === null) return false;
+  // 30s of leeway so a token about to lapse mid-request is treated as already gone.
+  return Date.now() >= exp * 1000 - 30_000;
 }
 
 // Persist context across HMR reloads
@@ -47,13 +90,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const savedUser = await getItem("user");
 
       if (savedToken && savedUser) {
-        const tokenParts = savedToken.split('.');
-        if (tokenParts.length === 3) {
+        // Previously this only checked that the token had three dot-separated parts, so an
+        // expired token restored a fully logged-in UI. Tokens last 7 days and the server
+        // enforces `exp`, so that produced a session that looked fine but failed every
+        // request the server actually authenticates.
+        if (!isTokenExpired(savedToken)) {
           setAccessToken(savedToken);
           setUser(JSON.parse(savedUser));
         } else {
           await removeItem("accessToken");
           await removeItem("user");
+          await removeItem("customToken");
         }
       }
       setLoading(false);
@@ -121,6 +168,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     sessionStorage.removeItem("justLoggedIn");
   };
 
+  /**
+   * Single place that reacts to a rejected token. Clears the session and tells the customer
+   * what happened, instead of surfacing the server's raw "Invalid token" string.
+   *
+   * Two things land here: a token that lapsed after 7 days, and every token at once if
+   * JWT_SECRET is rotated on the server.
+   */
+  const handleAuthResponse = (response: { status: number }) => {
+    if (response?.status !== 401) return false;
+    if (signedOutRef.current) return true; // already handled, don't double-toast
+    signOut();
+    toast.error("Your session expired. Please sign in again.");
+    return true;
+  };
+
   const refreshProfile = async () => {
     if (!accessToken || signedOutRef.current) return;
 
@@ -138,7 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const data = await response.json();
         setUser(data.user);
         await setItem("user", JSON.stringify(data.user));
-      } else {
+      } else if (!handleAuthResponse(response)) {
         console.error(`Failed to refresh profile: ${response.status}`);
       }
     } catch (error) {
@@ -148,7 +210,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, accessToken, loading, signUp, signIn, signOut, refreshProfile }}
+      value={{ user, accessToken, loading, signUp, signIn, signOut, refreshProfile, handleAuthResponse }}
     >
       {children}
     </AuthContext.Provider>
@@ -165,6 +227,7 @@ const defaultAuthContext: AuthContextType = {
   signIn: async () => { throw new Error("AuthProvider not available"); },
   signOut: () => {},
   refreshProfile: async () => {},
+  handleAuthResponse: () => false,
 };
 
 export function useAuth() {
