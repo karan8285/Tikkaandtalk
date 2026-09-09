@@ -29,6 +29,7 @@ import { RegularMenuAdmin } from "../components/RegularMenuAdmin";
 import { VouchersAdmin } from "../components/VouchersAdmin";
 import { DineInVouchersAdmin } from "../components/DineInVouchersAdmin";
 import { TierBenefitsAdmin } from "../components/TierBenefitsAdmin";
+import { TierConfigAdmin } from "../components/TierConfigAdmin";
 import { SalesReportsAdmin } from "../components/SalesReportsAdmin";
 import { AnalyticsAdmin } from "../components/AnalyticsAdmin";
 import { RestaurantSettingsAdmin } from "../components/RestaurantSettingsAdmin";
@@ -59,6 +60,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { OrderStatusTabs } from "../components/OrderStatusTabs";
 import { PrinterSettings } from "../components/PrinterSettings";
 import { isPrinterConnected, printInvoice, connectPrinter, ensureConnected } from "../lib/thermalPrinter";
+import { useTiers, tierForUser } from "../lib/tiers";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -74,6 +76,7 @@ const TAB_DEFINITIONS: { value: string; label: string; permission: string }[] = 
   { value: "analytics", label: "Analytics", permission: "analytics" },
   { value: "vouchers", label: "Vouchers", permission: "vouchers" },
   { value: "dinein-vouchers", label: "Dine-In", permission: "vouchers" },
+  { value: "tier-config", label: "Tier Setup", permission: "tiers" },
   { value: "tier-benefits", label: "Tiers", permission: "tiers" },
   { value: "points-expiry", label: "Points", permission: "points" },
   { value: "regular-menu", label: "Menu", permission: "menu" },
@@ -217,6 +220,10 @@ export default function StaffAdmin() {
 
           <TabsContent value="dinein-vouchers">
             <DineInVouchersAdmin customToken={accessToken} />
+          </TabsContent>
+
+          <TabsContent value="tier-config">
+            <TierConfigAdmin customToken={accessToken} />
           </TabsContent>
 
           <TabsContent value="tier-benefits">
@@ -1537,6 +1544,7 @@ interface CustomerUser {
 }
 
 function StaffCustomersTab({ accessToken }: { accessToken: string }) {
+  const { tiers } = useTiers();
   const [users, setUsers] = useState<CustomerUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -1744,11 +1752,11 @@ function StaffCustomersTab({ accessToken }: { accessToken: string }) {
     }
   };
 
-  const getTierInfo = (points: number) => {
-    if (points >= 20000) return { name: "Platinum", bg: "bg-purple-100", color: "text-purple-700" };
-    if (points >= 10000) return { name: "Diamond", bg: "bg-cyan-100", color: "text-cyan-700" };
-    if (points >= 5000) return { name: "Gold", bg: "bg-yellow-100", color: "text-yellow-700" };
-    return { name: "Silver", bg: "bg-gray-100", color: "text-gray-700" };
+  // Resolved from the shared ladder instead of a fourth hardcoded copy. Colour comes from the
+  // tier's own hex so a newly added tier is not silently rendered as grey.
+  const getTierInfo = (customer: any) => {
+    const tier = tierForUser(customer, tiers);
+    return { name: tier.name, hex: tier.color };
   };
 
   const filtered = users.filter(u =>
@@ -1783,7 +1791,7 @@ function StaffCustomersTab({ accessToken }: { accessToken: string }) {
       ) : (
         <div className="space-y-3">
           {filtered.map(customer => {
-            const tier = getTierInfo(customer.points);
+            const tier = getTierInfo(customer);
             return (
               <Card key={customer.id} className={`p-4 ${customer.blocked ? 'border-red-300 bg-red-50/50' : ''}`}>
                 <div className="flex flex-col gap-3">
@@ -1791,7 +1799,12 @@ function StaffCustomersTab({ accessToken }: { accessToken: string }) {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-semibold text-sm">{customer.name}</p>
-                      <Badge className={`${tier.bg} ${tier.color} border-0 text-[10px]`}>{tier.name}</Badge>
+                      <Badge
+                        className="border-0 text-[10px]"
+                        style={{ backgroundColor: `${tier.hex}22`, color: tier.hex }}
+                      >
+                        {tier.name}
+                      </Badge>
                       {customer.blocked && (
                         <Badge className="bg-red-500 text-white border-0 text-[10px]">
                           <ShieldBan className="w-3 h-3 mr-0.5" /> Blocked

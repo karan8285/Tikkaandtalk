@@ -22,23 +22,10 @@ import { APP_CONFIG } from "../lib/config";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { format } from "date-fns";
+import { useTiers } from "../lib/tiers";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
-
-const TIER_COLORS: Record<string, string> = {
-  Silver: "#9CA3AF",
-  Gold: "#FFC107",
-  Diamond: "#00BCD4",
-  Platinum: "#9C27B0",
-};
-
-const TIER_BG: Record<string, string> = {
-  Silver: "#F3F4F6",
-  Gold: "#FFFBEB",
-  Diamond: "#ECFEFF",
-  Platinum: "#FAF5FF",
-};
 
 // Medal colors for top 3
 const MEDAL_STYLES: Record<number, { bg: string; border: string; text: string; icon: string }> = {
@@ -73,6 +60,12 @@ interface Props {
 }
 
 export function CRMCustomerReport({ customToken }: Props) {
+  // Tier colours now come from the admin-editable ladder rather than a local copy, so a tier
+  // added or renamed in the admin renders correctly here and in the CSV/PDF exports.
+  const { tiers } = useTiers();
+  const TIER_COLORS: Record<string, string> = Object.fromEntries(tiers.map((t) => [t.name, t.color]));
+  const TIER_BG: Record<string, string> = Object.fromEntries(tiers.map((t) => [t.name, `${t.color}14`]));
+
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState<"excel" | "pdf" | null>(null);

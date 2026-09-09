@@ -12,6 +12,7 @@ import { Award, Plus, Pencil, Trash2, Ticket, Car, UtensilsCrossed, Gift } from 
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { fetchWithRetry } from "../lib/fetchWithRetry";
+import { useTiers } from "../lib/tiers";
 
 const BRAND = APP_CONFIG.brand.primaryColor;
 
@@ -33,11 +34,6 @@ interface TierBenefitsAdminProps {
   customToken: string;
 }
 
-const TIER_OPTIONS = [
-  { value: "Gold", label: "Gold", color: "#FFC107" },
-  { value: "Diamond", label: "Diamond", color: "#00BCD4" },
-  { value: "Platinum", label: "Platinum", color: "#9C27B0" },
-];
 
 const ICON_OPTIONS = [
   { value: "ticket", label: "Discount", icon: Ticket },
@@ -48,6 +44,11 @@ const ICON_OPTIONS = [
 ];
 
 export function TierBenefitsAdmin({ customToken }: TierBenefitsAdminProps) {
+  // Tiers come from the admin-editable ladder (GET /tier-config). The old hardcoded list
+  // omitted the entry tier entirely, so a benefit could never be created for it.
+  const { tiers } = useTiers();
+  const TIER_OPTIONS = tiers.map((t) => ({ value: t.name, label: t.name, color: t.color }));
+
   const [benefits, setBenefits] = useState<TierBenefit[]>([]);
   const [loading, setLoading] = useState(true);
   const [editDialog, setEditDialog] = useState(false);
@@ -57,7 +58,7 @@ export function TierBenefitsAdmin({ customToken }: TierBenefitsAdminProps) {
   const [deleting, setDeleting] = useState(false);
 
   // Form fields
-  const [tier, setTier] = useState("Gold");
+  const [tier, setTier] = useState("");  // set from the configured ladder on open
   const [icon, setIcon] = useState("ticket");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -105,7 +106,7 @@ export function TierBenefitsAdmin({ customToken }: TierBenefitsAdminProps) {
       setConditions(benefit.conditions);
     } else {
       setCurrentBenefit(null);
-      setTier("Gold");
+      setTier(tiers[0]?.name ?? "");
       setIcon("ticket");
       setTitle("");
       setDescription("");
@@ -209,9 +210,14 @@ export function TierBenefitsAdmin({ customToken }: TierBenefitsAdminProps) {
   };
 
   // Group benefits by tier
-  const goldBenefits = benefits.filter(b => b.tier === "Gold");
-  const diamondBenefits = benefits.filter(b => b.tier === "Diamond");
-  const platinumBenefits = benefits.filter(b => b.tier === "Platinum");
+  // One column per configured tier, matched case-insensitively so a tier renamed with
+  // different casing still finds its existing benefits.
+  const benefitsByTier = tiers.map((tier) => ({
+    tier,
+    benefits: benefits.filter(
+      (b) => String(b.tier ?? "").trim().toLowerCase() === tier.name.toLowerCase()
+    ),
+  }));
 
   if (loading) {
     return (
@@ -246,216 +252,79 @@ export function TierBenefitsAdmin({ customToken }: TierBenefitsAdminProps) {
           </Button>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Gold Benefits */}
-          <div>
-            <div 
-              className="p-3 rounded-t-lg text-center font-bold text-white mb-3"
-              style={{ backgroundColor: getTierColor("Gold") }}
-            >
-              <Award className="w-5 h-5 inline-block mr-2" />
-              Gold Member Benefits
-            </div>
-            <div className="space-y-3">
-              {goldBenefits.length === 0 ? (
-                <Card className="p-4 text-center text-sm text-muted-foreground">
-                  No benefits yet
-                </Card>
-              ) : (
-                goldBenefits.map((benefit) => (
-                  <Card key={benefit.id} className="p-4">
-                    <div className="space-y-2">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-8 h-8 rounded-full flex items-center justify-center"
-                            style={{ backgroundColor: getTierColor("Gold") + "30", color: getTierColor("Gold") }}
-                          >
-                            {getIconComponent(benefit.icon)}
-                          </div>
-                          <div>
-                            <h4 className="font-semibold text-sm">{benefit.title}</h4>
-                            {benefit.quantity && (
-                              <p className="text-xs text-muted-foreground">{benefit.quantity}</p>
-                            )}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* One column per configured tier — was three copy-pasted Gold/Diamond/Platinum
+              blocks, so a renamed or added tier had nowhere to show its benefits. */}
+          {benefitsByTier.map(({ tier, benefits: tierBenefits }) => (
+            <div key={tier.name}>
+              <div
+                className="p-3 rounded-t-lg text-center font-bold text-white mb-3"
+                style={{ backgroundColor: tier.color }}
+              >
+                <Award className="w-5 h-5 inline-block mr-2" />
+                {tier.name} Benefits
+              </div>
+              <div className="space-y-3">
+                {tierBenefits.length === 0 ? (
+                  <Card className="p-4 text-center text-sm text-muted-foreground">
+                    No benefits yet
+                  </Card>
+                ) : (
+                  tierBenefits.map((benefit) => (
+                    <Card key={benefit.id} className="p-4">
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="w-8 h-8 rounded-full flex items-center justify-center"
+                              style={{ backgroundColor: tier.color + "30", color: tier.color }}
+                            >
+                              {getIconComponent(benefit.icon)}
+                            </div>
+                            <div>
+                              <h4 className="font-semibold text-sm">{benefit.title}</h4>
+                              {benefit.quantity && (
+                                <p className="text-xs text-muted-foreground">{benefit.quantity}</p>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      
-                      {benefit.expiryDate && (
-                        <p className="text-xs" style={{ color: BRAND }}>
-                          Expires by {benefit.expiryDate}
-                        </p>
-                      )}
-                      
-                      {benefit.conditions && (
-                        <p className="text-xs text-muted-foreground">{benefit.conditions}</p>
-                      )}
-                      
-                      <div className="flex gap-2 pt-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openEditDialog(benefit)}
-                          className="flex-1"
-                        >
-                          <Pencil className="w-3 h-3" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openDeleteDialog(benefit)}
-                          className="flex-1"
-                        >
-                          <Trash2 className="w-3 h-3 text-destructive" />
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                ))
-              )}
-            </div>
-          </div>
 
-          {/* Diamond Benefits */}
-          <div>
-            <div 
-              className="p-3 rounded-t-lg text-center font-bold text-white mb-3"
-              style={{ backgroundColor: getTierColor("Diamond") }}
-            >
-              <Award className="w-5 h-5 inline-block mr-2" />
-              Diamond Member Benefits
-            </div>
-            <div className="space-y-3">
-              {diamondBenefits.length === 0 ? (
-                <Card className="p-4 text-center text-sm text-muted-foreground">
-                  No benefits yet
-                </Card>
-              ) : (
-                diamondBenefits.map((benefit) => (
-                  <Card key={benefit.id} className="p-4">
-                    <div className="space-y-2">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-8 h-8 rounded-full flex items-center justify-center"
-                            style={{ backgroundColor: getTierColor("Diamond") + "30", color: getTierColor("Diamond") }}
-                          >
-                            {getIconComponent(benefit.icon)}
-                          </div>
-                          <div>
-                            <h4 className="font-semibold text-sm">{benefit.title}</h4>
-                            {benefit.quantity && (
-                              <p className="text-xs text-muted-foreground">{benefit.quantity}</p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      
-                      {benefit.expiryDate && (
-                        <p className="text-xs" style={{ color: BRAND }}>
-                          Expires by {benefit.expiryDate}
-                        </p>
-                      )}
-                      
-                      {benefit.conditions && (
-                        <p className="text-xs text-muted-foreground">{benefit.conditions}</p>
-                      )}
-                      
-                      <div className="flex gap-2 pt-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openEditDialog(benefit)}
-                          className="flex-1"
-                        >
-                          <Pencil className="w-3 h-3" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openDeleteDialog(benefit)}
-                          className="flex-1"
-                        >
-                          <Trash2 className="w-3 h-3 text-destructive" />
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                ))
-              )}
-            </div>
-          </div>
+                        {benefit.expiryDate && (
+                          <p className="text-xs" style={{ color: BRAND }}>
+                            Expires by {benefit.expiryDate}
+                          </p>
+                        )}
 
-          {/* Platinum Benefits */}
-          <div>
-            <div 
-              className="p-3 rounded-t-lg text-center font-bold text-white mb-3"
-              style={{ backgroundColor: getTierColor("Platinum") }}
-            >
-              <Award className="w-5 h-5 inline-block mr-2" />
-              Platinum Member Benefits
-            </div>
-            <div className="space-y-3">
-              {platinumBenefits.length === 0 ? (
-                <Card className="p-4 text-center text-sm text-muted-foreground">
-                  No benefits yet
-                </Card>
-              ) : (
-                platinumBenefits.map((benefit) => (
-                  <Card key={benefit.id} className="p-4">
-                    <div className="space-y-2">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-8 h-8 rounded-full flex items-center justify-center"
-                            style={{ backgroundColor: getTierColor("Platinum") + "30", color: getTierColor("Platinum") }}
+                        {benefit.conditions && (
+                          <p className="text-xs text-muted-foreground">{benefit.conditions}</p>
+                        )}
+
+                        <div className="flex gap-2 pt-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openEditDialog(benefit)}
+                            className="flex-1"
                           >
-                            {getIconComponent(benefit.icon)}
-                          </div>
-                          <div>
-                            <h4 className="font-semibold text-sm">{benefit.title}</h4>
-                            {benefit.quantity && (
-                              <p className="text-xs text-muted-foreground">{benefit.quantity}</p>
-                            )}
-                          </div>
+                            <Pencil className="w-3 h-3" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openDeleteDialog(benefit)}
+                            className="flex-1"
+                          >
+                            <Trash2 className="w-3 h-3 text-destructive" />
+                          </Button>
                         </div>
                       </div>
-                      
-                      {benefit.expiryDate && (
-                        <p className="text-xs" style={{ color: BRAND }}>
-                          Expires by {benefit.expiryDate}
-                        </p>
-                      )}
-                      
-                      {benefit.conditions && (
-                        <p className="text-xs text-muted-foreground">{benefit.conditions}</p>
-                      )}
-                      
-                      <div className="flex gap-2 pt-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openEditDialog(benefit)}
-                          className="flex-1"
-                        >
-                          <Pencil className="w-3 h-3" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openDeleteDialog(benefit)}
-                          className="flex-1"
-                        >
-                          <Trash2 className="w-3 h-3 text-destructive" />
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                ))
-              )}
+                    </Card>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
+          ))}
         </div>
       )}
 

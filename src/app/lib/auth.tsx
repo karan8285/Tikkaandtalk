@@ -8,7 +8,13 @@ interface User {
   id: string;
   phone: string;
   name: string;
+  /** Spendable balance. Goes down when points are redeemed or expire. */
   points: number;
+  /** Lifetime points ever earned. This is what tier is derived from — see lib/tiers.ts.
+   *  Optional because records created before it was introduced only have `points`. */
+  totalPointsEarned?: number;
+  /** Server-persisted tier name. Prefer deriving with tierForUser() over reading this. */
+  tier?: string;
   isAdmin?: boolean;
 }
 

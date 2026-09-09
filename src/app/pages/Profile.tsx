@@ -8,6 +8,7 @@ import { AddToHomeScreen } from "../components/AddToHomeScreen";
 import { User, Smartphone, Award, LogOut, ShieldCheck, Key, Bot, Bell, BellOff, BellRing, KeyRound } from "lucide-react";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { APP_CONFIG } from "../lib/config";
+import { useTiers, tierForUser } from "../lib/tiers";
 import { isPushSupported, subscribeToPush, unsubscribeFromPush, isCurrentlySubscribed, getPushPermissionStatus } from "../lib/pushNotifications";
 import { toast } from "sonner";
 import { ChangePinDialog } from "../components/ChangePinDialog";
@@ -17,6 +18,7 @@ const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e1
 export default function Profile() {
   const navigate = useNavigate();
   const { user, signOut, loading, refreshProfile, accessToken } = useAuth();
+  const { tiers } = useTiers();
   const { isMascotVisible, hideMascot, showMascot } = useMascot();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [pushSupported, setPushSupported] = useState(false);
@@ -87,12 +89,6 @@ export default function Profile() {
     // Navigate immediately - signOut is synchronous and clears everything
     console.log("✅ Navigating to home after sign out");
     navigate("/", { replace: true });
-  };
-
-  const getTierName = (points: number) => {
-    if (points >= 1000) return "Diamond";
-    if (points >= 500) return "Gold";
-    return "Silver";
   };
 
   // Show loading state
@@ -169,7 +165,7 @@ export default function Profile() {
                 <span className="text-sm font-medium">Loyalty Tier</span>
               </div>
               <span className="font-semibold text-primary">
-                {getTierName(user.points)}
+                {tierForUser(user, tiers).name}
               </span>
             </div>
 

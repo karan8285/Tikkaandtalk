@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { formatIDR } from "../lib/currency";
+import { useTiers } from "../lib/tiers";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -74,13 +75,6 @@ const ICON_OPTIONS = [
   { value: "gift", label: "Gift", icon: Gift },
 ];
 
-const TIER_OPTIONS = ["Silver", "Gold", "Diamond", "Platinum"];
-const TIER_COLORS: Record<string, string> = {
-  Silver: "#9CA3AF",
-  Gold: "#FFC107",
-  Diamond: "#00BCD4",
-  Platinum: "#9C27B0",
-};
 
 const DISCOUNT_TYPE_OPTIONS = [
   { value: "percentage", label: "% Discount", icon: Percent },
@@ -90,6 +84,12 @@ const DISCOUNT_TYPE_OPTIONS = [
 ];
 
 export function VouchersAdmin({ customToken }: VouchersAdminProps) {
+  // Tier names and colours come from the admin-editable ladder (GET /tier-config) rather than
+  // a hardcoded list, so a tier added or renamed there is immediately targetable here.
+  const { tiers } = useTiers();
+  const TIER_OPTIONS = tiers.map((t) => t.name);
+  const TIER_COLORS: Record<string, string> = Object.fromEntries(tiers.map((t) => [t.name, t.color]));
+
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [loading, setLoading] = useState(true);
   const [editDialog, setEditDialog] = useState(false);

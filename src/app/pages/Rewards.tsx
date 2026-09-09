@@ -6,6 +6,7 @@ import { Button } from "../components/ui/button";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { Gift, ChevronLeft, Award, Ticket, Car, UtensilsCrossed, RefreshCw, Percent, Truck, Tag, Clock, CheckCircle, Crown, Copy, MessageCircle } from "lucide-react";
+import { useTiers, tierForUser, tierColor as sharedTierColor, tierRank, nextTierProgress } from "../lib/tiers";
 import { toast } from "sonner";
 import { getRestaurantLogo } from "../lib/useRestaurantLogo";
 import { getWhatsAppNumber, getWhatsAppDisplay, getWhatsAppLink } from "../lib/whatsapp";
@@ -56,6 +57,7 @@ export default function Rewards() {
   const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
   const navigate = useNavigate();
   const { user, loading, accessToken, refreshProfile } = useAuth();
+  const { tiers } = useTiers();
   const [loadingData, setLoadingData] = useState(true);
   const [claiming, setClaiming] = useState<string | null>(null);
   const [userVouchers, setUserVouchers] = useState<any[]>([]);
@@ -195,19 +197,33 @@ export default function Rewards() {
     return null;
   }
 
+  // Tier now resolves through src/app/lib/tiers.ts, which reads the admin-editable ladder from
+  // GET /tier-config. This used to be a hardcoded Silver/Gold/Diamond/Platinum ladder scored on
+  // the spendable balance, so redeeming points visibly demoted the customer while the server
+  // still treated them as their old tier.
   const getTierInfo = () => {
-    const points = user.points || 0;
-    if (points < 5000) {
-      return { current: "Silver", next: "Gold", progress: points, target: 5000, color: "#9CA3AF" };
-    } else if (points < 10000) {
-      return { current: "Gold", next: "Diamond", progress: points - 5000, target: 5000, color: "#FFC107" };
-    } else if (points < 20000) {
-      return { current: "Diamond", next: "Platinum", progress: points - 10000, target: 10000, color: "#00BCD4" };
-    } else {
-      return { current: "Platinum", next: "Platinum", progress: 20000, target: 20000, color: "#9C27B0" };
+    const current = tierForUser(user, tiers);
+    const currentIdx = tierRank(current.name, tiers);
+    const progress = nextTierProgress(user, tiers);
+    const isTop = currentIdx >= 0 && currentIdx === tiers.length - 1;
+
+    if (!progress) {
+      // Top tier: show the bar full rather than dividing by zero.
+      return { current: current.name, next: current.name, progress: 1, target: 1, color: current.color, isTop: true };
     }
+    const span = progress.next.minLifetimePoints - current.minLifetimePoints;
+    return {
+      current: current.name,
+      next: progress.next.name,
+      progress: span - progress.pointsNeeded,
+      target: span,
+      color: current.color,
+      isTop,
+    };
   };
 
+  // Tiers are earned on LIFETIME points, so spending never demotes anyone.
+  const lifetimePoints = user?.totalPointsEarned ?? user?.points ?? 0;
   const tierInfo = getTierInfo();
   const progressPercentage = (tierInfo.progress / tierInfo.target) * 100;
 
@@ -226,23 +242,17 @@ export default function Rewards() {
     }
   };
 
-  const getTierColor = (tier: string) => {
-    switch (tier) {
-      case "Gold":
-        return "#FFC107";
-      case "Diamond":
-        return "#00BCD4";
-      case "Platinum":
-        return "#9C27B0";
-      default:
-        return "#9CA3AF";
-    }
-  };
+  const getTierColor = (tier: string) => sharedTierColor(tier, tiers);
 
   // Get benefits for each tier
-  const goldBenefits = tierBenefits.filter(b => b.tier === "Gold");
-  const diamondBenefits = tierBenefits.filter(b => b.tier === "Diamond");
-  const platinumBenefits = tierBenefits.filter(b => b.tier === "Platinum");
+  // One group per configured tier, so adding or renaming a tier in the admin flows straight
+  // through instead of leaving an empty hardcoded card behind.
+  const benefitsByTier = tiers.map((tier) => ({
+    tier,
+    benefits: tierBenefits.filter(
+      (b) => String(b.tier ?? "").trim().toLowerCase() === tier.name.toLowerCase()
+    ),
+  }));
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "#FFF5F7" }}>
@@ -322,7 +332,7 @@ export default function Rewards() {
                 You are a <span className="font-bold">{tierInfo.current} Member!</span>
               </p>
               
-              {tierInfo.current !== "Platinum" && (
+              {!tierInfo.isTop && (
                 <>
                   <p className="text-sm mb-2" style={{ color: "#666666" }}>
                     {tierInfo.progress.toLocaleString()} / {tierInfo.target.toLocaleString()} points to reach{" "}
@@ -344,8 +354,8 @@ export default function Rewards() {
                 </>
               )}
               
-              {tierInfo.current === "Platinum" && (
-                <p className="text-sm font-bold" style={{ color: getTierColor("Platinum") }}>
+              {tierInfo.isTop && (
+                <p className="text-sm font-bold" style={{ color: tierInfo.color }}>
                   You've reached the highest tier!
                 </p>
               )}
@@ -567,9 +577,14 @@ export default function Rewards() {
         <div className="bg-white rounded-2xl shadow-md p-6">
           <p className="text-center text-sm mb-6" style={{ color: "#666666" }}>
             Upgrade to{" "}
-            <span className="font-bold" style={{ color: getTierColor("Gold") }}>Gold</span>,{" "}
-            <span className="font-bold" style={{ color: getTierColor("Diamond") }}>Diamond</span>, or{" "}
-            <span className="font-bold" style={{ color: getTierColor("Platinum") }}>Platinum</span>{" "}
+            {tiers
+              .slice(Math.max(0, tierRank(tierInfo.current, tiers) + 1))
+              .map((tier, i, arr) => (
+                <span key={tier.name}>
+                  <span className="font-bold" style={{ color: tier.color }}>{tier.name}</span>
+                  {i < arr.length - 2 ? ", " : i === arr.length - 2 ? ", or " : " "}
+                </span>
+              ))}
             Badge & <span className="font-bold">unlock more benefits!</span>
           </p>
           
@@ -578,22 +593,16 @@ export default function Rewards() {
             {/* Connection Line */}
             <div className="absolute top-8 left-0 right-0 flex items-center px-6 sm:px-12">
               <div className="flex-1 h-0.5 bg-gray-300 relative">
-                {["Silver", "Gold", "Diamond", "Platinum"].map((tier, index) => {
-                  const isActive = 
-                    (tier === "Silver" && user.points >= 0) ||
-                    (tier === "Gold" && user.points >= 5000) ||
-                    (tier === "Diamond" && user.points >= 10000) ||
-                    (tier === "Platinum" && user.points >= 20000);
-                  
-                  if (index === 3) return null; // Skip last dot
-                  
+                {tiers.map((tier, index) => {
+                  const isActive = lifetimePoints >= tier.minLifetimePoints;
+                  if (index === tiers.length - 1) return null; // last dot sits under the icon
                   return (
                     <div
-                      key={`dot-${tier}`}
+                      key={`dot-${tier.name}`}
                       className="absolute w-3 h-3 rounded-full -translate-y-1/2"
                       style={{
-                        left: `${(index / 3) * 100}%`,
-                        backgroundColor: isActive ? getTierColor(tier) : "#E5E7EB",
+                        left: `${tiers.length > 1 ? (index / (tiers.length - 1)) * 100 : 0}%`,
+                        backgroundColor: isActive ? tier.color : "#E5E7EB",
                         top: "50%",
                       }}
                     />
@@ -604,15 +613,11 @@ export default function Rewards() {
 
             {/* Tier Icons */}
             <div className="relative flex items-center justify-between px-4">
-              {["Silver", "Gold", "Diamond", "Platinum"].map((tier, index) => {
-                const isActive = 
-                  (tier === "Silver" && user.points >= 0) ||
-                  (tier === "Gold" && user.points >= 5000) ||
-                  (tier === "Diamond" && user.points >= 10000) ||
-                  (tier === "Platinum" && user.points >= 20000);
-                
+              {tiers.map((tierDef) => {
+                const tier = tierDef.name;
+                const isActive = lifetimePoints >= tierDef.minLifetimePoints;
                 const isCurrent = tier === tierInfo.current;
-                
+
                 return (
                   <div key={tier} className="relative z-10 flex flex-col items-center">
                     {/* Tier Badge */}
@@ -663,253 +668,104 @@ export default function Rewards() {
           {/* Tier Benefits Preview Cards */}
           <div className="overflow-x-auto pb-2 -mx-2 px-2">
             <div className="flex gap-3 min-w-max">
-              {/* Gold Tier Card */}
-              <div 
-                className="flex-shrink-0 w-64 rounded-xl p-4 border-2 transition-all hover:shadow-lg"
-                style={{
-                  borderColor: tierInfo.current === "Gold" ? getTierColor("Gold") : "#E5E7EB",
-                  backgroundColor: tierInfo.current === "Gold" ? `${getTierColor("Gold")}08` : "#FFFFFF"
-                }}
-              >
-                <div className="flex items-center gap-2 mb-3">
-                  <div 
-                    className="w-8 h-8 rounded-full flex items-center justify-center"
-                    style={{ backgroundColor: getTierColor("Gold") }}
+              {/* One card per configured tier — was three copy-pasted Gold/Diamond/Platinum
+                  blocks that rendered empty grey cards for any tier no longer in the ladder. */}
+              {benefitsByTier.map(({ tier, benefits }) => {
+                const isCurrent = tierInfo.current === tier.name;
+                return (
+                  <div
+                    key={tier.name}
+                    className="flex-shrink-0 w-64 rounded-xl p-4 border-2 transition-all hover:shadow-lg"
+                    style={{
+                      borderColor: isCurrent ? tier.color : "#E5E7EB",
+                      backgroundColor: isCurrent ? `${tier.color}08` : "#FFFFFF",
+                    }}
                   >
-                    <Award className="w-5 h-5 text-white" />
-                  </div>
-                  <h4 className="font-bold text-sm" style={{ color: getTierColor("Gold") }}>
-                    GOLD MEMBER
-                  </h4>
-                </div>
-                <div className="space-y-2 text-xs">
-                  {goldBenefits.length > 0 ? (
-                    goldBenefits.slice(0, 3).map((benefit, idx) => (
-                      <div key={idx} className="flex items-start gap-2">
-                        <div className="w-1 h-1 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: getTierColor("Gold") }} />
-                        <p style={{ color: "#333333" }}>
-                          <span className="font-semibold">{benefit.title}</span>
-                          {benefit.quantity && <span className="text-gray-500"> {benefit.quantity}</span>}
-                        </p>
+                    <div className="flex items-center gap-2 mb-3">
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: tier.color }}
+                      >
+                        <Award className="w-5 h-5 text-white" />
                       </div>
-                    ))
-                  ) : (
-                    <p className="text-gray-400 text-xs italic">Benefits coming soon</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Diamond Tier Card */}
-              <div 
-                className="flex-shrink-0 w-64 rounded-xl p-4 border-2 transition-all hover:shadow-lg"
-                style={{
-                  borderColor: tierInfo.current === "Diamond" ? getTierColor("Diamond") : "#E5E7EB",
-                  backgroundColor: tierInfo.current === "Diamond" ? `${getTierColor("Diamond")}08` : "#FFFFFF"
-                }}
-              >
-                <div className="flex items-center gap-2 mb-3">
-                  <div 
-                    className="w-8 h-8 rounded-full flex items-center justify-center"
-                    style={{ backgroundColor: getTierColor("Diamond") }}
-                  >
-                    <Award className="w-5 h-5 text-white" />
+                      <h4 className="font-bold text-sm uppercase" style={{ color: tier.color }}>
+                        {tier.name}
+                      </h4>
+                    </div>
+                    <div className="space-y-2 text-xs">
+                      {benefits.length > 0 ? (
+                        benefits.slice(0, 3).map((benefit, idx) => (
+                          <div key={idx} className="flex items-start gap-2">
+                            <div
+                              className="w-1 h-1 rounded-full mt-1.5 flex-shrink-0"
+                              style={{ backgroundColor: tier.color }}
+                            />
+                            <p style={{ color: "#333333" }}>
+                              <span className="font-semibold">{benefit.title}</span>
+                              {benefit.quantity && <span className="text-gray-500"> {benefit.quantity}</span>}
+                            </p>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-gray-400 text-xs italic">Benefits coming soon</p>
+                      )}
+                    </div>
                   </div>
-                  <h4 className="font-bold text-sm" style={{ color: getTierColor("Diamond") }}>
-                    DIAMOND MEMBER
-                  </h4>
-                </div>
-                <div className="space-y-2 text-xs">
-                  {diamondBenefits.length > 0 ? (
-                    diamondBenefits.slice(0, 3).map((benefit, idx) => (
-                      <div key={idx} className="flex items-start gap-2">
-                        <div className="w-1 h-1 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: getTierColor("Diamond") }} />
-                        <p style={{ color: "#333333" }}>
-                          <span className="font-semibold">{benefit.title}</span>
-                          {benefit.quantity && <span className="text-gray-500"> {benefit.quantity}</span>}
-                        </p>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-gray-400 text-xs italic">Benefits coming soon</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Platinum Tier Card */}
-              <div 
-                className="flex-shrink-0 w-64 rounded-xl p-4 border-2 transition-all hover:shadow-lg"
-                style={{
-                  borderColor: tierInfo.current === "Platinum" ? getTierColor("Platinum") : "#E5E7EB",
-                  backgroundColor: tierInfo.current === "Platinum" ? `${getTierColor("Platinum")}08` : "#FFFFFF"
-                }}
-              >
-                <div className="flex items-center gap-2 mb-3">
-                  <div 
-                    className="w-8 h-8 rounded-full flex items-center justify-center"
-                    style={{ backgroundColor: getTierColor("Platinum") }}
-                  >
-                    <Award className="w-5 h-5 text-white" />
-                  </div>
-                  <h4 className="font-bold text-sm" style={{ color: getTierColor("Platinum") }}>
-                    PLATINUM MEMBER
-                  </h4>
-                </div>
-                <div className="space-y-2 text-xs">
-                  {platinumBenefits.length > 0 ? (
-                    platinumBenefits.slice(0, 3).map((benefit, idx) => (
-                      <div key={idx} className="flex items-start gap-2">
-                        <div className="w-1 h-1 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: getTierColor("Platinum") }} />
-                        <p style={{ color: "#333333" }}>
-                          <span className="font-semibold">{benefit.title}</span>
-                          {benefit.quantity && <span className="text-gray-500"> {benefit.quantity}</span>}
-                        </p>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-gray-400 text-xs italic">Benefits coming soon</p>
-                  )}
-                </div>
-              </div>
+                );
+              })}
             </div>
           </div>
         </div>
 
         {/* Benefits by Tier */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Gold Benefits */}
-          {goldBenefits.length > 0 && (
-            <div className="bg-white rounded-2xl shadow-md p-4">
-              <h4 
-                className="text-center font-bold mb-3 pb-2 border-b-2"
-                style={{ color: getTierColor("Gold"), borderColor: getTierColor("Gold") }}
-              >
-                <Award className="w-6 h-6 inline-block mr-1" />
-                Gold Member
-              </h4>
-              <div className="space-y-3">
-                {goldBenefits.map((benefit) => (
-                  <div key={benefit.id} className="flex items-start gap-3">
-                    <div
-                      className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-                      style={{ backgroundColor: getTierColor("Gold") + "20" }}
-                    >
-                      <div style={{ color: getTierColor("Gold") }}>
-                        {getIconComponent(benefit.icon)}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* One section per configured tier. Was three copy-pasted Gold/Diamond/Platinum
+              blocks, so a renamed tier lost its benefits section entirely. */}
+          {benefitsByTier
+            .filter(({ benefits }) => benefits.length > 0)
+            .map(({ tier, benefits }) => (
+              <div key={tier.name} className="bg-white rounded-2xl shadow-md p-4">
+                <h4
+                  className="text-center font-bold mb-3 pb-2 border-b-2"
+                  style={{ color: tier.color, borderColor: tier.color }}
+                >
+                  <Award className="w-6 h-6 inline-block mr-1" />
+                  {tier.name}
+                </h4>
+                <div className="space-y-3">
+                  {benefits.map((benefit) => (
+                    <div key={benefit.id} className="flex items-start gap-3">
+                      <div
+                        className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                        style={{ backgroundColor: tier.color + "20" }}
+                      >
+                        <div style={{ color: tier.color }}>
+                          {getIconComponent(benefit.icon)}
+                        </div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-sm" style={{ color: "#333333" }}>
+                          {benefit.title}{" "}
+                          {benefit.quantity && (
+                            <span className="text-xs" style={{ color: "#666666" }}>
+                              {benefit.quantity}
+                            </span>
+                          )}
+                        </p>
+                        {benefit.expiryDate && (
+                          <p className="text-xs" style={{ color: BRAND }}>
+                            Expires by {benefit.expiryDate}
+                          </p>
+                        )}
+                        <p className="text-xs" style={{ color: "#999999" }}>
+                          {benefit.conditions}
+                        </p>
                       </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm" style={{ color: "#333333" }}>
-                        {benefit.title}{" "}
-                        {benefit.quantity && (
-                          <span className="text-xs" style={{ color: "#666666" }}>
-                            {benefit.quantity}
-                          </span>
-                        )}
-                      </p>
-                      {benefit.expiryDate && (
-                        <p className="text-xs" style={{ color: BRAND }}>
-                          Expires by {benefit.expiryDate}
-                        </p>
-                      )}
-                      <p className="text-xs" style={{ color: "#999999" }}>
-                        {benefit.conditions}
-                      </p>
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
-
-          {/* Diamond Benefits */}
-          {diamondBenefits.length > 0 && (
-            <div className="bg-white rounded-2xl shadow-md p-4">
-              <h4 
-                className="text-center font-bold mb-3 pb-2 border-b-2"
-                style={{ color: getTierColor("Diamond"), borderColor: getTierColor("Diamond") }}
-              >
-                <Award className="w-6 h-6 inline-block mr-1" />
-                Diamond Member
-              </h4>
-              <div className="space-y-3">
-                {diamondBenefits.map((benefit) => (
-                  <div key={benefit.id} className="flex items-start gap-3">
-                    <div
-                      className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-                      style={{ backgroundColor: getTierColor("Diamond") + "20" }}
-                    >
-                      <div style={{ color: getTierColor("Diamond") }}>
-                        {getIconComponent(benefit.icon)}
-                      </div>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm" style={{ color: "#333333" }}>
-                        {benefit.title}{" "}
-                        {benefit.quantity && (
-                          <span className="text-xs" style={{ color: "#666666" }}>
-                            {benefit.quantity}
-                          </span>
-                        )}
-                      </p>
-                      {benefit.expiryDate && (
-                        <p className="text-xs" style={{ color: BRAND }}>
-                          Expires by {benefit.expiryDate}
-                        </p>
-                      )}
-                      <p className="text-xs" style={{ color: "#999999" }}>
-                        {benefit.conditions}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Platinum Benefits */}
-          {platinumBenefits.length > 0 && (
-            <div className="bg-white rounded-2xl shadow-md p-4">
-              <h4 
-                className="text-center font-bold mb-3 pb-2 border-b-2"
-                style={{ color: getTierColor("Platinum"), borderColor: getTierColor("Platinum") }}
-              >
-                <Award className="w-6 h-6 inline-block mr-1" />
-                Platinum Member
-              </h4>
-              <div className="space-y-3">
-                {platinumBenefits.map((benefit) => (
-                  <div key={benefit.id} className="flex items-start gap-3">
-                    <div
-                      className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-                      style={{ backgroundColor: getTierColor("Platinum") + "20" }}
-                    >
-                      <div style={{ color: getTierColor("Platinum") }}>
-                        {getIconComponent(benefit.icon)}
-                      </div>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm" style={{ color: "#333333" }}>
-                        {benefit.title}{" "}
-                        {benefit.quantity && (
-                          <span className="text-xs" style={{ color: "#666666" }}>
-                            {benefit.quantity}
-                          </span>
-                        )}
-                      </p>
-                      {benefit.expiryDate && (
-                        <p className="text-xs" style={{ color: BRAND }}>
-                          Expires by {benefit.expiryDate}
-                        </p>
-                      )}
-                      <p className="text-xs" style={{ color: "#999999" }}>
-                        {benefit.conditions}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+            ))}
         </div>
       </main>
 
