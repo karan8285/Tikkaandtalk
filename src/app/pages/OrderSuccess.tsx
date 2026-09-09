@@ -9,6 +9,7 @@ import { GuestAccountCreationDialog } from "../components/GuestAccountCreationDi
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
 import { getWhatsAppNumber, getWhatsAppDisplay } from "../lib/whatsapp";
+import { loadSnapJs, openSnapPayment } from "../lib/midtrans";
 import { toast } from "sonner";
 import { 
   CheckCircle2, 
