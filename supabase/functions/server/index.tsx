@@ -985,20 +985,26 @@ app.post("/make-server-e5e192fb/signup", async (c) => {
     // Store user data in KV store
     const userId = data.user.id;
     const adminFlag = isAdminPhone(normalizedPhone);
+    // `tier` and `totalPointsEarned` are written up front. They used to be omitted, which left
+    // every new customer with no stored tier and no lifetime total — so tier-targeted vouchers
+    // could not find them and any tier recomputation had nothing to work from.
+    const entryTier = await getUserTier(0);
     await kv.set(`user:${userId}`, {
       id: userId,
       phone: normalizedPhone,
       name,
       points: 0,
+      totalPointsEarned: 0,
+      tier: entryTier,
       createdAt: new Date().toISOString(),
       isAdmin: adminFlag,
     });
 
-    console.log(`✅ SIGNUP: User created successfully - ID: ${userId}, Phone: ${normalizedPhone}`);
+    console.log(`✅ SIGNUP: User created successfully - ID: ${userId}, Phone: ${normalizedPhone}, Tier: ${entryTier}`);
 
     // Auto-assign eligible vouchers to the new user (all-customer vouchers + matching tier)
     if (!adminFlag) {
-      const vouchersAssigned = await autoAssignVouchersToUser(userId, "Silver", normalizedPhone);
+      const vouchersAssigned = await autoAssignVouchersToUser(userId, entryTier, normalizedPhone);
       if (vouchersAssigned > 0) {
         console.log(`🎟️ SIGNUP: Auto-assigned ${vouchersAssigned} voucher(s) to new user ${userId}`);
       }
@@ -1909,20 +1915,13 @@ app.post("/make-server-e5e192fb/link-guest-order", async (c) => {
       if (pointsToAward > 0) {
         const oldPoints = userData.points || 0;
         const oldTotal = userData.totalPointsEarned || 0;
-        const oldTier = userData.tier || getUserTier(oldTotal);
+        const oldTier = await resolveUserTier(userData);
         userData.points = oldPoints + pointsToAward;
         userData.totalPointsEarned = oldTotal + pointsToAward;
         
-        // Update tier based on total points
-        if (userData.totalPointsEarned >= 10000) {
-          userData.tier = "Platinum";
-        } else if (userData.totalPointsEarned >= 5000) {
-          userData.tier = "Diamond";
-        } else if (userData.totalPointsEarned >= 2000) {
-          userData.tier = "Gold";
-        } else {
-          userData.tier = "Silver";
-        }
+        // Tier is resolved through the shared config — see DEFAULT_TIER_CONFIG. This used to be
+        // an inline ladder that disagreed with getUserTier's.
+        userData.tier = await resolveUserTier(userData);
         
         await kv.set(`user:${userAuth.userId}`, userData);
         
@@ -4159,12 +4158,125 @@ app.delete("/make-server-e5e192fb/admin/users/:id", async (c) => {
 
 // ==================== VOUCHERS ROUTES ====================
 
-// Helper: Get user tier from points
-function getUserTier(points: number): string {
-  if (points >= 20000) return "Platinum";
-  if (points >= 10000) return "Diamond";
-  if (points >= 5000) return "Gold";
-  return "Silver";
+// ==================== TIER CONFIGURATION ====================
+// SINGLE SOURCE OF TRUTH for every tier threshold on the server.
+//
+// Before this existed there were four divergent ladders — one inside getUserTier and three
+// copy-pasted into the points-award paths — plus more in the client. The same customer could
+// read as Diamond in storage, Silver on their rewards page and silver in analytics. If you need
+// a threshold anywhere, call through here. Do not inline another comparison.
+//
+// Tiers are ordered lowest-first. `minLifetimePoints` is compared against a user's LIFETIME
+// totalPointsEarned, never their spendable balance, so redeeming points can never demote anyone.
+// The first entry is the entry tier every customer starts in and must have a threshold of 0.
+
+interface TierDef {
+  name: string;
+  minLifetimePoints: number;
+  color: string;
+}
+
+// Seed values. Admins override these via PUT /admin/tier-config, which persists to KV.
+const DEFAULT_TIER_CONFIG: TierDef[] = [
+  { name: "Gold", minLifetimePoints: 0, color: "#FFC107" },
+  { name: "VIP Member", minLifetimePoints: 5000, color: "#9C27B0" },
+];
+
+const TIER_CONFIG_KEY = "tier_config";
+const TIER_CONFIG_TTL_MS = 30_000;
+let _tierConfigCache: { data: TierDef[]; at: number } | null = null;
+
+// Coerce whatever is in KV into a usable ladder: drop unnamed rows, clamp numbers, sort
+// ascending, and force the entry tier to 0 so there is always a bucket for a brand-new user.
+function normalizeTierConfig(raw: any): TierDef[] {
+  const tiers = (Array.isArray(raw) ? raw : [])
+    .filter((t: any) => t && typeof t.name === "string" && t.name.trim().length > 0)
+    .map((t: any) => ({
+      name: String(t.name).trim(),
+      minLifetimePoints: Math.max(0, Math.floor(Number(t.minLifetimePoints) || 0)),
+      color: typeof t.color === "string" && t.color.trim() ? t.color.trim() : "#9CA3AF",
+    }))
+    .sort((a: TierDef, b: TierDef) => a.minLifetimePoints - b.minLifetimePoints);
+
+  if (tiers.length === 0) return DEFAULT_TIER_CONFIG;
+  tiers[0].minLifetimePoints = 0;
+  return tiers;
+}
+
+async function getTierConfig(): Promise<TierDef[]> {
+  const now = Date.now();
+  if (_tierConfigCache && now - _tierConfigCache.at < TIER_CONFIG_TTL_MS) {
+    return _tierConfigCache.data;
+  }
+  let data = DEFAULT_TIER_CONFIG;
+  try {
+    const stored = await kv.get(TIER_CONFIG_KEY);
+    if (stored?.tiers) data = normalizeTierConfig(stored.tiers);
+  } catch (error) {
+    console.log(`⚠️ tier_config read failed, using defaults: ${error}`);
+  }
+  _tierConfigCache = { data, at: now };
+  return data;
+}
+
+function invalidateTierConfigCache() {
+  _tierConfigCache = null;
+}
+
+// The pure classifier. Everything below funnels into this one comparison.
+function tierForPoints(lifetimePoints: number, config: TierDef[]): string {
+  let name = config[0].name;
+  for (const tier of config) {
+    if ((lifetimePoints || 0) >= tier.minLifetimePoints) name = tier.name;
+  }
+  return name;
+}
+
+// Resolve a tier NAME from a lifetime points total.
+async function getUserTier(lifetimePoints: number): Promise<string> {
+  return tierForPoints(lifetimePoints, await getTierConfig());
+}
+
+// The lifetime total to classify a record by. Kept in one place so the `points` fallback for
+// legacy records (see resolveUserTier) cannot drift between the sync and async paths.
+function lifetimePointsOf(userData: any): number {
+  return userData?.totalPointsEarned ?? userData?.points ?? 0;
+}
+
+// Synchronous variant for hot loops and non-async callbacks: await getTierConfig() once
+// outside the loop, then classify many records without a per-row await.
+function resolveUserTierWith(userData: any, config: TierDef[]): string {
+  return tierForPoints(lifetimePointsOf(userData), config);
+}
+
+// THE canonical way to read a user's tier. Always derived, never read back from the record.
+//
+// The old pattern was `user.tier || getUserTier(...)`, which let a stored string short-circuit
+// the calculation — so changing a threshold silently did nothing for every existing customer.
+//
+// `points` is still a fallback because signup historically wrote neither `tier` nor
+// `totalPointsEarned` (see POST /signup), so legacy records only have a spendable balance.
+// POST /admin/retier-all backfills totalPointsEarned; this fallback keeps those users at their
+// current tier until it runs, instead of mass-demoting them to the entry tier.
+async function resolveUserTier(userData: any): Promise<string> {
+  return resolveUserTierWith(userData, await getTierConfig());
+}
+
+// Position in the ladder, or -1 if the name is not in the current config (i.e. it was renamed
+// or removed and some voucher/benefit still points at the old name).
+async function tierRank(name: string): Promise<number> {
+  const config = await getTierConfig();
+  const needle = String(name ?? "").trim().toLowerCase();
+  return config.findIndex((t) => t.name.toLowerCase() === needle);
+}
+
+// Tier targeting means "this tier AND ABOVE". A voucher aimed at the entry tier reaches
+// everyone; one aimed at the top tier reaches only that tier. An unknown `requiredTier`
+// matches nobody rather than everybody — a renamed tier must not silently open a voucher up.
+async function tierAtLeast(userTier: string, requiredTier: string): Promise<boolean> {
+  const [userIdx, requiredIdx] = await Promise.all([tierRank(userTier), tierRank(requiredTier)]);
+  if (requiredIdx < 0 || userIdx < 0) return false;
+  return userIdx >= requiredIdx;
 }
 
 // Helper: Auto-assign eligible vouchers to a user
@@ -4200,7 +4312,7 @@ async function autoAssignVouchersToUser(userId: string, userTier: string, userPh
 
       if (voucher.targetType === "all") {
         eligible = true;
-      } else if (voucher.targetType === "tier" && voucher.targetTier === userTier) {
+      } else if (voucher.targetType === "tier" && await tierAtLeast(userTier, voucher.targetTier)) {
         eligible = true;
       } else if (voucher.targetType === "specific" && userPhone && voucher.targetPhones?.length > 0) {
         const normalizedUserPhone = userPhone.replace(/^\+62/, "0");
@@ -4326,8 +4438,8 @@ app.post("/make-server-e5e192fb/admin/vouchers", async (c) => {
       for (const user of (allUsers || [])) {
         if (user.isAdmin) continue;
         if (voucher.targetType === "tier") {
-          const userTier = user.tier || getUserTier(user.totalPointsEarned || user.points || 0);
-          if (userTier !== voucher.targetTier) continue;
+          const userTier = await resolveUserTier(user);
+          if (!(await tierAtLeast(userTier, voucher.targetTier))) continue;
         }
         const assignmentId = crypto.randomUUID();
         await kv.set(`user_voucher:${assignmentId}`, {
@@ -4540,8 +4652,8 @@ app.post("/make-server-e5e192fb/admin/vouchers/:id/assign-tier", async (c) => {
 
     for (const user of (allUsers || [])) {
       if (user.isAdmin) continue;
-      const userTier = user.tier || getUserTier(user.totalPointsEarned || user.points || 0);
-      if (userTier !== tier) continue;
+      const userTier = await resolveUserTier(user);
+      if (!(await tierAtLeast(userTier, tier))) continue;
       const already = (existing || []).find((a: any) => a.voucherId === voucherId && a.userId === user.id);
       if (already) continue;
 
@@ -4574,15 +4686,17 @@ app.get("/make-server-e5e192fb/admin/vouchers/:id/assignments", async (c) => {
     const voucherAssignments = (assignments || []).filter((a: any) => a.voucherId === voucherId);
     
     const allUsers = await kvGetByPrefixWithRetry("user:");
-    const enriched = voucherAssignments.map((a: any) => {
-      const user = (allUsers || []).find((u: any) => u.id === a.userId);
-      return {
-        ...a,
-        userName: user?.name || "Unknown",
-        userPhone: user?.phone || "Unknown",
-        userTier: user?.tier || getUserTier(user?.totalPointsEarned || user?.points || 0),
-      };
-    });
+    const enriched = await Promise.all(
+      voucherAssignments.map(async (a: any) => {
+        const user = (allUsers || []).find((u: any) => u.id === a.userId);
+        return {
+          ...a,
+          userName: user?.name || "Unknown",
+          userPhone: user?.phone || "Unknown",
+          userTier: await resolveUserTier(user),
+        };
+      })
+    );
 
     return c.json({ assignments: enriched });
   } catch (error) {
@@ -4602,7 +4716,7 @@ app.get("/make-server-e5e192fb/user-vouchers", async (c) => {
 
     // Lazy auto-assign: check if there are any eligible vouchers this user is missing
     // This catches vouchers created after signup or after tier promotion
-    const userTier = userData.tier || getUserTier(userData.totalPointsEarned || userData.points || 0);
+    const userTier = await resolveUserTier(userData);
     await autoAssignVouchersToUser(userId, userTier, userData.phone);
 
     const allAssignments = await kvGetByPrefixWithRetry("user_voucher:");
@@ -4883,13 +4997,15 @@ app.get("/make-server-e5e192fb/admin/users-list", async (c) => {
     if (!adminCheck?.isAdmin) return c.json({ error: "Admin access required" }, 403);
 
     const allUsers = await kvGetByPrefixWithRetry("user:");
-    const users = (allUsers || [])
-      .filter((u: any) => !u.isAdmin)
-      .map((u: any) => ({
-        id: u.id, name: u.name, phone: u.phone,
-        points: u.points || 0,
-        tier: u.tier || getUserTier(u.totalPointsEarned || u.points || 0),
-      }));
+    const users = await Promise.all(
+      (allUsers || [])
+        .filter((u: any) => !u.isAdmin)
+        .map(async (u: any) => ({
+          id: u.id, name: u.name, phone: u.phone,
+          points: u.points || 0,
+          tier: await resolveUserTier(u),
+        }))
+    );
 
     return c.json({ users });
   } catch (error) {
@@ -5350,6 +5466,11 @@ app.post("/make-server-e5e192fb/orders/:id/cancel", async (c) => {
     const userData = await kvRetry(() => kv.get(`user:${userId}`));
     if (userData && order.pointsAwarded && order.pointsEarned) {
       userData.points = Math.max(0, (userData.points || 0) - order.pointsEarned);
+      // Reverse the LIFETIME total too, then re-derive the tier. Without this a cancelled
+      // order permanently inflates standing and tiers can never demote. (Points EXPIRY
+      // deliberately does not do this — those points really were earned.)
+      userData.totalPointsEarned = Math.max(0, (userData.totalPointsEarned || 0) - order.pointsEarned);
+      userData.tier = await resolveUserTier(userData);
       await kvRetry(() => kv.set(`user:${userId}`, userData));
       console.log(`Refunded ${order.pointsEarned} points to user ${userId}`);
       try { await deductPointsFromLedger(userId, order.pointsEarned, `Refund: Order ${order.orderNumber || orderId} cancelled`); } catch (e) { console.log(`⚠️ Ledger deduction failed: ${e}`); }
@@ -5595,6 +5716,9 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
       const userData = await kv.get(`user:${order.userId}`);
       if (userData && order.pointsAwarded && order.pointsEarned) {
         userData.points = Math.max(0, (userData.points || 0) - order.pointsEarned);
+        // See the customer-cancel path: lifetime must be reversed for tiers to be able to fall.
+        userData.totalPointsEarned = Math.max(0, (userData.totalPointsEarned || 0) - order.pointsEarned);
+        userData.tier = await resolveUserTier(userData);
         await kv.set(`user:${order.userId}`, userData);
         console.log(`Admin cancelled order: Refunded ${order.pointsEarned} points to user ${order.userId}`);
         try { await deductPointsFromLedger(order.userId, order.pointsEarned, `Refund: Order ${order.orderNumber || orderId} cancelled by admin`); } catch (e) { console.log(`⚠️ Ledger deduction failed: ${e}`); }
@@ -5851,20 +5975,13 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
         
         if (userData) {
           const oldPoints = userData.points || 0;
-          const oldTier = userData.tier || getUserTier(userData.totalPointsEarned || oldPoints);
+          const oldTier = await resolveUserTier(userData);
           userData.points = oldPoints + pointsToAward;
           userData.totalPointsEarned = (userData.totalPointsEarned || 0) + pointsToAward;
           
-          // Update tier based on total points
-          if (userData.totalPointsEarned >= 10000) {
-            userData.tier = "Platinum";
-          } else if (userData.totalPointsEarned >= 5000) {
-            userData.tier = "Diamond";
-          } else if (userData.totalPointsEarned >= 2000) {
-            userData.tier = "Gold";
-          } else {
-            userData.tier = "Silver";
-          }
+          // Tier is resolved through the shared config — see DEFAULT_TIER_CONFIG. This used to be
+          // an inline ladder that disagreed with getUserTier's.
+          userData.tier = await resolveUserTier(userData);
           
           await kv.set(`user:${order.userId}`, userData);
           order.pointsAwarded = true;
@@ -5945,6 +6062,184 @@ app.post("/make-server-e5e192fb/admin/orders/:id/status", async (c) => {
 // ==================== TIER BENEFITS ENDPOINTS ====================
 
 // Get all tier benefits (public)
+// ==================== TIER CONFIG ROUTES ====================
+
+// Public: the tier ladder, so the client stops hardcoding its own copies.
+app.get("/make-server-e5e192fb/tier-config", async (c) => {
+  try {
+    return c.json({ tiers: await getTierConfig() });
+  } catch (error) {
+    console.error("Get tier config error:", error);
+    return c.json({ tiers: DEFAULT_TIER_CONFIG });
+  }
+});
+
+// Admin: read the ladder for editing.
+app.get("/make-server-e5e192fb/admin/tier-config", async (c) => {
+  try {
+    const adminCheck = await verifyAdminAccess(c);
+    if (!adminCheck?.isAdmin) return c.json({ error: "Unauthorized" }, 401);
+    const stored = await kv.get(TIER_CONFIG_KEY);
+    return c.json({
+      tiers: await getTierConfig(),
+      isCustomised: !!stored?.tiers,
+      defaults: DEFAULT_TIER_CONFIG,
+    });
+  } catch (error) {
+    console.error("Get admin tier config error:", error);
+    return c.json({ error: "Failed to get tier config" }, 500);
+  }
+});
+
+// Admin: replace the ladder.
+//
+// Editing thresholds does NOT retroactively move anyone on its own — tiers are derived on read,
+// so the change takes effect the next time each user's tier is resolved. Call
+// POST /admin/retier-all afterwards to rewrite the stored `tier` field and fire any newly
+// earned tier-voucher assignments.
+app.put("/make-server-e5e192fb/admin/tier-config", async (c) => {
+  try {
+    const adminCheck = await verifyAdminAccess(c);
+    if (!adminCheck?.isAdmin) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    if (!Array.isArray(body?.tiers) || body.tiers.length === 0) {
+      return c.json({ error: "tiers must be a non-empty array" }, 400);
+    }
+
+    const normalized = normalizeTierConfig(body.tiers);
+    if (normalized.length === 0) {
+      return c.json({ error: "No valid tiers supplied — each tier needs a name" }, 400);
+    }
+
+    // Reject duplicate names: tier targeting matches by name, so two rows sharing one would
+    // make voucher eligibility ambiguous.
+    const seen = new Set<string>();
+    for (const tier of normalized) {
+      const key = tier.name.toLowerCase();
+      if (seen.has(key)) {
+        return c.json({ error: `Duplicate tier name: ${tier.name}` }, 400);
+      }
+      seen.add(key);
+    }
+
+    const previous = await getTierConfig();
+    await kv.set(TIER_CONFIG_KEY, {
+      tiers: normalized,
+      updatedAt: new Date().toISOString(),
+      updatedBy: adminCheck.userId,
+    });
+    invalidateTierConfigCache();
+
+    // Warn about anything still pointing at a tier name that no longer exists — renaming a tier
+    // silently orphans every voucher and benefit that targeted the old name.
+    const removed = previous
+      .map((t) => t.name)
+      .filter((name) => !normalized.some((t) => t.name.toLowerCase() === name.toLowerCase()));
+
+    let orphanedVouchers = 0;
+    let orphanedBenefits = 0;
+    if (removed.length > 0) {
+      const lowerRemoved = removed.map((n) => n.toLowerCase());
+      const allVouchers = (await kvGetByPrefixWithRetry("voucher:")) || [];
+      orphanedVouchers = allVouchers.filter(
+        (v: any) => v?.targetType === "tier" && lowerRemoved.includes(String(v.targetTier ?? "").toLowerCase())
+      ).length;
+      const allBenefits = (await kvGetByPrefixWithRetry("tier_benefit:")) || [];
+      orphanedBenefits = allBenefits.filter(
+        (b: any) => lowerRemoved.includes(String(b?.tier ?? "").toLowerCase())
+      ).length;
+    }
+
+    console.log(`🎖️ Tier config updated by ${adminCheck.userId}: ${normalized.map((t) => `${t.name}@${t.minLifetimePoints}`).join(", ")}`);
+    return c.json({
+      success: true,
+      tiers: normalized,
+      removedTiers: removed,
+      orphanedVouchers,
+      orphanedBenefits,
+    });
+  } catch (error) {
+    console.error("Update tier config error:", error);
+    return c.json({ error: "Failed to update tier config" }, 500);
+  }
+});
+
+// Admin: recompute and persist every user's tier against the current ladder.
+//
+// Also backfills `totalPointsEarned` for legacy records — POST /signup historically wrote
+// neither `tier` nor `totalPointsEarned`, so those users had only a spendable balance.
+app.post("/make-server-e5e192fb/admin/retier-all", async (c) => {
+  try {
+    const adminCheck = await verifyAdminAccess(c);
+    if (!adminCheck?.isAdmin) return c.json({ error: "Unauthorized" }, 401);
+
+    const dryRun = c.req.query("dryRun") === "true";
+    const allUsers = (await kvGetByPrefixWithRetry("user:")) || [];
+    const config = await getTierConfig();
+
+    const changes: Array<{ userId: string; name?: string; from: string; to: string; lifetime: number }> = [];
+    let backfilled = 0;
+    let unchanged = 0;
+
+    for (const user of allUsers) {
+      if (!user?.id || user.isAdmin) continue;
+
+      const hadLifetime = typeof user.totalPointsEarned === "number";
+      const lifetime = hadLifetime ? user.totalPointsEarned : (user.points || 0);
+      const newTier = await getUserTier(lifetime);
+      const oldTier = user.tier || "(none)";
+
+      if (oldTier === newTier && hadLifetime) {
+        unchanged++;
+        continue;
+      }
+
+      changes.push({ userId: user.id, name: user.name, from: oldTier, to: newTier, lifetime });
+
+      if (!dryRun) {
+        if (!hadLifetime) {
+          user.totalPointsEarned = lifetime;
+          backfilled++;
+        }
+        user.tier = newTier;
+        await kv.set(`user:${user.id}`, user);
+        // Newly eligible tier vouchers, now that targeting is "this tier and above".
+        try {
+          await autoAssignVouchersToUser(user.id, newTier, user.phone);
+        } catch (assignErr) {
+          console.log(`⚠️ retier: voucher auto-assign failed for ${user.id}: ${assignErr}`);
+        }
+      } else if (!hadLifetime) {
+        backfilled++;
+      }
+    }
+
+    const promotions = await Promise.all(
+      changes.map(async (ch) => (await tierRank(ch.to)) > (await tierRank(ch.from)))
+    );
+    const promoted = promotions.filter(Boolean).length;
+
+    console.log(`🎖️ Retier ${dryRun ? "(dry run) " : ""}by ${adminCheck.userId}: ${changes.length} changed, ${unchanged} unchanged, ${backfilled} backfilled`);
+    return c.json({
+      success: true,
+      dryRun,
+      ladder: config,
+      totalUsers: allUsers.filter((u: any) => u?.id && !u.isAdmin).length,
+      changed: changes.length,
+      unchanged,
+      backfilled,
+      promoted,
+      demoted: changes.length - promoted,
+      // Capped so a large account does not blow the response size.
+      sample: changes.slice(0, 50),
+    });
+  } catch (error) {
+    console.error("Retier all error:", error);
+    return c.json({ error: "Failed to retier users" }, 500);
+  }
+});
+
 app.get("/make-server-e5e192fb/tier-benefits", async (c) => {
   try {
     const benefits = await kvGetByPrefixWithRetry("tier_benefit:");
@@ -7659,24 +7954,19 @@ app.get("/make-server-e5e192fb/admin/analytics", async (c) => {
       })
     ).size;
     
-    // Tier distribution based on points (not a stored tier field)
-    // Silver: 0-1999, Gold: 2000-4999, Diamond: 5000+
-    const tierDistribution = {
-      silver: 0,
-      gold: 0,
-      diamond: 0,
-    };
-    
-    customers.forEach((user: any) => {
-      const points = user.points || 0;
-      if (points >= 5000) {
-        tierDistribution.diamond++;
-      } else if (points >= 2000) {
-        tierDistribution.gold++;
-      } else {
-        tierDistribution.silver++;
-      }
-    });
+    // Tier distribution, keyed by the CURRENT configured tier names and resolved the same way
+    // every other surface resolves a tier. This used to be a third inline ladder using the
+    // spendable balance and hardcoded lowercase buckets with no top-tier bucket at all, so it
+    // silently miscounted the highest tier and disagreed with what customers were shown.
+    const tierConfig = await getTierConfig();
+    const tierDistribution: Record<string, number> = {};
+    for (const tier of tierConfig) tierDistribution[tier.name] = 0;
+
+    for (const user of customers) {
+      const tierName = resolveUserTierWith(user, tierConfig);
+      // A tier that was renamed after this user was last touched still needs a home.
+      tierDistribution[tierName] = (tierDistribution[tierName] ?? 0) + 1;
+    }
     
     // Order type breakdown
     const orderTypes = {
@@ -7862,16 +8152,9 @@ app.post("/make-server-e5e192fb/admin/orders/bulk-update", async (c) => {
               user.points = (user.points || 0) + pointsEarned;
               user.totalPointsEarned = (user.totalPointsEarned || 0) + pointsEarned;
               
-              // Update tier based on total points
-              if (user.totalPointsEarned >= 10000) {
-                user.tier = "Platinum";
-              } else if (user.totalPointsEarned >= 5000) {
-                user.tier = "Diamond";
-              } else if (user.totalPointsEarned >= 2000) {
-                user.tier = "Gold";
-              } else {
-                user.tier = "Silver";
-              }
+              // Tier is resolved through the shared config — see DEFAULT_TIER_CONFIG. This used to be
+              // an inline ladder that disagreed with getUserTier's.
+              user.tier = await resolveUserTier(user);
               
               await kv.set(`user:${order.userId}`, user);
             }
@@ -11188,6 +11471,9 @@ app.get("/make-server-e5e192fb/reports/customer-analytics", async (c) => {
       points: number;
     }> = {};
 
+    // Loaded once for the whole aggregation rather than awaited per order.
+    const tierConfigForReport = await getTierConfig();
+
     filteredOrders.forEach((order: any) => {
       const key = order.userId || `guest:${order.phone || order.guestPhone || "unknown"}`;
       if (!customerAgg[key]) {
@@ -11195,7 +11481,7 @@ app.get("/make-server-e5e192fb/reports/customer-analytics", async (c) => {
         const phone = order.phone || order.guestPhone || user?.phone || "";
         const name = order.customerName || user?.name || order.guestName || "Guest";
         const addr = order.deliveryAddress || order.address || user?.address || "";
-        const tier = user?.tier || getUserTier(user?.totalPointsEarned || 0);
+        const tier = resolveUserTierWith(user, tierConfigForReport);
         customerAgg[key] = {
           userId: order.userId || null,
           name,
@@ -11535,6 +11821,9 @@ app.get("/make-server-e5e192fb/reports/customer-churn", async (c) => {
       firstOrderDate: string;
     }> = {};
 
+    // Loaded once for the whole aggregation rather than awaited per order.
+    const tierConfigForChurn = await getTierConfig();
+
     validOrders.forEach((order: any) => {
       const key = order.userId || `guest:${order.phone || order.guestPhone || "unknown"}`;
       if (!customerAgg[key]) {
@@ -11542,7 +11831,7 @@ app.get("/make-server-e5e192fb/reports/customer-churn", async (c) => {
         const phone = order.phone || order.guestPhone || user?.phone || "";
         const name = order.customerName || user?.name || order.guestName || "Guest";
         const addr = order.deliveryAddress || order.address || user?.address || "";
-        const tier = user?.tier || getUserTier(user?.totalPointsEarned || 0);
+        const tier = resolveUserTierWith(user, tierConfigForChurn);
         customerAgg[key] = {
           userId: order.userId || null,
           name,
