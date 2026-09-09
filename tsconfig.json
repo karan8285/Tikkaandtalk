@@ -1,0 +1,46 @@
+{
+  // Deliberately NOT strict yet. This codebase has never been type-checked, so
+  // strict:true produces hundreds of pre-existing errors and would block deploys.
+  // Non-strict still catches the class of bug that has actually shipped here:
+  // undefined identifiers, missing imports, wrong argument counts, bad property
+  // access. Ratchet the strict flags on once the current output is clean.
+  //
+  // Scope is the web app only. supabase/functions/** is Deno (npm:/jsr: imports,
+  // Deno globals) and android/** is the Capacitor shell — neither type-checks
+  // under this compiler.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowJs": false,
+    // src/main.tsx imports "./app/App.tsx" with the extension spelled out.
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+
+    // Mirrors resolve.alias in vite.config.ts — keep these in sync.
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "/utils/*": ["./utils/*"]
+    },
+
+    "types": ["vite/client", "web-bluetooth"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "utils/**/*.ts", "utils/**/*.tsx"],
+  "exclude": ["node_modules", "dist", "android", "supabase"]
+}
