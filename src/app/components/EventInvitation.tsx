@@ -15,20 +15,35 @@ const MAROON_CARD = "linear-gradient(160deg, #7E1327 0%, #5A0E1B 100%)";
 const GOLD = "#E6C878";
 const GOLD_SOFT = "#C9A24B";
 const CREAM = "#F3E4C0";
+const DISMISS_KEY = "tnt_event_flyer_dismissed";
 
 export function EventInvitation() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<"card" | "flyer">("card");
 
-  // Open every time the home page is opened, a beat after it paints.
-  // Closing only dismisses it for this view; it returns on the next home visit.
+  // Open once per browser session, a beat after the home page paints. Once the visitor
+  // closes it, it stays closed for the rest of the session and returns on their next visit.
   useEffect(() => {
+    let dismissed = false;
+    try {
+      dismissed = sessionStorage.getItem(DISMISS_KEY) === "1";
+    } catch {
+      // sessionStorage unavailable — just show it
+    }
+    if (dismissed) return;
     const t = setTimeout(() => setOpen(true), 450);
     return () => clearTimeout(t);
   }, []);
 
-  const close = () => setOpen(false);
+  const close = () => {
+    setOpen(false);
+    try {
+      sessionStorage.setItem(DISMISS_KEY, "1");
+    } catch {
+      // ignore
+    }
+  };
 
   // Escape closes.
   useEffect(() => {
