@@ -18,6 +18,7 @@ import { useMascot } from "../lib/mascot-context";
 import { NotificationBell } from "../components/NotificationBell";
 import { AddToHomeScreen, useShowA2HSBanner } from "../components/AddToHomeScreen";
 import { BroadcastBanner } from "../components/BroadcastBanner";
+import { EventInvitation } from "../components/EventInvitation";
 
 interface MenuCounts {
   todaysSpecial: number;
@@ -380,6 +381,9 @@ export default function Home() {
 
       {/* Broadcast Banner */}
       <BroadcastBanner />
+
+      {/* Event Invitation — The Glory of Shree Jagannatha Mahaprabhu */}
+      <EventInvitation />
 
       {/* Mascot Greeting Section */}
       {APP_CONFIG.mascot.enabled && (
