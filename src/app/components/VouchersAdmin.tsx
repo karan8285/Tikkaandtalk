@@ -8,7 +8,7 @@ import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Gift, Plus, Pencil, Trash2, Ticket, Car, UtensilsCrossed, Award, Users, Search, X, Eye, UserPlus, Crown, Percent, DollarSign, Truck as TruckIcon, Tag, ChefHat, Check } from "lucide-react";
+import { Gift, Plus, Pencil, Trash2, Ticket, Car, UtensilsCrossed, Award, Users, Search, X, Eye, UserPlus, Crown, Percent, Tag, Truck as TruckIcon, ChefHat, Check } from "lucide-react";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { fetchWithRetry } from "../lib/fetchWithRetry";
@@ -84,7 +84,7 @@ const TIER_COLORS: Record<string, string> = {
 
 const DISCOUNT_TYPE_OPTIONS = [
   { value: "percentage", label: "% Discount", icon: Percent },
-  { value: "fixed", label: "Fixed Amount", icon: DollarSign },
+  { value: "fixed", label: "Fixed Amount", icon: Tag },
   { value: "free_delivery", label: "Free Delivery", icon: TruckIcon },
   { value: "freebie", label: "Free Item", icon: Gift },
 ];

@@ -2,11 +2,7 @@
  * OrderTimeline — Beautiful vertical timeline showing the complete story of an order.
  * Displays status changes, who performed them, and when.
  */
-import { 
-  Clock, ShoppingCart, CheckCircle2, Flame, UtensilsCrossed, Truck, Package, 
-  XCircle, CreditCard, CalendarClock, DollarSign, User, Shield, ChefHat, 
-  Bike, Settings, Edit3, AlertTriangle
-} from "lucide-react";
+import { Clock, ShoppingCart, CheckCircle2, Flame, UtensilsCrossed, Truck, Package, XCircle, CreditCard, CalendarClock, Wallet, User, Shield, ChefHat, Bike, Settings, Edit3, AlertTriangle } from "lucide-react";
 import { BRAND_COLOR } from "../lib/config";
 
 interface Actor {
@@ -37,7 +33,7 @@ const STATUS_ICON_MAP: Record<string, any> = {
   closed: CheckCircle2,
   cancelled: XCircle,
   payment_received: CreditCard,
-  delivery_fee_set: DollarSign,
+  delivery_fee_set: Wallet,
   scheduled: CalendarClock,
   order_modified: Edit3,
   payment_adjustment: AlertTriangle,

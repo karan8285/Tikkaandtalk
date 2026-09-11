@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { Users, ShoppingBag, DollarSign, Award } from "lucide-react";
+import { Users, ShoppingBag, Wallet, Award } from "lucide-react";
 import { APP_CONFIG } from "../lib/config";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
@@ -165,7 +165,7 @@ export function AnalyticsAdmin({ customToken }: { customToken: string | null }) 
         <Card className="p-6">
           <div className="flex items-center gap-4 mb-4">
             <div className="p-3 rounded-lg" style={{ backgroundColor: '#FCE4EC' }}>
-              <DollarSign className="w-6 h-6" style={{ color: APP_CONFIG.brand.primaryColor }} />
+              <Wallet className="w-6 h-6" style={{ color: APP_CONFIG.brand.primaryColor }} />
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Revenue Overview</p>

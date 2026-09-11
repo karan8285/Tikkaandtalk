@@ -17,9 +17,7 @@ import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
 import { APP_CONFIG } from "../lib/config";
 import {
-  Plus, Minus, Trash2, Search, X, Package, ShoppingCart,
-  DollarSign, AlertTriangle, Loader2, Edit3, Tag, ChefHat,
-} from "lucide-react";
+  Plus, Minus, Trash2, Search, X, Package, ShoppingCart, Tag, AlertTriangle, Loader2, Edit3, ChefHat } from "lucide-react";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 const BRAND = APP_CONFIG.brand.primaryColor;
@@ -453,7 +451,7 @@ export function OrderModifyDialog({ order, open, onOpenChange, accessToken, onMo
           {customCharges.length > 0 && (
             <div>
               <Label className="text-xs font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-1.5 mb-2">
-                <DollarSign className="w-3.5 h-3.5" /> Custom Charges
+                <Tag className="w-3.5 h-3.5" /> Custom Charges
               </Label>
               <div className="space-y-1.5">
                 {customCharges.map((charge, idx) => (
@@ -502,7 +500,7 @@ export function OrderModifyDialog({ order, open, onOpenChange, accessToken, onMo
               className="h-8 text-xs border-dashed"
               onClick={() => { setShowCustomCharge(!showCustomCharge); setShowMenuSearch(false); setShowCustomItem(false); }}
             >
-              <DollarSign className="w-3.5 h-3.5 mr-1" /> Custom Charge
+              <Tag className="w-3.5 h-3.5 mr-1" /> Custom Charge
             </Button>
           </div>
 
@@ -702,7 +700,7 @@ export function OrderModifyDialog({ order, open, onOpenChange, accessToken, onMo
           {paidAmount === 0 && order.paymentMethod === 'cash' && totalDiff !== 0 && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
               <div className="flex items-start gap-2">
-                <DollarSign className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                <Tag className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
                 <p className="text-xs text-blue-700">
                   COD Order — new total of <strong>{formatIDR(newTotal)}</strong> will be collected on delivery/pickup.
                 </p>

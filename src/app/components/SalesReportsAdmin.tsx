@@ -9,7 +9,7 @@ import { Badge } from "./ui/badge";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
-import { TrendingUp, DollarSign, ShoppingCart, XCircle, Clock, CheckCircle2, Package, Loader2 } from "lucide-react";
+import { TrendingUp, Wallet, ShoppingCart, XCircle, Clock, CheckCircle2, Package, Loader2 } from "lucide-react";
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e5e192fb`;
 
@@ -242,7 +242,7 @@ export function SalesReportsAdmin({ customToken }: { customToken: string | null 
         >
           <div className="flex items-center gap-4">
             <div className="p-3 bg-green-100 rounded-lg">
-              <DollarSign className="w-6 h-6 text-green-600" />
+              <Wallet className="w-6 h-6 text-green-600" />
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Total Revenue</p>

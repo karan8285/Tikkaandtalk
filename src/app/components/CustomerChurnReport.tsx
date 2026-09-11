@@ -12,12 +12,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import {
-  UserX, TrendingDown, Clock, Search, Calendar,
-  FileSpreadsheet, FileText, ChevronLeft, ChevronRight,
-  ChevronsLeft, ChevronsRight, RefreshCw, Phone, MapPin,
-  Loader2, ArrowUpDown, AlertTriangle, ShoppingCart,
-  DollarSign, CalendarClock, AlertCircle, Award,
-} from "lucide-react";
+  UserX, TrendingDown, Clock, Search, Calendar, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RefreshCw, Phone, MapPin, Loader2, ArrowUpDown, AlertTriangle, ShoppingCart, Wallet, CalendarClock, AlertCircle, Award } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "../lib/currency";
 import { APP_CONFIG } from "../lib/config";
@@ -437,7 +432,7 @@ export function CustomerChurnReport({ customToken }: Props) {
           </Card>
           <Card className="p-3 border text-center">
             <div className="w-8 h-8 rounded-lg mx-auto mb-1.5 flex items-center justify-center bg-emerald-50">
-              <DollarSign className="w-4 h-4 text-emerald-600" />
+              <Wallet className="w-4 h-4 text-emerald-600" />
             </div>
             <p className="text-[15px] font-bold text-gray-900">{formatCurrency(summary.avgOrderValue)}</p>
             <p className="text-[10px] text-gray-500 leading-tight">Avg Order Value</p>

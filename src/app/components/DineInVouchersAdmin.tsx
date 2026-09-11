@@ -12,7 +12,7 @@ import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Plus, Pencil, Trash2, Ticket, Users, Percent, DollarSign, Eye, Copy, Power, Loader2, Clock, CheckCircle, XCircle, User, Hash } from "lucide-react";
+import { Plus, Pencil, Trash2, Ticket, Users, Percent, Tag, Eye, Copy, Power, Loader2, Clock, CheckCircle, XCircle, User, Hash } from "lucide-react";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { fetchWithRetry } from "../lib/fetchWithRetry";
@@ -336,7 +336,7 @@ export function DineInVouchersAdmin({ customToken }: DineInVouchersAdminProps) {
                   {v.discountType === "percentage" ? (
                     <Percent className="w-3.5 h-3.5" style={{ color: BRAND }} />
                   ) : (
-                    <DollarSign className="w-3.5 h-3.5" style={{ color: BRAND }} />
+                    <Tag className="w-3.5 h-3.5" style={{ color: BRAND }} />
                   )}
                   <span className="text-sm font-bold" style={{ color: BRAND }}>
                     {v.discountType === "percentage" ? `${v.discountValue}% OFF` : formatIDR(v.discountValue)}

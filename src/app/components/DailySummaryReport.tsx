@@ -11,13 +11,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import {
-  BarChart3, Search, Calendar,
-  FileSpreadsheet, FileText, ChevronLeft, ChevronRight,
-  ChevronsLeft, ChevronsRight, RefreshCw, Loader2,
-  DollarSign, TrendingUp, Users, ShoppingBag,
-  Clock, Truck, Store, UtensilsCrossed, Crown,
-  Package,
-} from "lucide-react";
+  BarChart3, Search, Calendar, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RefreshCw, Loader2, Wallet, TrendingUp, Users, ShoppingBag, Clock, Truck, Store, UtensilsCrossed, Crown, Package } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "../lib/currency";
 import { APP_CONFIG } from "../lib/config";
@@ -245,7 +239,7 @@ export function DailySummaryReport({ customToken }: Props) {
             </Card>
             <Card className="p-3 border text-center">
               <div className="w-8 h-8 rounded-lg mx-auto mb-1.5 flex items-center justify-center bg-green-50">
-                <DollarSign className="w-4 h-4 text-green-600" />
+                <Wallet className="w-4 h-4 text-green-600" />
               </div>
               <p className="text-lg font-bold text-green-600">{formatCurrency(summary.grandTotalRevenue)}</p>
               <p className="text-[10px] text-gray-500">Total Revenue</p>

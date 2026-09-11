@@ -11,11 +11,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import {
-  UtensilsCrossed, ShoppingCart, TrendingUp, Search, Calendar,
-  FileSpreadsheet, FileText, ChevronLeft, ChevronRight,
-  ChevronsLeft, ChevronsRight, RefreshCw, Package,
-  Loader2, ArrowUpDown, Crown, Hash, DollarSign, Tag,
-} from "lucide-react";
+  UtensilsCrossed, ShoppingCart, TrendingUp, Search, Calendar, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RefreshCw, Package, Loader2, ArrowUpDown, Crown, Hash, Wallet, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "../lib/currency";
 import { APP_CONFIG } from "../lib/config";
@@ -380,7 +376,7 @@ export function ProductsSoldReport({ customToken }: Props) {
           </Card>
           <Card className="p-2.5 border text-center">
             <div className="w-7 h-7 rounded-lg mx-auto mb-1 flex items-center justify-center bg-emerald-50">
-              <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
+              <Wallet className="w-3.5 h-3.5 text-emerald-600" />
             </div>
             <p className="text-[13px] font-bold text-gray-900">{formatCurrency(summary.totalRevenue)}</p>
             <p className="text-[9px] text-gray-500 leading-tight">Revenue</p>

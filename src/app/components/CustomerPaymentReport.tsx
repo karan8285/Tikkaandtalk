@@ -12,12 +12,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import {
-  CreditCard, Search, Calendar, Phone, User,
-  FileSpreadsheet, FileText, ChevronLeft, ChevronRight,
-  ChevronsLeft, ChevronsRight, RefreshCw, Loader2,
-  DollarSign, AlertCircle, CheckCircle2, Hash,
-  Filter, Banknote, Receipt,
-} from "lucide-react";
+  CreditCard, Search, Calendar, Phone, User, FileSpreadsheet, FileText, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RefreshCw, Loader2, Wallet, AlertCircle, CheckCircle2, Hash, Filter, Banknote, Receipt } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "../lib/currency";
 import { APP_CONFIG } from "../lib/config";

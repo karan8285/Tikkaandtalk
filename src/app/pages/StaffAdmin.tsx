@@ -19,7 +19,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { Users, ShoppingCart, TrendingUp, TrendingDown, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, CircleDollarSign, Filter, X, Truck, Ticket, CreditCard, Banknote, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save, Ban, Star, Edit3, Volume2, VolumeX, Printer, History, ShoppingBag } from "lucide-react";
+import { Users, ShoppingCart, TrendingUp, TrendingDown, Clock, Phone, MapPin, Package, RefreshCw, Award, Plus, Minus, Key, CheckSquare, Share2, ChefHat, ShieldBan, ShieldCheck, Trash2, AlertTriangle, AlertCircle, Banknote, Filter, X, Truck, Ticket, CreditCard, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Archive, LogOut, Shield, Camera, MessageSquare, Save, Ban, Star, Edit3, Volume2, VolumeX, Printer, History, ShoppingBag } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { TodaysSpecialAdmin } from "../components/TodaysSpecialAdmin";
@@ -885,7 +885,7 @@ function StaffOrdersTab({ accessToken, role }: { accessToken: string; role: Staf
         </div>
         <Select value={paymentFilter} onValueChange={(v) => { setPaymentFilter(v); setCurrentPage(1); }}>
           <SelectTrigger className="h-8 w-[130px] text-xs">
-            <CircleDollarSign className="w-3.5 h-3.5 mr-1" />
+            <Banknote className="w-3.5 h-3.5 mr-1" />
             <SelectValue placeholder="Payment" />
           </SelectTrigger>
           <SelectContent>

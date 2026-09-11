@@ -12,10 +12,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import {
-  TrendingUp, Search, Calendar, Phone,
-  FileSpreadsheet, FileText, RefreshCw, Loader2,
-  Users, ShoppingCart, DollarSign, BarChart3, Hash,
-} from "lucide-react";
+  TrendingUp, Search, Calendar, Phone, FileSpreadsheet, FileText, RefreshCw, Loader2, Users, ShoppingCart, Wallet, BarChart3, Hash } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "../lib/currency";
 import { APP_CONFIG } from "../lib/config";
@@ -420,7 +417,7 @@ export function CustomerOrderTrendsReport({ customToken }: Props) {
           </Card>
           <Card className="p-3 border text-center">
             <div className="w-8 h-8 rounded-lg mx-auto mb-1.5 flex items-center justify-center bg-amber-50">
-              <DollarSign className="w-4 h-4 text-amber-600" />
+              <Wallet className="w-4 h-4 text-amber-600" />
             </div>
             <p className="text-[15px] font-bold text-gray-900">{formatCurrency(summary.totalRevenue)}</p>
             <p className="text-[10px] text-gray-500">Total Revenue</p>

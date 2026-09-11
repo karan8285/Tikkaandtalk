@@ -15,7 +15,7 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Checkbox } from "../components/ui/checkbox";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, CircleDollarSign, Truck, MapPin, MessageSquare, Save, Filter, X, Share2, CheckSquare, Loader2, Ban, Plus, Star, Edit3, Volume2, VolumeX, KeyRound, AlertCircle, Printer, Ticket } from "lucide-react";
+import { CreditCard, Clock, Phone, Package, LogOut, RefreshCw, ShoppingCart, Archive, ChevronLeft, ChevronRight, Banknote, Truck, MapPin, MessageSquare, Save, Filter, X, Share2, CheckSquare, Loader2, Ban, Plus, Star, Edit3, Volume2, VolumeX, KeyRound, AlertCircle, Printer, Ticket } from "lucide-react";
 import { toast } from "sonner";
 import { formatIDR } from "../lib/currency";
 import { getShortOrderId } from "../lib/orderUtils";
@@ -579,7 +579,7 @@ export default function StaffCashier() {
           </div>
           <Select value={paymentFilter} onValueChange={(v) => { setPaymentFilter(v); setCurrentPage(1); }}>
             <SelectTrigger className="h-8 w-[130px] text-xs">
-              <CircleDollarSign className="w-3.5 h-3.5 mr-1" />
+              <Banknote className="w-3.5 h-3.5 mr-1" />
               <SelectValue placeholder="Payment" />
             </SelectTrigger>
             <SelectContent>
@@ -736,7 +736,7 @@ export default function StaffCashier() {
                         order.paymentStatus === 'partial' ? 'text-orange-700 border-orange-300 bg-orange-50' :
                         'text-red-700 border-red-300 bg-red-50'
                       }`}>
-                        <CircleDollarSign className="w-3 h-3 mr-1" />
+                        <Banknote className="w-3 h-3 mr-1" />
                         {isPaid ? 'Paid' : order.paymentStatus === 'partial' ? `Partial (${formatIDR(order.paidAmount || 0)})` : 'Unpaid'}
                       </Badge>
                       {!isPaid && remaining > 0 && (
