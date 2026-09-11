@@ -1,0 +1,73 @@
+# ─── Dependencies ─────────────────────────────────────────────────
+node_modules/
+
+# ─── Build output ─────────────────────────────────────────────────
+dist/
+dist-ssr/
+*.local
+
+# ─── SECRETS — this repository is PUBLIC. Never commit any of these. ─
+# Android release signing. The keystore is irreplaceable; its passwords live in
+# android/keystore.properties, which android/app/build.gradle reads at build time.
+*.jks
+*.keystore
+!debug.keystore
+android/keystore.properties
+# Firebase: the Android client config, and the Admin SDK service account (holds a private key).
+# The edge function reads the service account from the FIREBASE_SERVICE_ACCOUNT secret instead.
+android/app/google-services.json
+**/firebase-service-account*.json
+# Environment files and loose keys
+.env
+.env.*
+!.env.example
+*.pem
+
+# ─── Android build artifacts ──────────────────────────────────────
+# public/tnt-staff-debug.apk is already tracked and stays tracked: an ignore rule never untracks a
+# file, and Vercel serves the staff download from the repo. Do not delete it with `git add -A`.
+*.apk
+*.aab
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/capacitor-cordova-android-plugins/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+.capacitor/
+
+# ─── Supabase CLI link state (the CLI has been run from several nested folders) ─
+# The CLI has also been run from android/, so match its state folders at any depth.
+# pooler-url inside them is a database connection string.
+.temp/
+.branches/
+supabase/.temp/
+supabase/**/.temp/
+supabase/.branches/
+supabase/**/.branches/
+
+# ─── Vite / tooling caches ────────────────────────────────────────
+.vite/
+*.tsbuildinfo
+.eslintcache
+
+# ─── Editor / Claude Code (permission allowlists are machine-specific) ─
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+.claude/
+
+# ─── OS cruft ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ─── Logs ─────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+logs/
