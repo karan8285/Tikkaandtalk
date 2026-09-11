@@ -9,7 +9,7 @@ import { Input } from "./ui/input";
 import { Card } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "./ui/dialog";
-import { Ticket, Search, Camera, CheckCircle, XCircle, AlertCircle, Loader2, User, Phone, Percent, DollarSign, Clock, QrCode, X } from "lucide-react";
+import { Ticket, Search, Camera, CheckCircle, XCircle, AlertCircle, Loader2, User, Phone, Percent, Tag, Clock, QrCode, X } from "lucide-react";
 import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { fetchWithRetry } from "../lib/fetchWithRetry";
@@ -340,7 +340,7 @@ export function DineInVoucherRedeem({ customToken, staffName }: DineInVoucherRed
               {verifiedVoucher.voucher.discountType === "percentage" ? (
                 <Percent className="w-3 h-3" style={{ color: BRAND }} />
               ) : (
-                <DollarSign className="w-3 h-3" style={{ color: BRAND }} />
+                <Tag className="w-3 h-3" style={{ color: BRAND }} />
               )}
               <span className="text-xs font-bold" style={{ color: BRAND }}>
                 {verifiedVoucher.voucher.discountType === "percentage"
@@ -406,7 +406,7 @@ export function DineInVoucherRedeem({ customToken, staffName }: DineInVoucherRed
               {codeLookupResult.voucher.discountType === "percentage" ? (
                 <Percent className="w-3 h-3" style={{ color: BRAND }} />
               ) : (
-                <DollarSign className="w-3 h-3" style={{ color: BRAND }} />
+                <Tag className="w-3 h-3" style={{ color: BRAND }} />
               )}
               <span className="text-xs font-bold" style={{ color: BRAND }}>
                 {codeLookupResult.voucher.discountType === "percentage"

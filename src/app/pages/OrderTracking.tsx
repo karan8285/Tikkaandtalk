@@ -10,7 +10,7 @@ import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { toast } from "sonner";
 import {
   RefreshCw, MapPin, Phone, Clock, CheckCircle2,
-  Package, CreditCard, Ticket, DollarSign, AlertCircle, Loader2, Camera, X, MessageCircle, Star, ImagePlus,
+  Package, CreditCard, Ticket, AlertCircle, Loader2, Camera, X, MessageCircle, Star, ImagePlus,
 } from "lucide-react";
 import { formatIDR } from "../lib/currency";
 import { getRestaurantLogo } from "../lib/useRestaurantLogo";
@@ -710,7 +710,7 @@ export default function OrderTracking() {
               const statusColor = ps === 'paid' ? '#00AA99' : ps === 'partial' ? '#E89700' : '#E74C3C';
               const label = ps === 'paid' ? 'Paid' : ps === 'partial' ? 'Partial' : 'Unpaid';
               const subtitle = ps === 'paid' ? 'Payment confirmed' : ps === 'partial' ? `Rp ${(order.paidAmount || 0).toLocaleString()} of Rp ${order.total.toLocaleString()}` : 'Awaiting payment';
-              const StatusIcon = ps === 'paid' ? CheckCircle2 : ps === 'partial' ? DollarSign : AlertCircle;
+              const StatusIcon = ps === 'paid' ? CheckCircle2 : ps === 'partial' ? CreditCard : AlertCircle;
 
               return (
                 <div className="rounded-xl p-3 text-center"

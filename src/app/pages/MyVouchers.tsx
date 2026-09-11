@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
 import {
   Ticket, Loader2, QrCode, Clock, CheckCircle, XCircle, Plus,
-  Percent, DollarSign, Copy, RefreshCw, ChevronRight, Gift,
+  Percent, Tag, Copy, RefreshCw, ChevronRight, Gift,
 } from "lucide-react";
 import { formatIDR } from "../lib/currency";
 
@@ -255,7 +255,7 @@ export default function MyVouchers() {
                         {v.discountType === "percentage" ? (
                           <Percent className="w-3 h-3" style={{ color: BRAND }} />
                         ) : (
-                          <DollarSign className="w-3 h-3" style={{ color: BRAND }} />
+                          <Tag className="w-3 h-3" style={{ color: BRAND }} />
                         )}
                         <span className="text-xs font-bold" style={{ color: BRAND }}>
                           {v.discountType === "percentage" ? `${v.discountValue}% OFF` : formatIDR(v.discountValue)}
@@ -378,7 +378,7 @@ export default function MyVouchers() {
                   {selectedVoucher.discountType === "percentage" ? (
                     <Percent className="w-4 h-4" style={{ color: BRAND }} />
                   ) : (
-                    <DollarSign className="w-4 h-4" style={{ color: BRAND }} />
+                    <Tag className="w-4 h-4" style={{ color: BRAND }} />
                   )}
                   <span className="text-lg font-bold" style={{ color: BRAND }}>
                     {selectedVoucher.discountType === "percentage"
